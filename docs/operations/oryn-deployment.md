@@ -65,7 +65,7 @@ Enable Oryn only after all of the following hold:
 ## Quotas and Silent Notifications
 
 - Every stage dispatch, worker report, review, and check run is a durable record; the Feishu reporter receives only the six result kinds (`answer`, `clarification`, `accepted`, `needs_human`, `ready`, `released`) filtered by `oryn.notifications.kinds`. Process noise (tool calls, worker reports, retries) is never delivered.
-- `ready` is delivered at most once per case through the durable outbox; retries and crashes cannot duplicate it. Draft PR creation, merge, and release are distinct facts and are never folded into one message.
+- Reply intents deduplicate by recipient and operation. Answers and clarifications are scoped to the host-owned root turn, so later questions can receive answers. Before transport invocation, the outbox records an uncertain dispatch; a confirmed response settles it to delivered. Timeout or interruption does not trigger an automatic resend. Draft PR creation, merge, and release are distinct facts.
 - Wall-clock and token budgets per case are enforced from the case record; exhaustion hands the case to a human rather than looping.
 
 ## Delivery Check Gating
@@ -86,6 +86,8 @@ Oryn records live under the single `oryn` storage prefix inside `$SYNERGY_HOME/.
 - `oryn/actions/**` — the external action ledger (authoritative for reconciliation).
 - `oryn/claims/**`, `oryn/sources/**`, `oryn/outbox/**` — intake and delivery state.
 - `oryn/session_source/**` — host-owned session bindings.
+
+Outbox schema version 2 distinguishes definitely unsent `pending` entries from `ambiguous` dispatches. The central upgrade migration preserves confirmed receipts and marks old pending entries ambiguous because their send history is unknown. Do not reset ambiguous entries to pending during recovery; first obtain authoritative provider evidence or reconcile manually. The older binary cannot safely read these delivery semantics; a rollback needs a consistent pre-upgrade backup and review of any subsequent remote writes.
 
 Back up the whole `.synergy/` data directory with the same cadence as the rest of the runtime; there is no separate Oryn backup path. Recovery rules:
 

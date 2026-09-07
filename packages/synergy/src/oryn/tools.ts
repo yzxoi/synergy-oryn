@@ -1,5 +1,6 @@
 import z from "zod"
 import { Tool } from "../tool/tool"
+import { MessageV2 } from "../session/message-v2"
 import { Finding } from "./schema"
 import { OrynPublish } from "./publish"
 import { OrynLearning } from "./learn"
@@ -377,7 +378,7 @@ export const OrynResultTool = Tool.define(
 const ReplyParameters = z.object({
   kind: z.enum(["answer", "clarification", "accepted", "needs_human", "ready", "released"]),
   text: z.string().min(1).max(4000).describe("User-facing text; no internal identifiers, paths, or credentials"),
-  caseId: z.string().min(1).optional().describe("Defaults to your bound case when you are an engineering session"),
+  caseId: z.string().min(1).optional().describe("An engineering case already linked to your source"),
 })
 
 export const OrynReplyTool = Tool.define(
@@ -388,8 +389,11 @@ export const OrynReplyTool = Tool.define(
     parameters: ReplyParameters,
     async execute(params, ctx): Promise<Tool.ExecutionResult> {
       return execute(async () => {
+        const message = await MessageV2.get({ sessionID: ctx.sessionID, messageID: ctx.messageID })
+        const turnID = message.info.role === "assistant" ? message.info.parentID : message.info.id
         const result = await OrynService.reply({
           callerSessionID: ctx.sessionID,
+          turnID,
           caseId: params.caseId,
           kind: params.kind,
           text: params.text,

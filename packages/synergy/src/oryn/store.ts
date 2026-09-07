@@ -626,14 +626,17 @@ export namespace OrynStore {
     text: string
     dedupKey: string
   }): Promise<{ entry: OutboxEntryT; created: boolean }> {
+    using _lock = await Lock.write(`oryn-outbox-dedup:${externalIdentityHash(input.sourceKeyHash, input.dedupKey)}`)
     const ids = await Storage.scan(OrynPath.outboxRoot())
     const existing = await Promise.all(
       ids.map((id) => Storage.read<OutboxEntryT>(OrynPath.outbox(id)).catch(() => undefined)),
     )
-    const duplicate = existing.find((e): e is OutboxEntryT => e !== undefined && e.dedupKey === input.dedupKey)
+    const duplicate = existing.find(
+      (e): e is OutboxEntryT => e !== undefined && e.sourceKey === input.sourceKeyHash && e.dedupKey === input.dedupKey,
+    )
     if (duplicate) return { entry: duplicate, created: false }
     const entry = OutboxEntry.parse({
-      schemaVersion: 1,
+      schemaVersion: 2,
       id: Identifier.ascending("oryn_learning"),
       caseId: input.caseId,
       sourceKey: input.sourceKeyHash,
@@ -658,6 +661,8 @@ export namespace OrynStore {
     using _lock = await Lock.write(`oryn-outbox:${entryId}`)
     const current = await Storage.read<OutboxEntryT>(OrynPath.outbox(entryId)).catch(() => undefined)
     if (!current) throw storeError("NOT_AUTHORIZED", `outbox entry ${entryId} not found`)
+    if (current.state === "delivered") return current
+    if (current.state !== "ambiguous") throw storeError("INVALID_STAGE", "notification has no dispatch attempt")
     const next: OutboxEntryT = { ...current, state: "delivered", deliveredAt: now() }
     await Storage.write(OrynPath.outbox(entryId), next)
     return next
@@ -667,9 +672,22 @@ export namespace OrynStore {
     using _lock = await Lock.write(`oryn-outbox:${entryId}`)
     const current = await Storage.read<OutboxEntryT>(OrynPath.outbox(entryId)).catch(() => undefined)
     if (!current) throw storeError("NOT_AUTHORIZED", `outbox entry ${entryId} not found`)
+    if (current.state !== "pending") return current
     const next: OutboxEntryT = { ...current, state: "suppressed" }
     await Storage.write(OrynPath.outbox(entryId), next)
     return next
+  }
+
+  export async function claimOutboxDelivery(entryId: string): Promise<boolean> {
+    using _lock = await Lock.write(`oryn-outbox:${entryId}`)
+    const current = await Storage.read<OutboxEntryT>(OrynPath.outbox(entryId))
+    if (current.state !== "pending") return false
+    await Storage.write(OrynPath.outbox(entryId), {
+      ...current,
+      state: "ambiguous",
+      attemptedAt: now(),
+    } satisfies OutboxEntryT)
+    return true
   }
 
   /**

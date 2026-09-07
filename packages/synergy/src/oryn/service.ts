@@ -705,22 +705,29 @@ export namespace OrynService {
 
   /**
    * Bounded delivery intent. The model never names a chat or account; the
-   * target is the Host-bound source. Dedup key keeps repeated ready /
-   * needs_human notifications to one delivery per kind per case.
+   * target is the Host-bound source. Conversation replies deduplicate per
+   * root turn; lifecycle notifications per source, kind, case and attempt.
    */
   export async function reply(input: {
     callerSessionID: string
+    turnID?: string
     caseId?: string
     kind: "answer" | "clarification" | "accepted" | "needs_human" | "ready" | "released"
     text: string
   }): Promise<{ entryId: string; created: boolean }> {
     await requireEnabled()
-    const binding = await requireBinding(input.callerSessionID, ["qa", "engineering"])
+    const binding = await requireBinding(input.callerSessionID, ["qa"])
     const caseId = input.caseId ?? binding.caseId
     if (caseId && binding.caseId && binding.caseId !== caseId) {
       throw storeError("NOT_AUTHORIZED", "case does not belong to this session")
     }
-    const dedupKey = `${caseId ?? binding.sourceKey}:${input.kind}`
+    const record = caseId ? await OrynStore.getCaseForSource(caseId, binding.sourceKey) : undefined
+    const conversational = input.kind === "answer" || input.kind === "clarification"
+    if (conversational && !input.turnID) {
+      throw storeError("NOT_AUTHORIZED", "a reply must be bound to its host-owned root turn")
+    }
+    const version = conversational ? input.turnID : (record?.activeAttemptId ?? "intake")
+    const dedupKey = externalIdentityHash(binding.sourceKey, caseId ?? "", input.kind, version ?? "")
     const { entry, created } = await OrynStore.writeOutbox({
       caseId,
       sourceKeyHash: binding.sourceKey,
@@ -741,16 +748,17 @@ export namespace OrynService {
   let deliverer: OutboxDeliverer | undefined
 
   /** L4 assembly injection: the product wiring provides the real provider delivery. */
-  export function setOutboxDeliverer(fn: OutboxDeliverer): void {
+  export function setOutboxDeliverer(fn: OutboxDeliverer | undefined): void {
     deliverer = fn
   }
 
   /**
    * Drain pending outbox entries through the injected deliverer. Delivery is
-   * at-least-once with durable state: entries stay pending until the
-   * deliverer resolves, so a crash redelivers rather than loses.
+   * An intent is ambiguous before invoking the transport. A crash or lost
+   * acknowledgement therefore cannot cause an automatic duplicate send.
    */
   export async function drainOutbox(): Promise<{ delivered: number; suppressed: number }> {
+    if (!(await OrynConfig.enabled())) return { delivered: 0, suppressed: 0 }
     const pending = await OrynStore.listPendingOutbox()
     let delivered = 0
     let suppressed = 0
@@ -761,9 +769,11 @@ export namespace OrynService {
         suppressed++
         continue
       }
-      if (!deliverer || !link.identity) continue
+      const send = deliverer
+      if (!send || !link.identity) continue
+      if (!(await OrynStore.claimOutboxDelivery(entry.id))) continue
       try {
-        await deliverer({
+        await send({
           sourceKey: entry.sourceKey,
           identity: link.identity,
           kind: entry.kind,
@@ -772,7 +782,8 @@ export namespace OrynService {
         await OrynStore.markOutboxDelivered(entry.id)
         delivered++
       } catch {
-        // Keep pending for the next drain; delivery stays durable.
+        // The transport may have accepted the message; only a confirmed
+        // receipt can settle this intent, never an automatic resend.
       }
     }
     return { delivered, suppressed }

@@ -178,6 +178,8 @@ Project worktrees may also be managed beneath a project-local Synergy area. Perm
 
 ## Relocation and Backup
 
+Oryn reply intents live under the `oryn/outbox` Storage namespace. Schema version 2 uses `pending` for definitely unsent intents and `ambiguous` for a claimed dispatch without a confirmed response. The `20260908-oryn-outbox-dispatch` central migration preserves record IDs and confirmed outcomes; version 1 pending records become ambiguous. See the [notification decision](../decisions/implemented/architecture/2026-09-08-oryn-notification-settlement.md) for settlement and rollback constraints.
+
 Stop the server before raw filesystem backup or relocation. For supported selective movement, use `synergy data pack`, `merge`, `move`, and `set-home`. Use session export/import for portable session artifacts.
 
 Never include `data/auth/` in a public diagnostics bundle, issue attachment, or repository commit.

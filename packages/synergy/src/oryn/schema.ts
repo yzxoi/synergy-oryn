@@ -350,15 +350,16 @@ export type ReplyKind = z.infer<typeof ReplyKind>
 
 export const OutboxEntry = z
   .object({
-    schemaVersion: z.literal(1),
+    schemaVersion: z.literal(2),
     id: z.string().min(1),
     caseId: z.string().optional(),
     sourceKey: z.string().min(1),
     kind: ReplyKind,
     text: z.string().min(1),
-    state: z.enum(["pending", "delivered", "suppressed"]).default("pending"),
+    state: z.enum(["pending", "ambiguous", "delivered", "suppressed"]).default("pending"),
     dedupKey: z.string().min(1),
     createdAt: z.number().int().positive(),
+    attemptedAt: z.number().int().positive().optional(),
     deliveredAt: z.number().int().positive().optional(),
   })
   .strict()
