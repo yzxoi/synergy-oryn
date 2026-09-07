@@ -55,7 +55,7 @@ The local mock ingress check needs no Feishu credentials. From `packages/synergy
 2. Grant the minimal IM scopes needed by the existing Channel provider (receive group/DM messages, send messages, read thread metadata).
 3. Configure one account entry under `channel.feishu.accounts` and reference that account ID from `oryn.routes[].feishuAccount`.
 4. Set `groupSessionScope` to `group_thread` on the Oryn-bound account so each topic gets its own QA session; other accounts keep their existing scoping.
-5. Explicit opt-in: only chats listed in `oryn.routes[].chats` are routed to Oryn. Unlisted accounts and chats keep ordinary Synergy routing. Do not enable Oryn routes on an account that also serves non-Oryn automation without reviewing that interaction.
+5. Set a non-empty `oryn.routes[].chats` allowlist to restrict intake to the intended test chats. An omitted or empty `chats` list matches the whole configured account; it does not disable intake. Accounts without a matching Oryn route keep ordinary Synergy routing.
 
 ### GitHub App
 
@@ -67,7 +67,7 @@ Minimal permissions for the Oryn publish transport:
 - **Commit statuses: read** — observe CI on the candidate.
 - **Checks: write** — write the `oryn/delivery` check run (see the gating section below).
 
-Do not grant administration, merge, or release permissions. Oryn has no merge or release code path by design; merge remains a human action and the runtime only observes it.
+Do not grant Administration or protection-bypass privileges. GitHub does not provide an independent deny-merge permission alongside these write permissions; human review requirements and the Host operation allowlist must enforce the merge policy. Oryn exposes no merge or release operation.
 
 Install the App on the target repositories (placeholder `owner/repo`), set the app credentials in the runtime environment (`SYNERGY_GITHUB_APP_ID`, `SYNERGY_GITHUB_APP_PRIVATE_KEY`), and confirm `resolveInstallation` succeeds before enabling `oryn.repositories`.
 
@@ -78,7 +78,7 @@ Enable Oryn only after all of the following hold:
 - `oryn.enabled: true` with at least one `routes` entry and one `repositories` entry (the schema rejects enabling without them).
 - `oryn.repositories[alias].baseBranch` points at the branch PRs target (for this fork's workflow: `dev`).
 - `oryn.executionProfiles` declare only capabilities the preflight verified.
-- `oryn.limits` reviewed: `maxCaseMinutes` (default 720), `maxConcurrentWorkers` (default 6), `heavyConcurrency` (default 2) — size these to the host.
+- Set `oryn.limits.heavyConcurrency` for check processes (runtime default 2) and explicit `maxCaseMinutes` for check admission. Full worker-count, model-token and runtime-wide Case budget enforcement remain incomplete; the schema descriptions are not proof of enforced limits.
 - `oryn.review.maxRepairRounds` (default 3) and `maxNoProgressRounds` (default 2) reflect the team's appetite for autonomous rework.
 - Project-level config does not override runtime-owned Oryn keys; the `runtime` domain owns this key and project config cannot widen the allowlists.
 
@@ -86,7 +86,7 @@ Enable Oryn only after all of the following hold:
 
 - Every stage dispatch, worker report, review, and check run is a durable record; the Feishu reporter receives only the six result kinds (`answer`, `clarification`, `accepted`, `needs_human`, `ready`, `released`) filtered by `oryn.notifications.kinds`. Process noise (tool calls, worker reports, retries) is never delivered.
 - Reply intents deduplicate by recipient and operation. Answers and clarifications are scoped to the host-owned root turn, so later questions can receive answers. Before transport invocation, the outbox records an uncertain dispatch; a confirmed response settles it to delivered. Timeout or interruption does not trigger an automatic resend. Draft PR creation, merge, and release are distinct facts.
-- Wall-clock and token budgets per case are enforced from the case record; exhaustion hands the case to a human rather than looping.
+- Check admission rejects an explicitly configured Case wall-clock limit once exceeded. Model-token accounting, automatic budget handoff and ordinary coder-shell accounting still need implementation and verification; do not rely on the corresponding configuration fields as hard limits.
 
 ## Delivery Check Gating
 
@@ -94,15 +94,15 @@ Worker completion does not imply verified behavior. Reproduction and verificatio
 
 The `oryn/delivery` check run is written only when `oryn.repositories[alias].deliveryCheck` is `true` (default `false`). Follow this sequence when turning it on:
 
-1. Deploy with the check disabled and let at least one real case complete `mark_ready` end to end.
-2. Verify the check run appears on the candidate SHA with the expected conclusion on the test repository.
-3. Only then set `deliveryCheck: true` and, if branch protection requires it, register `oryn/delivery` as a required check on the target base branch.
+1. On an explicitly authorized test repository, enable `deliveryCheck: true` while leaving the check out of branch protection. With the flag false, no check is written and a canary cannot verify it.
+2. Exercise the gated publication path and verify the check appears on the candidate SHA under the expected App identity. Independently verify Draft-to-ready behavior; the current transport only writes the check and does not yet perform that transition.
+3. After complete pipeline acceptance, enable the check for the target repository and register it as required with the expected App identity if branch protection requires it.
 
 Never register `oryn/delivery` as a required check before the deployment has observed it run for real; a required check that the App cannot write blocks every PR on the branch.
 
 ## Backup and Recovery
 
-Oryn records live under the single `oryn` storage prefix inside `$SYNERGY_HOME/.synergy/` (placeholder path):
+Oryn JSON records live under `$SYNERGY_HOME/.synergy/data/oryn/`. `SYNERGY_HOME` is the parent home; the runtime appends `.synergy`, as defined in [Storage and paths](../reference/storage-and-paths.md). The logical storage keys are:
 
 - `oryn/cases/**` — cases, attempts, assignments, runs, reviews, reports.
 - `oryn/actions/**` — the external action ledger (authoritative for reconciliation).
@@ -111,7 +111,7 @@ Oryn records live under the single `oryn` storage prefix inside `$SYNERGY_HOME/.
 
 Outbox schema version 2 distinguishes definitely unsent `pending` entries from `ambiguous` dispatches. The central upgrade migration preserves confirmed receipts and marks old pending entries ambiguous because their send history is unknown. Do not reset ambiguous entries to pending during recovery; first obtain authoritative provider evidence or reconcile manually. The older binary cannot safely read these delivery semantics; a rollback needs a consistent pre-upgrade backup and review of any subsequent remote writes.
 
-Back up the whole `.synergy/` data directory with the same cadence as the rest of the runtime; there is no separate Oryn backup path. Recovery rules:
+Use a consistent backup of the dedicated runtime root, including its `data/` and configuration, with the same cadence as the rest of the runtime. Oryn does not have an independent transactionally consistent backup. Recovery rules:
 
 - After a crash, intake claims and the action ledger make every step resumable: replayed submissions dedupe to the same case, and ambiguous external actions settle through reconciliation against remote facts (App author, case marker, head SHA) instead of blind replay.
 - Never restore a partial `oryn/` subtree alone; restore the storage directory as a unit so ledger, claims, and case records stay consistent.
