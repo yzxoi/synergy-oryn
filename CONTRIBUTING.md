@@ -4,6 +4,8 @@ Thanks for wanting to contribute. Synergy is built by a small team, and outside 
 
 This guide covers what you need to get started.
 
+> **Oryn fork note.** This repository is Synergy Oryn, a product fork that extends Synergy with the feedback-to-PR automation described in the [README](README.md#oryn-feedback-to-pr-automation). Everything below applies unchanged; Oryn-specific work lands in `packages/synergy/src/oryn/` and `packages/synergy/test/oryn/`, and the implementation status is tracked in the [Oryn proposal](docs/decisions/proposed/architecture/2026-09-07-synergy-oryn.md).
+
 ## Reporting Bugs
 
 Open a [GitHub Issue](https://github.com/SII-Holos/synergy/issues) with:

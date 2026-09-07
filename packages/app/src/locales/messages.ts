@@ -683,6 +683,7 @@ export const appShell = {
   library: { id: "app.shell.mobile.tool.library", message: "Library" },
   performance: { id: "app.shell.mobile.tool.performance", message: "Performance" },
   plugins: { id: "app.shell.mobile.tool.plugins", message: "Plugins" },
+  oryn: { id: "app.shell.mobile.tool.oryn", message: "Oryn" },
   kanban: { id: "app.shell.mobile.tool.kanban", message: "Kanban" },
   notes: { id: "app.shell.mobile.tool.notes", message: "Notes" },
   browser: { id: "app.shell.mobile.tool.browser", message: "Browser" },
@@ -1331,6 +1332,19 @@ export const pluginNav = {
   library: { id: "app.plugin.builtin.library", message: "Library" },
   performance: { id: "app.plugin.builtin.performance", message: "Performance" },
   plugins: { id: "app.plugin.builtin.plugins", message: "Plugins" },
+  oryn: { id: "app.plugin.builtin.oryn", message: "Oryn" },
+} as const satisfies Record<string, AppMessageDescriptor>
+
+// ── Oryn cases page ─────────────────────────────────────────────────────────
+
+export const orynPage = {
+  back: { id: "app.oryn.back", message: "Back" },
+  refresh: { id: "app.oryn.refresh", message: "Refresh" },
+  empty: { id: "app.oryn.empty", message: "No engineering cases" },
+  controlPause: { id: "app.oryn.control.pause", message: "Pause" },
+  controlResume: { id: "app.oryn.control.resume", message: "Resume" },
+  controlTakeover: { id: "app.oryn.control.takeover", message: "Take over" },
+  controlCancel: { id: "app.oryn.control.cancel", message: "Cancel" },
 } as const satisfies Record<string, AppMessageDescriptor>
 
 // ── Kanban page ─────────────────────────────────────────────────────────────

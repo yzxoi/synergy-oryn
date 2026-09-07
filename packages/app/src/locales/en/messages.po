@@ -5177,6 +5177,42 @@ msgstr "Response ready"
 msgid "app.notification.session.error"
 msgstr "Session error"
 
+#. ── Oryn cases page ─────────────────────────────────────────────────────────
+msgid "app.oryn.back"
+msgstr "Back"
+
+#. ── Oryn cases page ─────────────────────────────────────────────────────────
+msgid "app.oryn.control.cancel"
+msgstr "Cancel"
+
+#. ── Oryn cases page ─────────────────────────────────────────────────────────
+msgid "app.oryn.control.pause"
+msgstr "Pause"
+
+#. ── Oryn cases page ─────────────────────────────────────────────────────────
+msgid "app.oryn.control.resume"
+msgstr "Resume"
+
+#. ── Oryn cases page ─────────────────────────────────────────────────────────
+msgid "app.oryn.control.takeover"
+msgstr "Take over"
+
+#. ── Oryn cases page ─────────────────────────────────────────────────────────
+msgid "app.oryn.empty"
+msgstr "No engineering cases"
+
+#. ── Oryn cases page ─────────────────────────────────────────────────────────
+msgid "app.oryn.refresh"
+msgstr "Refresh"
+
+#. js-lingui-explicit-id
+msgid "app.oryn.remote"
+msgstr "issue {issue} · pr {pulls}"
+
+#. js-lingui-explicit-id
+msgid "app.oryn.stats"
+msgstr "repair {repair} · no-progress {noProgress} · epoch {epoch}"
+
 #. ── Builtin panel labels ─────────────────────────────────────────────────────
 msgid "app.panel.attachment"
 msgstr "Attachment"
@@ -6072,6 +6108,10 @@ msgstr "Kanban"
 #. ── Plugin builtin navigation ─────────────────────────────────────────────────
 msgid "app.plugin.builtin.library"
 msgstr "Library"
+
+#. ── Plugin builtin navigation ─────────────────────────────────────────────────
+msgid "app.plugin.builtin.oryn"
+msgstr "Oryn"
 
 #. ── Plugin builtin navigation ─────────────────────────────────────────────────
 msgid "app.plugin.builtin.performance"
@@ -7288,6 +7328,10 @@ msgstr "Library"
 #. ── App Shell ────────────────────────────────────────────────────────────────
 msgid "app.shell.mobile.tool.notes"
 msgstr "Notes"
+
+#. ── App Shell ────────────────────────────────────────────────────────────────
+msgid "app.shell.mobile.tool.oryn"
+msgstr "Oryn"
 
 #. ── App Shell ────────────────────────────────────────────────────────────────
 msgid "app.shell.mobile.tool.performance"

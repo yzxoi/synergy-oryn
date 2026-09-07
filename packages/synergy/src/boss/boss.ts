@@ -186,7 +186,13 @@ export namespace BossService {
    */
   export async function spawn(
     callerID: string,
-    input: { role: string; agent?: string; instructions?: string; workspace?: "main" | "worktree" },
+    input: {
+      role: string
+      agent?: string
+      instructions?: string
+      workspace?: "main" | "worktree"
+      baseRevision?: string
+    },
   ): Promise<Session.Info> {
     const caller = await requireBoss(callerID)
     const role = input.role.trim()
@@ -219,7 +225,12 @@ export namespace BossService {
     if (input.workspace === "worktree") {
       try {
         const { Worktree } = await import("../project/worktree")
-        await Worktree.create({ sessionID: session.id, baseRef: "current", bind: true })
+        await Worktree.create({
+          sessionID: session.id,
+          baseRef: "current",
+          ...(input.baseRevision ? { baseRevision: input.baseRevision } : {}),
+          bind: true,
+        })
         return await Session.get(session.id)
       } catch (error) {
         await Session.remove(session.id).catch(() => undefined)

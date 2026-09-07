@@ -52,6 +52,7 @@ export const SemanticIconToken = {
   "providers.reconnect": "shield-alert",
   "agenda.main": "calendar-clock",
   "kanban.main": "kanban",
+  "oryn.main": "megaphone",
   "terminal.main": "code",
 
   // Session runtime

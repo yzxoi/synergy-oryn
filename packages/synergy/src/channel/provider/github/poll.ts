@@ -10,6 +10,7 @@ import type { MessageContext } from "../../types"
 import { Storage } from "@/storage/storage"
 import { StoragePath } from "@/storage/path"
 import { externalIdentityHash } from "../../../util/identity"
+import { runGithubPollReconciler } from "./publish"
 import { Lock } from "@/util/lock"
 
 const log = Log.create({ service: "channel.github.poll" })
@@ -451,6 +452,10 @@ export async function runRepositoryPollLoop(input: {
         signal: input.signal,
         host: input.host,
       })
+      // Bounded reconciliation of ambiguous Oryn publish actions runs on the
+      // same cadence as the poll so remote facts settle the ledger without a
+      // separate scheduler; a failure here never kills the poll loop.
+      await runGithubPollReconciler()
     } catch (error) {
       if (isAbort(error, input.signal)) return
       if (error instanceof GitHubApiError && (error.status === 403 || error.status === 429)) {

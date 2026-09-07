@@ -396,6 +396,15 @@ import type {
   NoteUpdateResponses,
   ObservabilityDiagnosticsSummaryErrors,
   ObservabilityDiagnosticsSummaryResponses,
+  OrynCaseAttemptGetErrors,
+  OrynCaseAttemptGetResponses,
+  OrynCaseControlErrors,
+  OrynCaseControlResponses,
+  OrynCaseGetErrors,
+  OrynCaseGetResponses,
+  OrynCaseListErrors,
+  OrynCaseListResponses,
+  OrynControlInput,
   Part as Part2,
   PartDeleteErrors,
   PartDeleteResponses,
@@ -10301,6 +10310,151 @@ export class Asset extends HeyApiClient {
   }
 }
 
+export class Attempt extends HeyApiClient {
+  /**
+   * Get an Oryn attempt
+   *
+   * Return one candidate validation cycle with its assignments, runs, and reviews.
+   */
+  public get<ThrowOnError extends boolean = false>(
+    parameters: {
+      id: string
+      attemptId: string
+      directory?: string
+      scopeID?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "id" },
+            { in: "path", key: "attemptId" },
+            { in: "query", key: "directory" },
+            { in: "query", key: "scopeID" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).get<OrynCaseAttemptGetResponses, OrynCaseAttemptGetErrors, ThrowOnError>({
+      url: "/oryn/cases/{id}/attempts/{attemptId}",
+      ...options,
+      ...params,
+    })
+  }
+}
+
+export class Case extends HeyApiClient {
+  /**
+   * List Oryn cases
+   *
+   * List engineering cases with optional repository and control-state filters.
+   */
+  public list<ThrowOnError extends boolean = false>(
+    parameters?: {
+      directory?: string
+      scopeID?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "directory" },
+            { in: "query", key: "scopeID" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).get<OrynCaseListResponses, OrynCaseListErrors, ThrowOnError>({
+      url: "/oryn/cases",
+      ...options,
+      ...params,
+    })
+  }
+
+  /**
+   * Get an Oryn case
+   *
+   * Return the redacted case record including control state and round counters.
+   */
+  public get<ThrowOnError extends boolean = false>(
+    parameters: {
+      id: string
+      directory?: string
+      scopeID?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "id" },
+            { in: "query", key: "directory" },
+            { in: "query", key: "scopeID" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).get<OrynCaseGetResponses, OrynCaseGetErrors, ThrowOnError>({
+      url: "/oryn/cases/{id}",
+      ...options,
+      ...params,
+    })
+  }
+
+  /**
+   * Control an Oryn case
+   *
+   * Human operator control transition (pause, resume, takeover, cancel) with compare-and-set on the case revision. Takeover and cancel bump the case epoch so in-flight external actions become stale.
+   */
+  public control<ThrowOnError extends boolean = false>(
+    parameters: {
+      id: string
+      directory?: string
+      scopeID?: string
+      orynControlInput?: OrynControlInput
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "id" },
+            { in: "query", key: "directory" },
+            { in: "query", key: "scopeID" },
+            { key: "orynControlInput", map: "body" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).post<OrynCaseControlResponses, OrynCaseControlErrors, ThrowOnError>({
+      url: "/oryn/cases/{id}/control",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    })
+  }
+
+  attempt = new Attempt({ client: this.client })
+}
+
+export class Oryn extends HeyApiClient {
+  case = new Case({ client: this.client })
+}
+
 export class Voice extends HeyApiClient {
   /**
    * Transcribe audio
@@ -12374,6 +12528,8 @@ export class SynergyClient extends HeyApiClient {
   boss = new Boss({ client: this.client })
 
   asset = new Asset({ client: this.client })
+
+  oryn = new Oryn({ client: this.client })
 
   voice = new Voice({ client: this.client })
 

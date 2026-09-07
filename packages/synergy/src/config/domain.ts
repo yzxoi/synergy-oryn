@@ -124,6 +124,7 @@ export namespace ConfigDomain {
       "compaction",
       "experimental",
       "observability",
+      "oryn",
     ]),
     def("voice", "125-voice.jsonc", "Voice", ["voice"]),
   ] as const satisfies Definition[]

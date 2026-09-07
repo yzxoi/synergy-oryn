@@ -605,6 +605,10 @@
           "reason": "note editor requires the Tiptap runtime"
         },
         {
+          "glob": "src/components/oryn/index.tsx",
+          "reason": "UI component not rendered by the unit suite; exercised through the dev app workbench against a live server"
+        },
+        {
           "glob": "src/components/performance/PerformanceDashboard.tsx",
           "reason": "performance dashboards require live telemetry"
         },

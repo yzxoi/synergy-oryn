@@ -8,6 +8,7 @@ import { createBuiltinInternalAgents } from "./builtin-internal"
 import { createBuiltinLegacySubagents } from "./builtin-legacy-subagents"
 import { createBuiltinPrimaryAgents } from "./builtin-primary"
 import { createBuiltinMaxSubagents } from "./builtin-max-subagents"
+import { createBuiltinOrynAgents, enforceOrynCeiling } from "./builtin-oryn"
 import { AgentCall } from "./call"
 import { buildSynergyPrompt } from "./prompt/synergy/builder"
 import { buildSynergyMaxPrompt } from "./prompt/synergy-max/builder"
@@ -228,6 +229,7 @@ export namespace Agent {
       ...createBuiltinLegacySubagents(builtinContext),
       ...createBuiltinMaxSubagents(builtinContext),
       ...createBuiltinInternalAgents(builtinContext),
+      ...(cfg.oryn?.enabled ? createBuiltinOrynAgents(builtinContext) : {}),
     }
     for (const item of Object.values(result)) {
       item.source ??= "builtin"
@@ -430,6 +432,15 @@ export namespace Agent {
     if (result.supervisor) result.supervisor.prompt = buildSupervisorPrompt(agentInfos)
     if (result["lightloop-reviewer"]) {
       result["lightloop-reviewer"].prompt = buildLightLoopReviewerPrompt(agentInfos)
+    }
+
+    // Re-enforce the Oryn host capability ceiling after every later patch
+    // loop: config agents, memory allow-patches, and the Truncate.DIR patch
+    // all append rules after the clamp, and PermissionNext.evaluate picks
+    // the last match, so without this pass a user config could expand an
+    // Oryn agent's reachable tool set beyond the host limit.
+    for (const item of Object.values(result)) {
+      enforceOrynCeiling(item)
     }
 
     return result

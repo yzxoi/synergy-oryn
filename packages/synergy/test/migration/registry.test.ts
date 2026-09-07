@@ -8,7 +8,7 @@ import { MigrationRegistry } from "../../src/migration/registry"
 describe("MigrationRegistry", () => {
   test("registers all domains", () => {
     const domainCount = MigrationRegistry.list().size
-    expect(domainCount).toBe(12)
+    expect(domainCount).toBe(13)
   })
 
   test("has expected domain names", () => {
@@ -23,6 +23,7 @@ describe("MigrationRegistry", () => {
       "library",
       "note",
       "observability",
+      "oryn",
       "plugin_catalog",
       "scope",
       "session",

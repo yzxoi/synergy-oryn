@@ -5177,6 +5177,42 @@ msgstr "回复已生成"
 msgid "app.notification.session.error"
 msgstr "会话错误"
 
+#. ── Oryn cases page ─────────────────────────────────────────────────────────
+msgid "app.oryn.back"
+msgstr "返回"
+
+#. ── Oryn cases page ─────────────────────────────────────────────────────────
+msgid "app.oryn.control.cancel"
+msgstr "取消"
+
+#. ── Oryn cases page ─────────────────────────────────────────────────────────
+msgid "app.oryn.control.pause"
+msgstr "暂停"
+
+#. ── Oryn cases page ─────────────────────────────────────────────────────────
+msgid "app.oryn.control.resume"
+msgstr "恢复"
+
+#. ── Oryn cases page ─────────────────────────────────────────────────────────
+msgid "app.oryn.control.takeover"
+msgstr "接管"
+
+#. ── Oryn cases page ─────────────────────────────────────────────────────────
+msgid "app.oryn.empty"
+msgstr "暂无工程案例"
+
+#. ── Oryn cases page ─────────────────────────────────────────────────────────
+msgid "app.oryn.refresh"
+msgstr "刷新"
+
+#. js-lingui-explicit-id
+msgid "app.oryn.remote"
+msgstr "issue {issue} · pr {pulls}"
+
+#. js-lingui-explicit-id
+msgid "app.oryn.stats"
+msgstr "返工 {repair} · 无进展 {noProgress} · epoch {epoch}"
+
 #. ── Builtin panel labels ─────────────────────────────────────────────────────
 msgid "app.panel.attachment"
 msgstr "附件"
@@ -6072,6 +6108,10 @@ msgstr "看板"
 #. ── Plugin builtin navigation ─────────────────────────────────────────────────
 msgid "app.plugin.builtin.library"
 msgstr "知识库"
+
+#. ── Plugin builtin navigation ─────────────────────────────────────────────────
+msgid "app.plugin.builtin.oryn"
+msgstr "Oryn"
 
 #. ── Plugin builtin navigation ─────────────────────────────────────────────────
 msgid "app.plugin.builtin.performance"
@@ -7288,6 +7328,10 @@ msgstr "知识库"
 #. ── App Shell ────────────────────────────────────────────────────────────────
 msgid "app.shell.mobile.tool.notes"
 msgstr "笔记"
+
+#. ── App Shell ────────────────────────────────────────────────────────────────
+msgid "app.shell.mobile.tool.oryn"
+msgstr "Oryn"
 
 #. ── App Shell ────────────────────────────────────────────────────────────────
 msgid "app.shell.mobile.tool.performance"

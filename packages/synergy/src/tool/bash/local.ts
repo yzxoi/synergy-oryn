@@ -376,7 +376,20 @@ export const LocalBashBackend = {
         await trace("bash.controlled-tmp.error", { error: String(error) }, "warn")
       }
     }
-    if (ghCommandCount > 0 && !sandboxEnv.GH_TOKEN && !sandboxEnv.GITHUB_TOKEN) {
+    // Oryn worker sessions must never receive GitHub credentials. The host
+    // delivers GitHub writes through the controlled publisher with an
+    // ActionReceipt ledger, so a worker that could read the token — via gh,
+    // curl, or a helper script — would bypass it. Strip the injection and
+    // the ambient env entirely for these agents; a string deny on `gh*`
+    // alone would not cover alternative retrieval paths.
+    const orynWorker = typeof ctx.agent === "string" && ctx.agent.startsWith("oryn-")
+    if (orynWorker) {
+      delete sandboxEnv.GH_TOKEN
+      delete sandboxEnv.GITHUB_TOKEN
+      delete sandboxEnv.SSH_AUTH_SOCK
+      delete sandboxEnv.SSH_AGENT_PID
+      await trace("bash.github.token.stripped", { agent: ctx.agent })
+    } else if (ghCommandCount > 0 && !sandboxEnv.GH_TOKEN && !sandboxEnv.GITHUB_TOKEN) {
       const github = await GitHubProvider.resolveToken()
       if (github?.token) {
         // Inject via the child environment only: the token never appears in the

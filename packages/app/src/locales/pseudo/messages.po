@@ -5177,6 +5177,42 @@ msgstr ""
 msgid "app.notification.session.error"
 msgstr ""
 
+#. ── Oryn cases page ─────────────────────────────────────────────────────────
+msgid "app.oryn.back"
+msgstr ""
+
+#. ── Oryn cases page ─────────────────────────────────────────────────────────
+msgid "app.oryn.control.cancel"
+msgstr ""
+
+#. ── Oryn cases page ─────────────────────────────────────────────────────────
+msgid "app.oryn.control.pause"
+msgstr ""
+
+#. ── Oryn cases page ─────────────────────────────────────────────────────────
+msgid "app.oryn.control.resume"
+msgstr ""
+
+#. ── Oryn cases page ─────────────────────────────────────────────────────────
+msgid "app.oryn.control.takeover"
+msgstr ""
+
+#. ── Oryn cases page ─────────────────────────────────────────────────────────
+msgid "app.oryn.empty"
+msgstr ""
+
+#. ── Oryn cases page ─────────────────────────────────────────────────────────
+msgid "app.oryn.refresh"
+msgstr ""
+
+#. js-lingui-explicit-id
+msgid "app.oryn.remote"
+msgstr ""
+
+#. js-lingui-explicit-id
+msgid "app.oryn.stats"
+msgstr ""
+
 #. ── Builtin panel labels ─────────────────────────────────────────────────────
 msgid "app.panel.attachment"
 msgstr ""
@@ -6071,6 +6107,10 @@ msgstr ""
 
 #. ── Plugin builtin navigation ─────────────────────────────────────────────────
 msgid "app.plugin.builtin.library"
+msgstr ""
+
+#. ── Plugin builtin navigation ─────────────────────────────────────────────────
+msgid "app.plugin.builtin.oryn"
 msgstr ""
 
 #. ── Plugin builtin navigation ─────────────────────────────────────────────────
@@ -7287,6 +7327,10 @@ msgstr ""
 
 #. ── App Shell ────────────────────────────────────────────────────────────────
 msgid "app.shell.mobile.tool.notes"
+msgstr ""
+
+#. ── App Shell ────────────────────────────────────────────────────────────────
+msgid "app.shell.mobile.tool.oryn"
 msgstr ""
 
 #. ── App Shell ────────────────────────────────────────────────────────────────
