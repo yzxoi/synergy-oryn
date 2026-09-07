@@ -81,5 +81,6 @@ export namespace OrynPath {
   export const outbox = (entryId: string) => [...outboxRoot(), entryId]
 
   export const channelSource = (sourceKeyHash: string) => ["oryn", "channel_sources", sourceKeyHash]
-  export const channelTurn = (sessionID: string, rootID: string) => ["oryn", "channel_turns", sessionID, rootID]
+  export const channelTurnsRoot = (sessionID: string) => ["oryn", "channel_turns", sessionID]
+  export const channelTurn = (sessionID: string, rootID: string) => [...channelTurnsRoot(sessionID), rootID]
 }

@@ -12,6 +12,8 @@ Channel core resolves configured Oryn Feishu routes before Runtime Boss aggregat
 
 Every accepted Oryn root has a `channel_turns` record pointing to a `channel_sources` record with its original message anchor, chat type, provider scope key, and QA Session. These are new version 1 records under the existing Oryn storage domain; no existing Session or endpoint record is rewritten. The reply tool derives the root from persisted messages, and the service verifies that the recorded turn belongs to the QA source. Later incoming messages do not overwrite earlier reply targets.
 
+The Case tool resolves the calling root from canonical message fields and passes it as Host context, outside model parameters. Intake uses that root’s durable Channel source for the claim and Case anchor. Missing or foreign roots are rejected for Channel-bound QA. The initial Session binding remains immutable; Case get/list/amend and replies also accept linked sources recorded for that same QA Session and matching provider/account/chat/thread. Lists derive from the existing turn records, with no new persistent index or schema. Older Cases retain their original source rather than guessing which later message initiated them.
+
 Oryn foreground delivery uses a silent stream and suppresses status reactions, automatic response cards, attachments and terminal text. The global outbound bridge recognizes the persisted QA binding and drains only explicit reply intents. Feishu connection recovery also requests a drain. Channel assembly installs the provider-owned reply transport with a connection and configured-route readiness check; disconnected sources remain pending. The outbox's uncertain-send rules still apply after transport invocation.
 
 ## Alternatives considered
@@ -24,4 +26,4 @@ Oryn foreground delivery uses a silent stream and suppresses status reactions, a
 
 ## Consequences
 
-The repeatable ingress test covers two topics, duplicate events, follow-up answers on their original message anchors, real reply-tool execution, completion-triggered delivery, silent internal terminal text and an unlisted ordinary chat. It uses synthetic assistant output rather than a model API and does not prove live Feishu behavior or the engineering-to-GitHub chain. Existing Boss and Channel outbound suites verify adjacent delivery behavior.
+The repeatable ingress test covers two topics, duplicate events, follow-up answers and Case submissions on their original message anchors, repeat submission deduplication, same-session Case listing and cross-topic read denial, real reply-tool execution, completion-triggered delivery, silent internal terminal text and an unlisted ordinary chat. It uses synthetic assistant output rather than a model API and does not prove live Feishu behavior or the engineering-to-GitHub chain. Existing Boss and Channel outbound suites verify adjacent delivery behavior.

@@ -211,6 +211,75 @@ export namespace OrynStore {
     return record
   }
 
+  function matchesConversation(binding: SessionSourceBinding, source: ChannelSource, sessionID: string): boolean {
+    return (
+      binding.role === "qa" &&
+      source.qaSessionId === sessionID &&
+      binding.identity?.provider === source.identity.provider &&
+      binding.identity.accountId === source.identity.accountId &&
+      binding.identity.chatId === source.identity.chatId &&
+      binding.identity.threadId === source.identity.threadId
+    )
+  }
+
+  export async function qaTurnSource(sessionID: string, turnID?: string): Promise<SourceIdentity> {
+    const binding = await sessionSourceBinding(sessionID)
+    if (!binding || binding.role !== "qa" || !binding.identity) {
+      throw storeError("NOT_AUTHORIZED", "session has no QA source binding")
+    }
+    if (!turnID) {
+      if (await channelSource(binding.sourceKey)) {
+        throw storeError("NOT_AUTHORIZED", "Channel operation requires its durable root turn")
+      }
+      return binding.identity
+    }
+    const turn = await channelTurn(sessionID, turnID)
+    if (!turn || !matchesConversation(binding, turn, sessionID)) {
+      throw storeError("NOT_AUTHORIZED", "root turn does not belong to this QA source")
+    }
+    return turn.identity
+  }
+
+  async function sessionOwnsSource(sessionID: string, binding: SessionSourceBinding, key: string): Promise<boolean> {
+    if (binding.sourceKey === key) return true
+    const source = await channelSource(key)
+    return source !== undefined && matchesConversation(binding, source, sessionID)
+  }
+
+  export async function getCaseForSession(caseId: string, sessionID: string): Promise<Case> {
+    const binding = await sessionSourceBinding(sessionID)
+    const record = await getCase(caseId)
+    if (
+      !binding ||
+      !record ||
+      !["qa", "engineering", "worker"].includes(binding.role) ||
+      (binding.role !== "qa" && binding.caseId !== caseId)
+    ) {
+      throw storeError("NOT_AUTHORIZED", "case does not belong to this session")
+    }
+    for (const key of record.sourceIds) {
+      if (await sessionOwnsSource(sessionID, binding, key)) return record
+    }
+    throw storeError("NOT_AUTHORIZED", "case has no source owned by this session")
+  }
+
+  export async function listCasesForSession(sessionID: string): Promise<Case[]> {
+    const binding = await sessionSourceBinding(sessionID)
+    if (!binding || binding.role !== "qa") throw storeError("NOT_AUTHORIZED", "session has no QA source binding")
+    const keys = new Set([binding.sourceKey])
+    for (const rootID of await Storage.scan(OrynPath.channelTurnsRoot(sessionID))) {
+      const turn = await channelTurn(sessionID, rootID)
+      if (turn && matchesConversation(binding, turn, sessionID)) keys.add(sourceKey(turn.identity))
+    }
+    const records = new Map<string, Case>()
+    for (const key of keys) {
+      for (const record of await listCasesForSource(key)) {
+        if (record.sourceIds.includes(key)) records.set(record.id, record)
+      }
+    }
+    return [...records.values()]
+  }
+
   async function writeCase(record: Case): Promise<void> {
     await Storage.write(OrynPath.caseInfo(record.id), record)
     const indexScope = Identifier.asScopeID(record.qaScopeId ?? record.workScopeId ?? "global")

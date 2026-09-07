@@ -8,9 +8,9 @@ import { SessionEndpoint } from "../../src/session/endpoint"
 import { SessionInbox } from "../../src/session/inbox"
 import { SessionManager } from "../../src/session/manager"
 import { Channel } from "../../src/channel"
-import { OrynStore } from "../../src/oryn/store"
+import { OrynStore, sourceKey } from "../../src/oryn/store"
 import { OrynService } from "../../src/oryn/service"
-import { OrynReplyTool } from "../../src/oryn/tools"
+import { OrynCaseTool, OrynReplyTool } from "../../src/oryn/tools"
 import { MessageV2 } from "../../src/session/message-v2"
 import { Identifier } from "../../src/id/id"
 import { Bus } from "../../src/bus"
@@ -57,6 +57,7 @@ async function answer(sessionID: string, rootID: string, text: string) {
   const completed = { ...assistant, finish: "stop", time: { ...assistant.time, completed: Date.now() } }
   await Session.updateMessage(completed)
   await Bus.publish(MessageV2.Event.Updated, { info: completed })
+  return assistant.id
 }
 
 test("real Feishu ingress binds separate Oryn topics and persists each source before queue acceptance", async () => {
@@ -87,6 +88,7 @@ test("real Feishu ingress binds separate Oryn topics and persists each source be
     }),
   )
   const sessions: string[] = []
+  const caseIds: string[] = []
   try {
     await ScopeContext.provide({
       scope: Scope.home(),
@@ -150,17 +152,69 @@ test("real Feishu ingress binds separate Oryn topics and persists each source be
               item.deliveryKey?.endsWith(followup.messageId),
             )!
             await SessionInbox.materializeItem(next)
-            await answer(session.id, next.messageID, `Followup ${topic}`)
+            const assistantID = await answer(session.id, next.messageID, `Followup ${topic}`)
             expect(mock.replies.at(-1)).toMatchObject({
               messageId: followup.messageId,
               parts: [{ type: "text", text: `Followup ${topic}` }],
+            })
+            const caseTool = await OrynCaseTool.init()
+            const ctx = {
+              sessionID: session.id,
+              messageID: assistantID,
+              agent: "oryn",
+              abort: new AbortController().signal,
+              metadata() {},
+              async ask() {},
+            }
+            const params = {
+              input: {
+                action: "submit" as const,
+                requestKey: "feedback",
+                kind: "bug" as const,
+                summary: `Issue ${topic}`,
+              },
+            }
+            const submitted = await caseTool.execute(params, ctx)
+            const caseId = String(submitted.metadata.caseId)
+            caseIds.push(caseId)
+            const record = await OrynStore.getCase(caseId)
+            expect(record?.sourceIds).toEqual([
+              sourceKey({
+                provider: "feishu",
+                accountId,
+                chatId: "qa",
+                threadId: scopeKey,
+                messageId: followup.messageId,
+              }),
+            ])
+            expect((await caseTool.execute(params, ctx)).metadata.caseId).toBe(caseId)
+            expect((await caseTool.execute({ input: { action: "get", caseId } }, ctx)).metadata.caseId).toBe(caseId)
+            const listing = await caseTool.execute({ input: { action: "list" } }, ctx)
+            expect(listing.output).toContain(caseId)
+            if (caseIds.length > 1) {
+              expect(listing.output).not.toContain(caseIds[0])
+              await expect(
+                caseTool.execute({ input: { action: "get", caseId: caseIds[0] } }, ctx),
+              ).rejects.toMatchObject({ code: "NOT_AUTHORIZED" })
+            }
+            await OrynService.reply({
+              callerSessionID: session.id,
+              turnID: next.messageID,
+              caseId,
+              kind: "accepted",
+              text: `Accepted ${topic}`,
+            })
+            await OrynService.drainOutbox()
+            expect(mock.replies.at(-1)).toMatchObject({
+              messageId: followup.messageId,
+              parts: [{ type: "text", text: `Accepted ${topic}` }],
             })
           } finally {
             await SessionManager.release(lease, { requestNextWork: false })
           }
         }
         expect(sessions[0]).not.toBe(sessions[1])
-        expect(mock.replies).toHaveLength(4)
+        expect(mock.replies).toHaveLength(6)
         expect(mock.reactions).toHaveLength(0)
         expect(mock.streamingCalls).toHaveLength(0)
         const ordinary = await Session.create({

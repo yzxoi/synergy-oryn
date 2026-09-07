@@ -79,7 +79,7 @@ async function requireBinding(sessionID: string, caseId?: string) {
   if (binding.role !== "qa" && (!binding.caseId || (caseId && caseId !== binding.caseId))) {
     throw toolError("NOT_AUTHORIZED", "case does not belong to this session")
   }
-  if (caseId) await OrynStore.getCaseForSource(caseId, binding.sourceKey)
+  if (caseId) await OrynStore.getCaseForSession(caseId, sessionID)
   return binding
 }
 
@@ -92,8 +92,12 @@ export const OrynCaseTool = Tool.define(
     async execute({ input: params }, ctx): Promise<Tool.ExecutionResult> {
       return execute(async () => {
         if (params.action === "submit") {
+          const message = await MessageV2.get({ sessionID: ctx.sessionID, messageID: ctx.messageID })
+          const turnID =
+            message.info.rootID ?? (message.info.role === "assistant" ? message.info.parentID : message.info.id)
           const result = await OrynService.submitCase({
             callerSessionID: ctx.sessionID,
+            turnID,
             requestKey: params.requestKey,
             kind: params.kind,
             summary: params.summary,
@@ -114,7 +118,7 @@ export const OrynCaseTool = Tool.define(
         }
         if (params.action === "get") {
           const binding = await requireBinding(ctx.sessionID, params.caseId)
-          const record = await OrynStore.getCaseForSource(params.caseId, binding.sourceKey)
+          const record = await OrynStore.getCaseForSession(params.caseId, ctx.sessionID)
           const engineering = await OrynEngineering.get(record.id)
           const attempt =
             binding.role !== "qa" && record.activeAttemptId
@@ -174,7 +178,7 @@ export const OrynCaseTool = Tool.define(
           const binding = await requireBinding(ctx.sessionID)
           const records =
             binding.role === "qa"
-              ? await OrynStore.listCasesForSource(binding.sourceKey)
+              ? await OrynStore.listCasesForSession(ctx.sessionID)
               : [await OrynStore.getCaseForSource(binding.caseId!, binding.sourceKey)]
           return {
             title: `${records.length} case(s)`,
@@ -432,7 +436,8 @@ export const OrynReplyTool = Tool.define(
     async execute(params, ctx): Promise<Tool.ExecutionResult> {
       return execute(async () => {
         const message = await MessageV2.get({ sessionID: ctx.sessionID, messageID: ctx.messageID })
-        const turnID = message.info.role === "assistant" ? message.info.parentID : message.info.id
+        const turnID =
+          message.info.rootID ?? (message.info.role === "assistant" ? message.info.parentID : message.info.id)
         const result = await OrynService.reply({
           callerSessionID: ctx.sessionID,
           turnID,

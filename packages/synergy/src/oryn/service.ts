@@ -146,6 +146,7 @@ export namespace OrynService {
    */
   export async function submitCase(input: {
     callerSessionID: string
+    turnID?: string
     requestKey: string
     kind: "bug" | "feature" | "question" | "performance" | "usage"
     summary: string
@@ -160,7 +161,10 @@ export namespace OrynService {
   }> {
     await requireEnabled()
     const binding = await requireBinding(input.callerSessionID, ["qa"])
-    const identity = feishuIdentity(binding)
+    const identity = feishuIdentity({
+      ...binding,
+      identity: await OrynStore.qaTurnSource(input.callerSessionID, input.turnID),
+    })
     const oryn = await OrynConfig.info()
     const repoAlias = OrynConfig.resolveRepoAlias(oryn, { accountId: identity.accountId, chatId: identity.chatId })
     if (!repoAlias) {
@@ -876,7 +880,7 @@ export namespace OrynService {
     if (caseId && binding.caseId && binding.caseId !== caseId) {
       throw storeError("NOT_AUTHORIZED", "case does not belong to this session")
     }
-    const record = caseId ? await OrynStore.getCaseForSource(caseId, binding.sourceKey) : undefined
+    const record = caseId ? await OrynStore.getCaseForSession(caseId, input.callerSessionID) : undefined
     const turn = input.turnID ? await OrynStore.channelTurn(input.callerSessionID, input.turnID) : undefined
     if (input.turnID && !turn && (await OrynStore.channelSource(binding.sourceKey))) {
       throw storeError("NOT_AUTHORIZED", "reply turn has no durable Channel source")

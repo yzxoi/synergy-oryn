@@ -3,7 +3,7 @@ import { Scope } from "../../src/scope"
 import { ScopeContext } from "../../src/scope/context"
 import { OrynService } from "../../src/oryn/service"
 import { OrynExecutor } from "../../src/oryn/executor"
-import { OrynStore } from "../../src/oryn/store"
+import { OrynStore, sourceKey } from "../../src/oryn/store"
 import { tmpdir, runCheck, runBaseline } from "./fixture"
 
 const orynEnabledConfig = {
@@ -76,6 +76,53 @@ describe("OrynService case submission", () => {
         summary: "unrelated question",
       })
       expect(second.caseId).not.toBe(first.caseId)
+    })
+  })
+
+  test("Channel submissions require their owned root and isolate follow-up cases", async () => {
+    await withScope(async () => {
+      const identity = feishuIdentity(`turn_${crypto.randomUUID()}`)
+      const sessionID = `qa_${crypto.randomUUID()}`
+      const otherID = `qa_${crypto.randomUUID()}`
+      await OrynStore.bindSessionSource({ sessionID, identity, role: "qa" })
+      await OrynStore.bindSessionSource({
+        sessionID: otherID,
+        identity: { ...identity, messageId: "other" },
+        role: "qa",
+      })
+      await OrynStore.recordChannelTurn({ sessionID, rootID: "first", identity, chatType: "group" })
+      const followup = { ...identity, messageId: "followup" }
+      await OrynStore.recordChannelTurn({ sessionID, rootID: "second", identity: followup, chatType: "group" })
+      const input = {
+        callerSessionID: sessionID,
+        requestKey: "same-model-key",
+        kind: "bug" as const,
+        summary: "Broken",
+      }
+      await expect(OrynService.submitCase(input)).rejects.toMatchObject({ data: { code: "NOT_AUTHORIZED" } })
+      await expect(OrynService.submitCase({ ...input, turnID: "missing" })).rejects.toMatchObject({
+        data: { code: "NOT_AUTHORIZED" },
+      })
+      const first = await OrynService.submitCase({ ...input, turnID: "first" })
+      const second = await OrynService.submitCase({ ...input, turnID: "second" })
+      expect(first.caseId).not.toBe(second.caseId)
+      expect((await OrynStore.getCase(second.caseId))?.sourceIds).toEqual([sourceKey(followup)])
+      expect((await OrynStore.listCasesForSession(sessionID)).map((record) => record.id).sort()).toEqual(
+        [first.caseId, second.caseId].sort(),
+      )
+      await expect(OrynStore.getCaseForSession(second.caseId, otherID)).rejects.toMatchObject({
+        data: { code: "NOT_AUTHORIZED" },
+      })
+      expect(await OrynStore.listCasesForSession(otherID)).toEqual([])
+      await OrynStore.recordChannelTurn({
+        sessionID,
+        rootID: "foreign",
+        identity: { ...followup, chatId: "another-chat", messageId: "forged" },
+        chatType: "group",
+      })
+      await expect(OrynService.submitCase({ ...input, turnID: "foreign" })).rejects.toMatchObject({
+        data: { code: "NOT_AUTHORIZED" },
+      })
     })
   })
 

@@ -38,6 +38,8 @@ Feishu derives an endpoint `scopeKey` from the account's `groupSessionScope`. To
 
 Explicit Oryn Feishu routes select the QA agent before Runtime Boss aggregation and use a separate endpoint scope-key namespace. Group accounts require `group_thread`. Channel core persists the QA source binding and a per-root reply target before Inbox acceptance. Ordinary routes retain their endpoint keys and delivery behavior.
 
+Case submission derives its source from the persisted calling root, so follow-up feedback keeps its own message anchor. QA Case reads and amendments require either the original bound source or a linked Channel source owned by that exact QA Session and conversation; sharing an account, group or thread name alone does not grant access. Case listing uses the existing per-root source records and deduplicates linked Cases.
+
 Oryn foreground streams, reactions and automatic terminal artifacts are silent. The outbound bridge consumes persisted QA reply intents through the provider transport; connection recovery retries only definitely unsent pending intents. Per-root targets preserve the originating message, provider scope key and chat type, while uncertain sends never replay automatically. See the [ingress decision](../decisions/implemented/architecture/2026-09-08-oryn-feishu-ingress.md) and [notification settlement](../decisions/implemented/architecture/2026-09-08-oryn-notification-settlement.md).
 
 ## Provider and Transport Lifecycle
