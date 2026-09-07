@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test"
 import path from "node:path"
+import { tmpdir } from "../fixture/fixture"
 
 interface ShutdownProbe {
   response: { status: number; body: unknown }
@@ -9,6 +10,7 @@ interface ShutdownProbe {
 }
 
 async function runShutdownProbe(): Promise<ShutdownProbe> {
+  await using home = await tmpdir()
   const script = String.raw`
     const { Log } = await import("./src/util/log")
     Log.init({ print: false })
@@ -59,7 +61,7 @@ async function runShutdownProbe(): Promise<ShutdownProbe> {
   `
   const child = Bun.spawn([process.execPath, "--conditions=browser", "-e", script], {
     cwd: path.resolve(import.meta.dir, "../.."),
-    env: process.env,
+    env: { ...process.env, SYNERGY_TEST_HOME: home.path },
     stdout: "pipe",
     stderr: "pipe",
   })
