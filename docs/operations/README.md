@@ -6,5 +6,6 @@ These documents describe repeatable maintenance and release procedures for the c
 - [Desktop release](desktop-release.md) — Electron packaging, signing, updater artifacts, publication, and recovery.
 - [Qizhi Synergy Link](qizhi-synergy-link.md) — shared-filesystem deployment, verification, recovery, and credential rotation for Synergy Link hosts
 - [Performance observability](performance-observability.md) — runtime telemetry, retention, APIs, dashboards, and measurement tools.
+- [Oryn deployment](oryn-deployment.md) — feedback-to-PR runtime preflight, channel test apps, minimal GitHub App scopes, quotas, delivery-check gating, and backup/recovery.
 
 Product usage belongs in [product documentation](../product/overview.md); source-development commands belong in the [development reference](../reference/development.md). Investigation results and one-time measurements belong in [research](../research/README.md).
