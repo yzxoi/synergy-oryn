@@ -19095,9 +19095,9 @@
         ]
       }
     },
-    "/asset": {
-      "post": {
-        "operationId": "asset.upload",
+    "/oryn/cases": {
+      "get": {
+        "operationId": "oryn.case.list",
         "parameters": [
           {
             "in": "query",
@@ -19114,15 +19114,15 @@
             }
           }
         ],
-        "summary": "Upload asset",
-        "description": "Upload a binary asset (image, video, etc.) and get a reference URL.",
+        "summary": "List Oryn cases",
+        "description": "List engineering cases with optional repository and control-state filters.",
         "responses": {
           "200": {
-            "description": "Uploaded asset info",
+            "description": "Case list",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AssetInfo"
+                  "$ref": "#/components/schemas/OrynCaseListResponse"
                 }
               }
             }
@@ -19148,30 +19148,17 @@
             }
           }
         },
-        "requestBody": {
-          "content": {
-            "multipart/form-data": {
-              "schema": {
-                "type": "object",
-                "properties": {
-                  "file": {}
-                },
-                "required": ["file"]
-              }
-            }
-          }
-        },
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createSynergyClient } from \"@ericsanchezok/synergy-sdk\"\n\nconst client = createSynergyClient()\nawait client.asset.upload({\n  ...\n})"
+            "source": "import { createSynergyClient } from \"@ericsanchezok/synergy-sdk\"\n\nconst client = createSynergyClient()\nawait client.oryn.case.list({\n  ...\n})"
           }
         ]
       }
     },
-    "/asset/{id}": {
+    "/oryn/cases/{id}": {
       "get": {
-        "operationId": "asset.get",
+        "operationId": "oryn.case.get",
         "parameters": [
           {
             "in": "query",
@@ -19188,19 +19175,37 @@
             }
           },
           {
-            "schema": {
-              "type": "string"
-            },
             "in": "path",
             "name": "id",
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
             "required": true
           }
         ],
-        "summary": "Get asset",
-        "description": "Download a previously uploaded asset.",
+        "summary": "Get an Oryn case",
+        "description": "Return the redacted case record including control state and round counters.",
         "responses": {
           "200": {
-            "description": "Asset binary"
+            "description": "Case detail",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrynCaseDetailResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
+                }
+              }
+            }
           },
           "404": {
             "description": "Not found",
@@ -19226,7 +19231,195 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createSynergyClient } from \"@ericsanchezok/synergy-sdk\"\n\nconst client = createSynergyClient()\nawait client.asset.get({\n  ...\n})"
+            "source": "import { createSynergyClient } from \"@ericsanchezok/synergy-sdk\"\n\nconst client = createSynergyClient()\nawait client.oryn.case.get({\n  ...\n})"
+          }
+        ]
+      }
+    },
+    "/oryn/cases/{id}/attempts/{attemptId}": {
+      "get": {
+        "operationId": "oryn.case.attempt.get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "directory",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "scopeID",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "id",
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true
+          },
+          {
+            "in": "path",
+            "name": "attemptId",
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true
+          }
+        ],
+        "summary": "Get an Oryn attempt",
+        "description": "Return one candidate validation cycle with its assignments, runs, and reviews.",
+        "responses": {
+          "200": {
+            "description": "Attempt detail",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrynAttemptResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotFoundError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Runtime shutting down",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RuntimeShuttingDownError"
+                }
+              }
+            }
+          }
+        },
+        "x-codeSamples": [
+          {
+            "lang": "js",
+            "source": "import { createSynergyClient } from \"@ericsanchezok/synergy-sdk\"\n\nconst client = createSynergyClient()\nawait client.oryn.case.attempt.get({\n  ...\n})"
+          }
+        ]
+      }
+    },
+    "/oryn/cases/{id}/control": {
+      "post": {
+        "operationId": "oryn.case.control",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "directory",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "scopeID",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "id",
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true
+          }
+        ],
+        "summary": "Control an Oryn case",
+        "description": "Human operator control transition (pause, resume, takeover, cancel) with compare-and-set on the case revision. Takeover and cancel bump the case epoch so in-flight external actions become stale.",
+        "responses": {
+          "200": {
+            "description": "Updated case",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrynCaseDetailResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotFoundError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoteConflictError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Runtime shutting down",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RuntimeShuttingDownError"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OrynControlInput"
+              }
+            }
+          }
+        },
+        "x-codeSamples": [
+          {
+            "lang": "js",
+            "source": "import { createSynergyClient } from \"@ericsanchezok/synergy-sdk\"\n\nconst client = createSynergyClient()\nawait client.oryn.case.control({\n  ...\n})"
           }
         ]
       }
@@ -34327,6 +34520,284 @@
         },
         "additionalProperties": false
       },
+      "OrynRouteConfig": {
+        "type": "object",
+        "properties": {
+          "feishuAccount": {
+            "description": "Feishu channel account ID that accepts feedback through Oryn",
+            "type": "string",
+            "minLength": 1
+          },
+          "chats": {
+            "description": "Optional chat ID allowlist. Unset means every group chat on the account is handled",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "repoAlias": {
+            "description": "Repository alias (from oryn.repositories) that feedback is routed to",
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": ["feishuAccount", "repoAlias"],
+        "additionalProperties": false
+      },
+      "OrynPublishOperationConfig": {
+        "type": "string",
+        "enum": ["ensure_issue", "ensure_draft", "refresh_pr", "publish_review", "mark_ready"]
+      },
+      "OrynRepositoryConfig": {
+        "type": "object",
+        "properties": {
+          "owner": {
+            "description": "GitHub owner (user or organization)",
+            "type": "string",
+            "minLength": 1
+          },
+          "repo": {
+            "description": "Repository name",
+            "type": "string",
+            "minLength": 1
+          },
+          "baseBranch": {
+            "description": "Base branch automated pull requests target (default: dev)",
+            "type": "string",
+            "minLength": 1
+          },
+          "githubAccount": {
+            "description": "GitHub channel account ID used for publishing",
+            "type": "string",
+            "minLength": 1
+          },
+          "workRoot": {
+            "description": "Directory under which case worktrees are created. Must live outside the runtime home",
+            "type": "string",
+            "minLength": 1
+          },
+          "allowedOperations": {
+            "description": "Publishing operations allowed for this repository (default: all five)",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OrynPublishOperationConfig"
+            }
+          },
+          "testProfiles": {
+            "description": "Execution profile IDs (from oryn.executionProfiles) available for verification on this repository",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": ["owner", "repo"],
+        "additionalProperties": false
+      },
+      "OrynReviewConfig": {
+        "description": "Review and bounded rework policy",
+        "type": "object",
+        "properties": {
+          "maxRepairRounds": {
+            "description": "Automatic repair/re-review rounds per candidate before handing off to a human (default: 3)",
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "maxNoProgressRounds": {
+            "description": "Consecutive rounds without verifiable progress before handing off (default: 2)",
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          }
+        },
+        "additionalProperties": false
+      },
+      "OrynLimitsConfig": {
+        "description": "Concurrency, budget, and output limits",
+        "type": "object",
+        "properties": {
+          "maxActiveCases": {
+            "description": "Maximum concurrently active cases (default: 4)",
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "maxConcurrentWorkers": {
+            "description": "Maximum concurrently running worker sessions across cases (default: 6)",
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "heavyConcurrency": {
+            "description": "Concurrent heavy build/test lanes shared by all cases (default: 2)",
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "lightConcurrency": {
+            "description": "Concurrent light read/analyze lanes (default: 6)",
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "maxCaseMinutes": {
+            "description": "Wall-clock budget per case in minutes. Exhaustion requires human handoff (default: 720)",
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "maxCaseTokens": {
+            "description": "Model token budget per case. Exhaustion requires human handoff",
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "maxOutputChars": {
+            "description": "Maximum model-visible output size per tool result (default: 20000)",
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "maxArtifactBytes": {
+            "description": "Maximum retained artifact size per run receipt",
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          }
+        },
+        "additionalProperties": false
+      },
+      "OrynIsolationModeConfig": {
+        "description": "Isolation strategy: worktree (directory separation only), sandbox (OS-level), external_vm (offload to an approved VM)",
+        "type": "string",
+        "enum": ["worktree", "sandbox", "external_vm"]
+      },
+      "OrynExecutionProfileConfig": {
+        "type": "object",
+        "properties": {
+          "description": {
+            "description": "What this profile is for, e.g. server-side unit tests",
+            "type": "string"
+          },
+          "requiredCapabilities": {
+            "description": "Isolation capabilities the host must verify before this profile may run",
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": ["uid", "namespace", "seccomp", "cgroup", "browser", "network_egress"]
+            }
+          },
+          "commandAllowlist": {
+            "description": "Exact executable names this profile may run (for example: bun, node, git)",
+            "minItems": 1,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "isolation": {
+            "$ref": "#/components/schemas/OrynIsolationModeConfig"
+          },
+          "maxConcurrent": {
+            "description": "Lane concurrency for this profile (default: 1)",
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "timeoutSeconds": {
+            "description": "Maximum wall-clock seconds for one run under this profile (default: 1800)",
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": ["commandAllowlist"],
+        "additionalProperties": false
+      },
+      "OrynNotificationsConfig": {
+        "description": "Silent delivery policy for Feishu results",
+        "type": "object",
+        "properties": {
+          "kinds": {
+            "description": "Result kinds delivered back to Feishu (default: all six). Process noise such as tool calls, worker reports, and retries is never delivered regardless of this setting",
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": ["answer", "clarification", "accepted", "needs_human", "ready", "released"]
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "OrynLearningConfig": {
+        "description": "Verified memory promotion and reward policy",
+        "type": "object",
+        "properties": {
+          "verifiedMemory": {
+            "description": "Allow promotion of verified, evidence-backed lessons into shared Library memory (default: false)",
+            "type": "boolean"
+          },
+          "autoReward": {
+            "description": "Automatically write Experience rewards from case outcomes. Default: false until the reward API provides event idempotency",
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
+      "OrynConfig": {
+        "description": "Oryn feedback-to-PR runtime configuration (requires explicit enable)",
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "description": "Enable the Oryn feedback-to-PR runtime. Default: false. Existing Synergy channel, Boss, Feishu, and GitHub behavior is unchanged while disabled",
+            "type": "boolean"
+          },
+          "routes": {
+            "description": "Explicit Feishu account/chat to repository routing. Unknown targets require clarification, never a default repo",
+            "minItems": 1,
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OrynRouteConfig"
+            }
+          },
+          "repositories": {
+            "description": "Repository alias to target repository mapping",
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {
+              "$ref": "#/components/schemas/OrynRepositoryConfig"
+            }
+          },
+          "review": {
+            "$ref": "#/components/schemas/OrynReviewConfig"
+          },
+          "limits": {
+            "$ref": "#/components/schemas/OrynLimitsConfig"
+          },
+          "executionProfiles": {
+            "description": "Named verification environments with capability and command rules",
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {
+              "$ref": "#/components/schemas/OrynExecutionProfileConfig"
+            }
+          },
+          "notifications": {
+            "$ref": "#/components/schemas/OrynNotificationsConfig"
+          },
+          "learning": {
+            "$ref": "#/components/schemas/OrynLearningConfig"
+          }
+        },
+        "required": ["routes", "repositories"],
+        "additionalProperties": false
+      },
       "LayoutConfig": {
         "description": "@deprecated Always uses stretch layout.",
         "type": "string",
@@ -34916,6 +35387,9 @@
           },
           "github": {
             "$ref": "#/components/schemas/GithubConfig"
+          },
+          "oryn": {
+            "$ref": "#/components/schemas/OrynConfig"
           },
           "formatter": {
             "anyOf": [
@@ -44986,23 +45460,257 @@
         "required": ["sessionID"],
         "additionalProperties": false
       },
-      "AssetInfo": {
+      "OrynCaseListItem": {
         "type": "object",
         "properties": {
           "id": {
             "type": "string"
           },
-          "url": {
+          "revision": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "kind": {
             "type": "string"
           },
-          "mime": {
+          "summary": {
             "type": "string"
           },
-          "size": {
-            "type": "number"
+          "repoAlias": {
+            "type": "string"
+          },
+          "control": {
+            "type": "string"
+          },
+          "activeAttemptId": {
+            "type": "string"
+          },
+          "issueNumber": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "createdAt": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "updatedAt": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
           }
         },
-        "required": ["id", "url", "mime", "size"]
+        "required": ["id", "revision", "kind", "summary", "repoAlias", "control", "createdAt", "updatedAt"],
+        "additionalProperties": false
+      },
+      "OrynCaseListResponse": {
+        "type": "object",
+        "properties": {
+          "cases": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OrynCaseListItem"
+            }
+          }
+        },
+        "required": ["cases"],
+        "additionalProperties": false
+      },
+      "OrynCaseDetailResponse": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "kind": {
+            "type": "string"
+          },
+          "summary": {
+            "type": "string"
+          },
+          "observed": {
+            "type": "string"
+          },
+          "expected": {
+            "type": "string"
+          },
+          "repoAlias": {
+            "type": "string"
+          },
+          "control": {
+            "type": "string"
+          },
+          "acceptanceRevision": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "epoch": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "repairRounds": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "noProgressRounds": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "activeAttemptId": {
+            "type": "string"
+          },
+          "issueNumber": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "pullNumbers": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            }
+          },
+          "sourceCount": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "humanDecisions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "createdAt": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "updatedAt": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "id",
+          "revision",
+          "kind",
+          "summary",
+          "repoAlias",
+          "control",
+          "acceptanceRevision",
+          "epoch",
+          "repairRounds",
+          "noProgressRounds",
+          "pullNumbers",
+          "sourceCount",
+          "humanDecisions",
+          "createdAt",
+          "updatedAt"
+        ],
+        "additionalProperties": false
+      },
+      "OrynAttemptResponse": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "caseId": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "baselineSha": {
+            "type": "string"
+          },
+          "candidateSha": {
+            "type": "string"
+          },
+          "baseBranchSha": {
+            "type": "string"
+          },
+          "disposition": {
+            "type": "string"
+          },
+          "assignmentIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "evidenceRunIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "reviewIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "invalidationReason": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "updatedAt": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "id",
+          "caseId",
+          "revision",
+          "baselineSha",
+          "disposition",
+          "assignmentIds",
+          "evidenceRunIds",
+          "reviewIds",
+          "createdAt",
+          "updatedAt"
+        ],
+        "additionalProperties": false
+      },
+      "OrynControlInput": {
+        "type": "object",
+        "properties": {
+          "expectedRevision": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "action": {
+            "type": "string",
+            "enum": ["pause", "resume", "takeover", "cancel"]
+          }
+        },
+        "required": ["expectedRevision", "action"],
+        "additionalProperties": false
       },
       "VoiceTranscriptionResult": {
         "type": "object",

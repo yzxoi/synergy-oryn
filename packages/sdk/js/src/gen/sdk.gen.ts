@@ -57,10 +57,6 @@ import type {
   AppAgentsResponses,
   AppLogErrors,
   AppLogResponses,
-  AssetGetErrors,
-  AssetGetResponses,
-  AssetUploadErrors,
-  AssetUploadResponses,
   AttachmentModelPolicy,
   AttachmentPartInput,
   AttachmentPresentation,
@@ -396,6 +392,15 @@ import type {
   NoteUpdateResponses,
   ObservabilityDiagnosticsSummaryErrors,
   ObservabilityDiagnosticsSummaryResponses,
+  OrynCaseAttemptGetErrors,
+  OrynCaseAttemptGetResponses,
+  OrynCaseControlErrors,
+  OrynCaseControlResponses,
+  OrynCaseGetErrors,
+  OrynCaseGetResponses,
+  OrynCaseListErrors,
+  OrynCaseListResponses,
+  OrynControlInput,
   Part as Part2,
   PartDeleteErrors,
   PartDeleteResponses,
@@ -10229,17 +10234,52 @@ export class Boss extends HeyApiClient {
   session = new Session({ client: this.client })
 }
 
-export class Asset extends HeyApiClient {
+export class Attempt extends HeyApiClient {
   /**
-   * Upload asset
+   * Get an Oryn attempt
    *
-   * Upload a binary asset (image, video, etc.) and get a reference URL.
+   * Return one candidate validation cycle with its assignments, runs, and reviews.
    */
-  public upload<ThrowOnError extends boolean = false>(
+  public get<ThrowOnError extends boolean = false>(
+    parameters: {
+      id: string
+      attemptId: string
+      directory?: string
+      scopeID?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "id" },
+            { in: "path", key: "attemptId" },
+            { in: "query", key: "directory" },
+            { in: "query", key: "scopeID" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).get<OrynCaseAttemptGetResponses, OrynCaseAttemptGetErrors, ThrowOnError>({
+      url: "/oryn/cases/{id}/attempts/{attemptId}",
+      ...options,
+      ...params,
+    })
+  }
+}
+
+export class Case extends HeyApiClient {
+  /**
+   * List Oryn cases
+   *
+   * List engineering cases with optional repository and control-state filters.
+   */
+  public list<ThrowOnError extends boolean = false>(
     parameters?: {
       directory?: string
       scopeID?: string
-      file?: unknown
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -10250,28 +10290,21 @@ export class Asset extends HeyApiClient {
           args: [
             { in: "query", key: "directory" },
             { in: "query", key: "scopeID" },
-            { in: "body", key: "file" },
           ],
         },
       ],
     )
-    return (options?.client ?? this.client).post<AssetUploadResponses, AssetUploadErrors, ThrowOnError>({
-      ...formDataBodySerializer,
-      url: "/asset",
+    return (options?.client ?? this.client).get<OrynCaseListResponses, OrynCaseListErrors, ThrowOnError>({
+      url: "/oryn/cases",
       ...options,
       ...params,
-      headers: {
-        "Content-Type": null,
-        ...options?.headers,
-        ...params.headers,
-      },
     })
   }
 
   /**
-   * Get asset
+   * Get an Oryn case
    *
-   * Download a previously uploaded asset.
+   * Return the redacted case record including control state and round counters.
    */
   public get<ThrowOnError extends boolean = false>(
     parameters: {
@@ -10293,12 +10326,57 @@ export class Asset extends HeyApiClient {
         },
       ],
     )
-    return (options?.client ?? this.client).get<AssetGetResponses, AssetGetErrors, ThrowOnError>({
-      url: "/asset/{id}",
+    return (options?.client ?? this.client).get<OrynCaseGetResponses, OrynCaseGetErrors, ThrowOnError>({
+      url: "/oryn/cases/{id}",
       ...options,
       ...params,
     })
   }
+
+  /**
+   * Control an Oryn case
+   *
+   * Human operator control transition (pause, resume, takeover, cancel) with compare-and-set on the case revision. Takeover and cancel bump the case epoch so in-flight external actions become stale.
+   */
+  public control<ThrowOnError extends boolean = false>(
+    parameters: {
+      id: string
+      directory?: string
+      scopeID?: string
+      orynControlInput?: OrynControlInput
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "id" },
+            { in: "query", key: "directory" },
+            { in: "query", key: "scopeID" },
+            { key: "orynControlInput", map: "body" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).post<OrynCaseControlResponses, OrynCaseControlErrors, ThrowOnError>({
+      url: "/oryn/cases/{id}/control",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    })
+  }
+
+  attempt = new Attempt({ client: this.client })
+}
+
+export class Oryn extends HeyApiClient {
+  case = new Case({ client: this.client })
 }
 
 export class Voice extends HeyApiClient {
@@ -12373,7 +12451,7 @@ export class SynergyClient extends HeyApiClient {
 
   boss = new Boss({ client: this.client })
 
-  asset = new Asset({ client: this.client })
+  oryn = new Oryn({ client: this.client })
 
   voice = new Voice({ client: this.client })
 

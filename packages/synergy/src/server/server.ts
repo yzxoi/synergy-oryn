@@ -78,6 +78,7 @@ import { BlueprintRoute } from "./blueprint"
 import { LatticeRoute } from "./lattice"
 import { WorkflowRoute } from "./workflow"
 import { BossRoute } from "./boss"
+import { OrynRoute } from "./oryn"
 import { RuntimeReload } from "../runtime/reload"
 import { ObservabilityRoute } from "./observability-route"
 import { PerformanceRoute } from "./performance-route"
@@ -1353,7 +1354,7 @@ export namespace Server {
         .route("/lattice", LatticeRoute)
         .route("/workflow", WorkflowRoute)
         .route("/boss", BossRoute)
-        .route("/asset", AssetRoute)
+        .route("/oryn", OrynRoute)
         .route("/voice", VoiceRoute)
         .route("/holos", HolosDataRoute)
         .route("", BrowserRoute)

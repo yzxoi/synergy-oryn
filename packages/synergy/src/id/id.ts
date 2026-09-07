@@ -40,6 +40,14 @@ export namespace Identifier {
     lattice_action: "lta",
     lattice_effect: "lfe",
     history: "hst",
+    oryn_case: "orc",
+    oryn_attempt: "ort",
+    oryn_assignment: "orn",
+    oryn_run: "oru",
+    oryn_review: "orv",
+    oryn_action: "orx",
+    oryn_learning: "orl",
+    oryn_claim: "orq",
   } as const
 
   export function schema(prefix: keyof typeof prefixes) {

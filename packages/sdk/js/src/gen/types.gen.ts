@@ -7745,11 +7745,64 @@ export type BossSessionOpenResult = {
   sessionID: string
 }
 
-export type AssetInfo = {
+export type OrynCaseListItem = {
   id: string
-  url: string
-  mime: string
-  size: number
+  revision: number
+  kind: string
+  summary: string
+  repoAlias: string
+  control: string
+  activeAttemptId?: string
+  issueNumber?: number
+  createdAt: number
+  updatedAt: number
+}
+
+export type OrynCaseListResponse = {
+  cases: Array<OrynCaseListItem>
+}
+
+export type OrynCaseDetailResponse = {
+  id: string
+  revision: number
+  kind: string
+  summary: string
+  observed?: string
+  expected?: string
+  repoAlias: string
+  control: string
+  acceptanceRevision: number
+  epoch: number
+  repairRounds: number
+  noProgressRounds: number
+  activeAttemptId?: string
+  issueNumber?: number
+  pullNumbers: Array<number>
+  sourceCount: number
+  humanDecisions: Array<string>
+  createdAt: number
+  updatedAt: number
+}
+
+export type OrynAttemptResponse = {
+  id: string
+  caseId: string
+  revision: number
+  baselineSha: string
+  candidateSha?: string
+  baseBranchSha?: string
+  disposition: string
+  assignmentIds: Array<string>
+  evidenceRunIds: Array<string>
+  reviewIds: Array<string>
+  invalidationReason?: string
+  createdAt: number
+  updatedAt: number
+}
+
+export type OrynControlInput = {
+  expectedRevision: number
+  action: "pause" | "resume" | "takeover" | "cancel"
 }
 
 export type VoiceTranscriptionResult = {
@@ -18668,19 +18721,17 @@ export type BossSessionOpenResponses = {
 
 export type BossSessionOpenResponse = BossSessionOpenResponses[keyof BossSessionOpenResponses]
 
-export type AssetUploadData = {
-  body?: {
-    file: unknown
-  }
+export type OrynCaseListData = {
+  body?: never
   path?: never
   query?: {
     directory?: string
     scopeID?: string
   }
-  url: "/asset"
+  url: "/oryn/cases"
 }
 
-export type AssetUploadErrors = {
+export type OrynCaseListErrors = {
   /**
    * Bad request
    */
@@ -18691,18 +18742,18 @@ export type AssetUploadErrors = {
   503: RuntimeShuttingDownError
 }
 
-export type AssetUploadError = AssetUploadErrors[keyof AssetUploadErrors]
+export type OrynCaseListError = OrynCaseListErrors[keyof OrynCaseListErrors]
 
-export type AssetUploadResponses = {
+export type OrynCaseListResponses = {
   /**
-   * Uploaded asset info
+   * Case list
    */
-  200: AssetInfo
+  200: OrynCaseListResponse
 }
 
-export type AssetUploadResponse = AssetUploadResponses[keyof AssetUploadResponses]
+export type OrynCaseListResponse2 = OrynCaseListResponses[keyof OrynCaseListResponses]
 
-export type AssetGetData = {
+export type OrynCaseGetData = {
   body?: never
   path: {
     id: string
@@ -18711,10 +18762,14 @@ export type AssetGetData = {
     directory?: string
     scopeID?: string
   }
-  url: "/asset/{id}"
+  url: "/oryn/cases/{id}"
 }
 
-export type AssetGetErrors = {
+export type OrynCaseGetErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
   /**
    * Not found
    */
@@ -18725,14 +18780,97 @@ export type AssetGetErrors = {
   503: RuntimeShuttingDownError
 }
 
-export type AssetGetError = AssetGetErrors[keyof AssetGetErrors]
+export type OrynCaseGetError = OrynCaseGetErrors[keyof OrynCaseGetErrors]
 
-export type AssetGetResponses = {
+export type OrynCaseGetResponses = {
   /**
-   * Asset binary
+   * Case detail
    */
-  200: unknown
+  200: OrynCaseDetailResponse
 }
+
+export type OrynCaseGetResponse = OrynCaseGetResponses[keyof OrynCaseGetResponses]
+
+export type OrynCaseAttemptGetData = {
+  body?: never
+  path: {
+    id: string
+    attemptId: string
+  }
+  query?: {
+    directory?: string
+    scopeID?: string
+  }
+  url: "/oryn/cases/{id}/attempts/{attemptId}"
+}
+
+export type OrynCaseAttemptGetErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+  /**
+   * Not found
+   */
+  404: NotFoundError
+  /**
+   * Runtime shutting down
+   */
+  503: RuntimeShuttingDownError
+}
+
+export type OrynCaseAttemptGetError = OrynCaseAttemptGetErrors[keyof OrynCaseAttemptGetErrors]
+
+export type OrynCaseAttemptGetResponses = {
+  /**
+   * Attempt detail
+   */
+  200: OrynAttemptResponse
+}
+
+export type OrynCaseAttemptGetResponse = OrynCaseAttemptGetResponses[keyof OrynCaseAttemptGetResponses]
+
+export type OrynCaseControlData = {
+  body?: OrynControlInput
+  path: {
+    id: string
+  }
+  query?: {
+    directory?: string
+    scopeID?: string
+  }
+  url: "/oryn/cases/{id}/control"
+}
+
+export type OrynCaseControlErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+  /**
+   * Not found
+   */
+  404: NotFoundError
+  /**
+   * Conflict
+   */
+  409: NoteConflictError
+  /**
+   * Runtime shutting down
+   */
+  503: RuntimeShuttingDownError
+}
+
+export type OrynCaseControlError = OrynCaseControlErrors[keyof OrynCaseControlErrors]
+
+export type OrynCaseControlResponses = {
+  /**
+   * Updated case
+   */
+  200: OrynCaseDetailResponse
+}
+
+export type OrynCaseControlResponse = OrynCaseControlResponses[keyof OrynCaseControlResponses]
 
 export type VoiceTranscribeData = {
   body?: {
