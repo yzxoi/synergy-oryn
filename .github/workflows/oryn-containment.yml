@@ -33,4 +33,4 @@ jobs:
           bash script/prepare-linux-test-sandbox.sh
       - name: Exercise the actual Oryn sandbox and scheduler
         working-directory: packages/synergy
-        run: bun test test/oryn/sandbox.test.ts test/oryn/workspaces.test.ts test/oryn/review.test.ts test/sandbox/explicit-profile.test.ts
+        run: bun test test/oryn/sandbox.test.ts test/oryn/workspaces.test.ts test/oryn/review.test.ts test/sandbox/explicit-profile.test.ts test/sandbox/backend.test.ts test/sandbox/linux-multi-root.test.ts

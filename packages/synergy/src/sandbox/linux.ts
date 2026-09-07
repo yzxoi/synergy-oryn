@@ -626,7 +626,7 @@ export namespace LinuxBackend {
         workspace,
         readableRoots: [
           workspace,
-          ...(opts.runtimeReadRoots ?? defaultRuntimeReadRoots(homedir)),
+          ...(opts.runtimeReadRoots ?? defaultRuntimeReadRoots(homedir).filter((root) => fs.existsSync(root))),
           ...(opts.extraReadRoots ?? []),
           ...networkConfigRoots,
         ],
