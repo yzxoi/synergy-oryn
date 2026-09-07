@@ -318,3 +318,48 @@ export const OrynErrorCodes = [
   "REMOTE_AMBIGUOUS",
 ] as const
 export type OrynErrorCode = (typeof OrynErrorCodes)[number]
+
+export const ReportKind = z.enum(["repro", "candidate", "verification", "review_note"])
+export type ReportKind = z.infer<typeof ReportKind>
+
+export const WorkerReport = z
+  .object({
+    schemaVersion: z.literal(1),
+    id: z.string().min(1),
+    caseId: z.string().min(1),
+    attemptId: z.string().min(1),
+    assignmentId: z.string().min(1),
+    requestKey: z.string().min(1),
+    epoch: z.number().int().nonnegative(),
+    kind: ReportKind,
+    outcome: z.string().min(1),
+    summary: z.string().min(1),
+    localBranch: z.string().optional(),
+    candidateSha: z.string().optional(),
+    runIds: z.array(z.string()).max(32).default([]),
+    addressedFindings: z.array(z.string()).max(64).default([]),
+    knownRisks: z.array(z.string()).max(16).default([]),
+    limitations: z.array(z.string()).max(16).default([]),
+    createdAt: z.number().int().positive(),
+  })
+  .strict()
+export type WorkerReport = z.infer<typeof WorkerReport>
+
+export const ReplyKind = z.enum(["answer", "clarification", "accepted", "needs_human", "ready", "released"])
+export type ReplyKind = z.infer<typeof ReplyKind>
+
+export const OutboxEntry = z
+  .object({
+    schemaVersion: z.literal(1),
+    id: z.string().min(1),
+    caseId: z.string().optional(),
+    sourceKey: z.string().min(1),
+    kind: ReplyKind,
+    text: z.string().min(1),
+    state: z.enum(["pending", "delivered", "suppressed"]).default("pending"),
+    dedupKey: z.string().min(1),
+    createdAt: z.number().int().positive(),
+    deliveredAt: z.number().int().positive().optional(),
+  })
+  .strict()
+export type OutboxEntry = z.infer<typeof OutboxEntry>

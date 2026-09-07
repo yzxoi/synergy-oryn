@@ -11,9 +11,17 @@ type ScopeID = Identifier.ScopeID
 export namespace OrynPath {
   export const orynRoot = () => ["oryn", "meta"]
 
-  /** Persistent intake claims keyed by normalized source key (dedup + crash recovery). */
+  /**
+   * Persistent intake claims keyed by (source, requestKey): replays of the
+   * same submission event map to one fixed caseId, while a new requestKey
+   * from the same topic opens a new case (one topic may hold many cases).
+   */
   export const claimsRoot = () => ["oryn", "claims"]
-  export const claim = (sourceKeyHash: string) => [...claimsRoot(), sourceKeyHash]
+  export const claim = (sourceKeyHash: string, requestKeyHash: string) => [
+    ...claimsRoot(),
+    sourceKeyHash,
+    requestKeyHash,
+  ]
 
   /** Immutable source anchors (Feishu chat/thread/message, GitHub issue/PR events). */
   export const sourcesRoot = () => ["oryn", "sources"]
@@ -55,4 +63,15 @@ export namespace OrynPath {
   /** Case index entries per scope (derived, rebuildable). */
   export const caseIndexRoot = (scopeID: ScopeID) => ["oryn", "case_index", scopeID as string]
   export const caseIndexEntry = (scopeID: ScopeID, caseId: string) => [...caseIndexRoot(scopeID), caseId]
+
+  /** Host-written binding: which source a QA/engineering session serves. */
+  export const sessionSource = (sessionID: string) => ["oryn", "session_source", sessionID]
+
+  /** Model-submitted worker reports (repro/candidate/verification judgments). */
+  export const reportsRoot = (caseId: string) => [...caseRoot(caseId), "reports"]
+  export const report = (caseId: string, reportId: string) => [...reportsRoot(caseId), reportId]
+
+  /** Durable reply outbox consumed by the channel delivery path. */
+  export const outboxRoot = () => ["oryn", "outbox"]
+  export const outbox = (entryId: string) => [...outboxRoot(), entryId]
 }

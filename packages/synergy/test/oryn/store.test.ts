@@ -11,18 +11,22 @@ const feishuSource = (chatId: string, messageId: string) =>
   }) satisfies Parameters<typeof sourceKey>[0]
 
 describe("OrynStore intake claims", () => {
-  test("concurrent submits from the same source observe one claim and one caseId", async () => {
+  test("concurrent submits of the same requestKey observe one claim and one caseId", async () => {
     const identity = feishuSource("chat_a", "msg_1")
     const results = await Promise.all(
-      Array.from({ length: 8 }, () => OrynStore.claimSource({ identity, requestKey: `rk_${Math.random()}` })),
+      Array.from({ length: 8 }, () => OrynStore.claimSource({ identity, requestKey: "rk_same" })),
     )
     const caseIds = new Set(results.map((r) => r.claim.caseId))
     expect(caseIds.size).toBe(1)
     expect(results.filter((r) => r.created).length).toBe(1)
+  })
 
+  test("replaying the same requestKey later returns the existing claim", async () => {
+    const identity = feishuSource("chat_a2", "msg_1")
+    const first = await OrynStore.claimSource({ identity, requestKey: "rk_later" })
     const replay = await OrynStore.claimSource({ identity, requestKey: "rk_later" })
     expect(replay.created).toBe(false)
-    expect(replay.claim.caseId).toBe([...caseIds][0])
+    expect(replay.claim.caseId).toBe(first.claim.caseId)
   })
 
   test("different sources claim different caseIds", async () => {
@@ -34,10 +38,20 @@ describe("OrynStore intake claims", () => {
   test("incompleteClaims returns only non-terminal claims for recovery", async () => {
     const done = await OrynStore.claimSource({ identity: feishuSource("chat_d", "msg_done"), requestKey: "rk_d" })
     const open = await OrynStore.claimSource({ identity: feishuSource("chat_d", "msg_open"), requestKey: "rk_o" })
-    await OrynStore.updateClaim(done.claim.sourceKey, { state: "completed" })
+    await OrynStore.updateClaim(done.claim.sourceKey, "rk_d", { state: "completed" })
     const incomplete = await OrynStore.incompleteClaims()
     expect(incomplete.some((c) => c.sourceKey === open.claim.sourceKey)).toBe(true)
     expect(incomplete.some((c) => c.sourceKey === done.claim.sourceKey)).toBe(false)
+  })
+
+  test("a new requestKey from the same source opens a second case (one topic, many cases)", async () => {
+    const identity = feishuSource("chat_multi", "msg_1")
+    const first = await OrynStore.claimSource({ identity, requestKey: "rk_first" })
+    const second = await OrynStore.claimSource({ identity, requestKey: "rk_second" })
+    expect(first.claim.caseId).not.toBe(second.claim.caseId)
+    const replay = await OrynStore.claimSource({ identity, requestKey: "rk_first" })
+    expect(replay.claim.caseId).toBe(first.claim.caseId)
+    expect(replay.created).toBe(false)
   })
 })
 

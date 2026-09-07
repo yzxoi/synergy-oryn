@@ -2,7 +2,7 @@ import { Hono, type Context } from "hono"
 import { describeRoute, resolver, validator } from "hono-openapi"
 import z from "zod"
 import { OrynStore } from "../oryn/store"
-import { OrynConfig } from "../oryn/register"
+import { OrynConfig } from "../oryn/config"
 import { errors } from "./error"
 
 const OrynErrorResponse = z

@@ -701,15 +701,13 @@ export const Oryn = z
       ),
     routes: z
       .array(OrynRoute)
-      .min(1)
+      .optional()
       .describe(
         "Explicit Feishu account/chat to repository routing. Unknown targets require clarification, never a default repo",
       ),
     repositories: z
       .record(z.string(), OrynRepository)
-      .refine((repositories) => Object.keys(repositories).length > 0, {
-        error: "At least one repository mapping is required",
-      })
+      .optional()
       .describe("Repository alias to target repository mapping"),
     review: OrynReview.optional().describe("Review and bounded rework policy"),
     limits: OrynLimits.optional().describe("Concurrency, budget, and output limits"),
@@ -721,6 +719,23 @@ export const Oryn = z
     learning: OrynLearning.optional().describe("Verified memory promotion and reward policy"),
   })
   .strict()
+  .superRefine((value, ctx) => {
+    if (value.enabled !== true) return
+    if (!value.routes?.length) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["routes"],
+        message: "oryn.routes is required when oryn.enabled is true",
+      })
+    }
+    if (!value.repositories || Object.keys(value.repositories).length === 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["repositories"],
+        message: "oryn.repositories is required when oryn.enabled is true",
+      })
+    }
+  })
   .meta({ ref: "OrynConfig" })
 export type Oryn = z.infer<typeof Oryn>
 

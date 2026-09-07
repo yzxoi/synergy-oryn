@@ -5,7 +5,7 @@ import { Storage } from "../storage/storage"
 import { NamedError } from "@ericsanchezok/synergy-util/error"
 import z from "zod"
 import { OrynPath } from "./path"
-import { RunReceipt, ReviewReport } from "./schema"
+import { OutboxEntry, RunReceipt, ReviewReport, WorkerReport } from "./schema"
 import type {
   ActionReceipt,
   Attempt,
@@ -14,8 +14,10 @@ import type {
   CaseControl,
   IntakeClaim,
   LearningCandidate,
+  OutboxEntry as OutboxEntryT,
   SourceIdentity,
   SourceLink,
+  WorkerReport as WorkerReportT,
 } from "./schema"
 
 export const OrynStoreError = NamedError.create(
@@ -84,10 +86,11 @@ function now(): number {
 
 export namespace OrynStore {
   /**
-   * Claim a source for intake. Idempotent on the normalized source key: the
-   * first caller fixes the caseId and later concurrent or replayed submits
-   * observe the existing claim instead of creating a second case. The
-   * normalized-key lock closes the read-then-write race.
+   * Claim a source for intake. Idempotent per (source, requestKey): replayed
+   * submissions of the same event observe the existing claim instead of
+   * creating a second case, while a new requestKey from the same topic opens
+   * a new case (one topic may hold many cases). The per-key lock closes the
+   * read-then-write race.
    */
   export async function claimSource(input: {
     identity: SourceIdentity
@@ -95,8 +98,9 @@ export namespace OrynStore {
     caseId?: string
   }): Promise<{ claim: IntakeClaim; created: boolean }> {
     const key = sourceKey(input.identity)
-    using _lock = await Lock.write(`oryn-claim:${key}`)
-    const existing = await Storage.read<IntakeClaim>(OrynPath.claim(key)).catch(() => undefined)
+    const requestKeyHash = externalIdentityHash(input.requestKey)
+    using _lock = await Lock.write(`oryn-claim:${key}:${requestKeyHash}`)
+    const existing = await Storage.read<IntakeClaim>(OrynPath.claim(key, requestKeyHash)).catch(() => undefined)
     if (existing) return { claim: existing, created: false }
     const claim: IntakeClaim = {
       schemaVersion: 1,
@@ -107,28 +111,46 @@ export namespace OrynStore {
       createdAt: now(),
       updatedAt: now(),
     }
-    await Storage.write(OrynPath.claim(key), claim)
+    await Storage.write(OrynPath.claim(key, requestKeyHash), claim)
     return { claim, created: true }
   }
 
-  export async function getClaim(sourceKeyHash: string): Promise<IntakeClaim | undefined> {
-    return Storage.read<IntakeClaim>(OrynPath.claim(sourceKeyHash)).catch(() => undefined)
+  export async function getClaim(sourceKeyHash: string, requestKey: string): Promise<IntakeClaim | undefined> {
+    return Storage.read<IntakeClaim>(OrynPath.claim(sourceKeyHash, externalIdentityHash(requestKey))).catch(
+      () => undefined,
+    )
   }
 
-  export async function updateClaim(sourceKeyHash: string, patch: Partial<IntakeClaim>): Promise<IntakeClaim> {
-    using _lock = await Lock.write(`oryn-claim:${sourceKeyHash}`)
-    const current = await getClaim(sourceKeyHash)
+  export async function updateClaim(
+    sourceKeyHash: string,
+    requestKey: string,
+    patch: Partial<IntakeClaim>,
+  ): Promise<IntakeClaim> {
+    const requestKeyHash = externalIdentityHash(requestKey)
+    using _lock = await Lock.write(`oryn-claim:${sourceKeyHash}:${requestKeyHash}`)
+    const current = await getClaim(sourceKeyHash, requestKey)
     if (!current) throw storeError("NOT_AUTHORIZED", `no claim for source key ${sourceKeyHash}`)
     const next: IntakeClaim = { ...current, ...patch, updatedAt: now() }
-    await Storage.write(OrynPath.claim(sourceKeyHash), next)
+    await Storage.write(OrynPath.claim(sourceKeyHash, requestKeyHash), next)
     return next
   }
 
   /** Claims that never reached a terminal state; the restart recovery input. */
   export async function incompleteClaims(): Promise<IntakeClaim[]> {
-    const keys = await Storage.scan(OrynPath.claimsRoot())
-    const claims = await Promise.all(keys.map((key) => getClaim(key)))
-    return claims.filter((c): c is IntakeClaim => c !== undefined && c.state !== "completed" && c.state !== "failed")
+    const sourceKeys = await Storage.scan(OrynPath.claimsRoot())
+    const claims = await Promise.all(
+      sourceKeys.flatMap(async (sourceKeyHash) => {
+        const requestKeys = await Storage.scan([...OrynPath.claimsRoot(), sourceKeyHash])
+        return Promise.all(
+          requestKeys.map((requestKeyHash) =>
+            Storage.read<IntakeClaim>(OrynPath.claim(sourceKeyHash, requestKeyHash)).catch(() => undefined),
+          ),
+        )
+      }),
+    )
+    return claims
+      .flat()
+      .filter((c): c is IntakeClaim => c !== undefined && c.state !== "completed" && c.state !== "failed")
   }
 
   export async function recordSource(input: {
@@ -512,5 +534,230 @@ export namespace OrynStore {
     const next = { ...mutate(current), updatedAt: now() }
     await Storage.write(OrynPath.learning(candidateId), next)
     return next
+  }
+
+  /** Host-side binding written when a QA/engineering/worker session is created for a source. */
+  export async function bindSessionSource(input: {
+    sessionID: string
+    identity: SourceIdentity
+    caseId?: string
+    role: "qa" | "engineering" | "worker"
+  }): Promise<void> {
+    await Storage.write(OrynPath.sessionSource(input.sessionID), {
+      sourceKey: sourceKey(input.identity),
+      identity: input.identity,
+      caseId: input.caseId,
+      role: input.role,
+      boundAt: now(),
+    })
+  }
+
+  export type SessionSourceBinding = {
+    sourceKey: string
+    identity?: SourceIdentity
+    caseId?: string
+    role: string
+    boundAt: number
+  }
+
+  export async function sessionSourceBinding(sessionID: string): Promise<SessionSourceBinding | undefined> {
+    return Storage.read<SessionSourceBinding>(OrynPath.sessionSource(sessionID)).catch(() => undefined)
+  }
+
+  /** Workers append structured reports; the host validates identity before accepting. */
+  export async function writeWorkerReport(
+    input: Omit<z.input<typeof WorkerReport>, "id" | "schemaVersion" | "createdAt">,
+  ): Promise<WorkerReportT> {
+    const record = WorkerReport.parse({
+      schemaVersion: 1,
+      id: Identifier.ascending("oryn_run"),
+      createdAt: now(),
+      ...input,
+    })
+    await Storage.write(OrynPath.report(record.caseId, record.id), record)
+    return record
+  }
+
+  export async function getWorkerReport(caseId: string, reportId: string): Promise<WorkerReportT | undefined> {
+    return Storage.read<WorkerReportT>(OrynPath.report(caseId, reportId)).catch(() => undefined)
+  }
+
+  export async function listWorkerReports(caseId: string): Promise<WorkerReportT[]> {
+    const ids = await Storage.scan(OrynPath.reportsRoot(caseId))
+    const records = await Promise.all(ids.map((id) => getWorkerReport(caseId, id)))
+    return records.filter((r): r is WorkerReportT => r !== undefined)
+  }
+
+  /**
+   * Durable delivery intent written by oryn_reply. Deduped on dedupKey so
+   * repeated ready notifications or retries cannot double-deliver; the
+   * channel outbox drain marks entries delivered or suppressed.
+   */
+  export async function writeOutbox(input: {
+    caseId?: string
+    sourceKeyHash: string
+    kind: OutboxEntryT["kind"]
+    text: string
+    dedupKey: string
+  }): Promise<{ entry: OutboxEntryT; created: boolean }> {
+    const ids = await Storage.scan(OrynPath.outboxRoot())
+    const existing = await Promise.all(
+      ids.map((id) => Storage.read<OutboxEntryT>(OrynPath.outbox(id)).catch(() => undefined)),
+    )
+    const duplicate = existing.find((e): e is OutboxEntryT => e !== undefined && e.dedupKey === input.dedupKey)
+    if (duplicate) return { entry: duplicate, created: false }
+    const entry = OutboxEntry.parse({
+      schemaVersion: 1,
+      id: Identifier.ascending("oryn_learning"),
+      caseId: input.caseId,
+      sourceKey: input.sourceKeyHash,
+      kind: input.kind,
+      text: input.text,
+      dedupKey: input.dedupKey,
+      createdAt: now(),
+    })
+    await Storage.write(OrynPath.outbox(entry.id), entry)
+    return { entry, created: true }
+  }
+
+  export async function listPendingOutbox(): Promise<OutboxEntryT[]> {
+    const ids = await Storage.scan(OrynPath.outboxRoot())
+    const records = await Promise.all(
+      ids.map((id) => Storage.read<OutboxEntryT>(OrynPath.outbox(id)).catch(() => undefined)),
+    )
+    return records.filter((r): r is OutboxEntryT => r !== undefined && r.state === "pending")
+  }
+
+  export async function markOutboxDelivered(entryId: string): Promise<OutboxEntryT> {
+    using _lock = await Lock.write(`oryn-outbox:${entryId}`)
+    const current = await Storage.read<OutboxEntryT>(OrynPath.outbox(entryId)).catch(() => undefined)
+    if (!current) throw storeError("NOT_AUTHORIZED", `outbox entry ${entryId} not found`)
+    const next: OutboxEntryT = { ...current, state: "delivered", deliveredAt: now() }
+    await Storage.write(OrynPath.outbox(entryId), next)
+    return next
+  }
+
+  export async function markOutboxSuppressed(entryId: string): Promise<OutboxEntryT> {
+    using _lock = await Lock.write(`oryn-outbox:${entryId}`)
+    const current = await Storage.read<OutboxEntryT>(OrynPath.outbox(entryId)).catch(() => undefined)
+    if (!current) throw storeError("NOT_AUTHORIZED", `outbox entry ${entryId} not found`)
+    const next: OutboxEntryT = { ...current, state: "suppressed" }
+    await Storage.write(OrynPath.outbox(entryId), next)
+    return next
+  }
+
+  /**
+   * Model-initiated human handoff. Serializes on the case lock with a fresh
+   * revision read; takeover semantics apply (control becomes human_owned and
+   * the epoch bumps so pending external actions go stale).
+   */
+  export async function requestHandoff(caseId: string, reason: string): Promise<Case> {
+    using _lock = await Lock.write(`oryn-case:${caseId}`)
+    const current = await getCase(caseId)
+    if (!current) throw storeError("NOT_AUTHORIZED", `case ${caseId} not found`)
+    const record: Case = {
+      ...current,
+      control: "human_owned",
+      epoch: current.epoch + 1,
+      updatedAt: now(),
+    }
+    await writeCase(record)
+    return record
+  }
+
+  export async function setAssignmentSession(
+    caseId: string,
+    assignmentId: string,
+    sessionID: string,
+  ): Promise<Assignment> {
+    using _lock = await Lock.write(`oryn-assignment:${caseId}:${assignmentId}`)
+    const current = await getAssignment(caseId, assignmentId)
+    if (!current) throw storeError("NOT_AUTHORIZED", `assignment ${assignmentId} not found`)
+    const next: Assignment = { ...current, sessionId: sessionID, updatedAt: now() }
+    await Storage.write(OrynPath.assignment(caseId, assignmentId), next)
+    return next
+  }
+
+  /**
+   * Compare-and-set the accepted report on an assignment. Re-delivering the
+   * same report is idempotent; a different report after acceptance is
+   * rejected so frozen judgments cannot be overwritten in place.
+   */
+  export async function acceptAssignmentReport(
+    caseId: string,
+    assignmentId: string,
+    reportId: string,
+  ): Promise<Assignment> {
+    using _lock = await Lock.write(`oryn-assignment:${caseId}:${assignmentId}`)
+    const current = await getAssignment(caseId, assignmentId)
+    if (!current) throw storeError("NOT_AUTHORIZED", `assignment ${assignmentId} not found`)
+    if (current.acceptedReportId && current.acceptedReportId !== reportId) {
+      throw storeError("INVALID_STAGE", "assignment already accepted a different report", { caseId })
+    }
+    const next: Assignment = { ...current, acceptedReportId: reportId, updatedAt: now() }
+    await Storage.write(OrynPath.assignment(caseId, assignmentId), next)
+    return next
+  }
+
+  /** Host-only: attach the engineering root session to the case (idempotent). */
+  export async function attachEngineeringSession(caseId: string, sessionID: string): Promise<Case> {
+    using _lock = await Lock.write(`oryn-case:${caseId}`)
+    const current = await getCase(caseId)
+    if (!current) throw storeError("NOT_AUTHORIZED", `case ${caseId} not found`)
+    if (current.engineeringSessionId === sessionID) return current
+    if (current.engineeringSessionId && current.engineeringSessionId !== sessionID) {
+      throw storeError("INVALID_STAGE", "case already has a different engineering session", { caseId })
+    }
+    const record: Case = { ...current, engineeringSessionId: sessionID, updatedAt: now() }
+    await writeCase(record)
+    return record
+  }
+
+  /** Host-only: return the active attempt, creating the initial one at most once. */
+  export async function ensureAttempt(
+    caseId: string,
+    input: { baselineSha: string; baseBranchSha?: string },
+  ): Promise<Attempt> {
+    using _lock = await Lock.write(`oryn-case:${caseId}`)
+    const current = await getCase(caseId)
+    if (!current) throw storeError("NOT_AUTHORIZED", `case ${caseId} not found`)
+    if (current.activeAttemptId) {
+      const existing = await getAttempt(caseId, current.activeAttemptId)
+      if (existing) return existing
+    }
+    const ts = now()
+    const attempt: Attempt = {
+      schemaVersion: 1,
+      id: Identifier.ascending("oryn_attempt"),
+      caseId,
+      revision: 0,
+      baselineSha: input.baselineSha,
+      baseBranchSha: input.baseBranchSha,
+      assignmentIds: [],
+      evidenceRunIds: [],
+      reviewIds: [],
+      disposition: "open",
+      createdAt: ts,
+      updatedAt: ts,
+    }
+    await Storage.write(OrynPath.attempt(caseId, attempt.id), attempt)
+    await writeCase({ ...current, activeAttemptId: attempt.id, updatedAt: now() })
+    return attempt
+  }
+
+  /** Cases visible to one source (its own submissions plus linked subscriptions). */
+  export async function listCasesForSource(sourceKeyHash: string): Promise<Case[]> {
+    const link = await getSource(sourceKeyHash)
+    if (!link) return []
+    const records = await Promise.all(link.caseIds.map((id) => getCase(id)))
+    return records.filter((r): r is Case => r !== undefined)
+  }
+
+  /** Append run ids to the attempt evidence list (trusted executor path). */
+  export async function attachRunEvidence(caseId: string, attemptId: string, runId: string): Promise<Attempt> {
+    return mutateAttempt(caseId, attemptId, (draft) => ({
+      ...draft,
+      evidenceRunIds: draft.evidenceRunIds.includes(runId) ? draft.evidenceRunIds : [...draft.evidenceRunIds, runId],
+    }))
   }
 }
