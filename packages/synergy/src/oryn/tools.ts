@@ -5,6 +5,7 @@ import { Finding } from "./schema"
 import { OrynPublish } from "./publish"
 import { OrynLearning } from "./learn"
 import { OrynService } from "./service"
+import { OrynEngineering } from "./engineering"
 import { OrynStore, OrynStoreError } from "./store"
 import { OrynConfig } from "./config"
 
@@ -101,18 +102,26 @@ export const OrynCaseTool = Tool.define(
           })
           return {
             title: result.created ? "Case submitted" : "Case already exists",
-            output: `caseId: ${result.caseId}\nrevision: ${result.revision}\nrepoAlias: ${result.repoAlias}\ncreated: ${result.created}`,
-            metadata: { caseId: result.caseId, revision: result.revision, created: result.created },
+            output: `caseId: ${result.caseId}\nrevision: ${result.revision}\nrepoAlias: ${result.repoAlias}\ncreated: ${result.created}\nengineering: ${result.engineering.state}\nreason: ${result.engineering.reason ?? "none"}`,
+            metadata: {
+              caseId: result.caseId,
+              revision: result.revision,
+              created: result.created,
+              engineering: result.engineering.state,
+              startupReason: result.engineering.reason,
+            },
           }
         }
         if (params.action === "get") {
           const binding = await requireBinding(ctx.sessionID, params.caseId)
           const record = await OrynStore.getCaseForSource(params.caseId, binding.sourceKey)
+          const engineering = await OrynEngineering.get(record.id)
           return {
             title: `Case ${record.id}`,
             output: JSON.stringify(
               {
                 caseId: record.id,
+                engineering: engineering ? { state: engineering.state, reason: engineering.reason } : undefined,
                 revision: record.revision,
                 kind: record.kind,
                 summary: record.summary,

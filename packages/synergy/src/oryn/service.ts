@@ -1,12 +1,12 @@
 import { Lock } from "../util/lock"
 import { externalIdentityHash } from "../util/identity"
 import { Session } from "../session"
-import { SessionInteraction } from "../session/interaction"
 import { SessionInbox } from "../session/inbox"
 import { SessionManager } from "../session/manager"
 import { BossService } from "../boss/boss"
 import { OrynStore, sourceKey, storeError } from "./store"
 import { OrynConfig } from "./config"
+import { OrynEngineering } from "./engineering"
 import { Finding as FindingSchema } from "./schema"
 import type { Finding, ReviewDomain, RunReceipt, SourceIdentity, Stage } from "./schema"
 import { OrynExecutor } from "./executor"
@@ -114,7 +114,13 @@ export namespace OrynService {
     summary: string
     observed?: string
     expected?: string
-  }): Promise<{ caseId: string; revision: number; created: boolean; repoAlias: string }> {
+  }): Promise<{
+    caseId: string
+    revision: number
+    created: boolean
+    repoAlias: string
+    engineering: OrynEngineering.Result
+  }> {
     await requireEnabled()
     const binding = await requireBinding(input.callerSessionID, ["qa"])
     const identity = feishuIdentity(binding)
@@ -136,7 +142,10 @@ export namespace OrynService {
     })
     await OrynStore.linkSourceToCase(claim.sourceKey, record.id)
     await OrynStore.updateClaim(claim.sourceKey, input.requestKey, { state: "case_created" })
-    return { caseId: record.id, revision: record.revision, created, repoAlias }
+    const engineering = await OrynEngineering.start(record.id)
+    if (engineering.state === "started")
+      await OrynStore.updateClaim(claim.sourceKey, input.requestKey, { state: "completed" })
+    return { caseId: record.id, revision: record.revision, created, repoAlias, engineering }
   }
 
   /**
@@ -149,34 +158,7 @@ export namespace OrynService {
     baselineSha: string
     baseBranchSha?: string
   }): Promise<{ sessionID: string; attemptId: string }> {
-    await requireEnabled()
-    const record = await OrynStore.getCase(input.caseId)
-    if (!record) throw storeError("NOT_AUTHORIZED", `case ${input.caseId} not found`)
-    if (record.engineeringSessionId) {
-      const attempt = await OrynStore.ensureAttempt(input.caseId, {
-        baselineSha: input.baselineSha,
-        baseBranchSha: input.baseBranchSha,
-      })
-      return { sessionID: record.engineeringSessionId, attemptId: attempt.id }
-    }
-    const session = await Session.create({
-      title: `Oryn ${input.caseId}`,
-      agentOverride: "oryn-work",
-      interaction: SessionInteraction.unattended("oryn"),
-      workflow: { kind: "boss", role: "boss" },
-    })
-    await OrynStore.attachEngineeringSession(input.caseId, session.id)
-    await OrynStore.bindSessionSource({
-      sessionID: session.id,
-      identity: input.identity,
-      caseId: input.caseId,
-      role: "engineering",
-    })
-    const attempt = await OrynStore.ensureAttempt(input.caseId, {
-      baselineSha: input.baselineSha,
-      baseBranchSha: input.baseBranchSha,
-    })
-    return { sessionID: session.id, attemptId: attempt.id }
+    return OrynEngineering.open(input)
   }
 
   /**

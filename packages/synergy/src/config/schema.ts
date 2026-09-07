@@ -555,6 +555,13 @@ export const OrynRepository = z
   .object({
     owner: z.string().min(1).describe("GitHub owner (user or organization)"),
     repo: z.string().min(1).describe("Repository name"),
+    directory: z
+      .string()
+      .min(1)
+      .optional()
+      .describe(
+        "Absolute path of the trusted, pre-fetched repository checkout used for engineering startup; distinct from workRoot",
+      ),
     baseBranch: z.string().min(1).optional().describe("Base branch automated pull requests target (default: dev)"),
     githubAccount: z.string().min(1).optional().describe("GitHub channel account ID used for publishing"),
     workRoot: z

@@ -16,6 +16,8 @@ Session state includes, when applicable:
 
 ## Session Mutation and Index Projection
 
+Host operations that reserve a Session identity before creation can call `Session.recoverCreation` after an interrupted write. It validates the canonical record and any existing index identity, then repairs projections under the Session mutation lock without recreating the Session or replacing its content. Missing canonical data returns no Session; malformed or conflicting data remains an error. See [Oryn engineering startup](../decisions/implemented/architecture/2026-09-08-oryn-engineering-startup.md).
+
 Runtime mutation of an existing session is serialized per Scope and session. The mutation writes canonical session info once through `Storage.update()`, then projects the resulting state into the session, page, child, navigation, and endpoint indexes before the next mutation for that session can begin. Activity updates, completion acknowledgements, last-exchange updates, and removal participate in the same boundary, so a projection cannot rewrite canonical metadata from an older snapshot.
 
 Page and navigation indexes are shared by every session in a Scope, while a child index is shared by siblings under one parent. Their read-modify-write operations use separate domain locks so mutations for different sessions remain concurrent without overwriting one another's entries. Session update events are started in mutation order after canonical state and projections are durable; local subscriber work is not awaited inside the critical section, so an event handler may safely request a later mutation of the same session.

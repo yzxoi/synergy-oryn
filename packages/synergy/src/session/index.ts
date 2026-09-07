@@ -488,6 +488,36 @@ export namespace Session {
     return withRuntimeInfo(result)
   }
 
+  export async function recoverCreation(scope: Scope, id: string): Promise<Info | undefined> {
+    using _mutation = await SessionMutation.write(scope.id, id)
+    try {
+      const index = await Storage.read<ReturnType<typeof toIndex>>(StoragePath.sessionIndex(asSessionID(id)))
+      if (index.sessionID !== id || index.scopeID !== scope.id) {
+        throw new Error("Session creation recovery index identity mismatch")
+      }
+    } catch (error) {
+      if (!(error instanceof Storage.NotFoundError)) throw error
+    }
+    let persisted: Info
+    try {
+      persisted = Info.parse(await Storage.read(StoragePath.sessionInfo(asScopeID(scope.id), asSessionID(id))))
+    } catch (error) {
+      if (error instanceof Storage.NotFoundError) return undefined
+      throw error
+    }
+    if (persisted.id !== id || persisted.scope.id !== scope.id)
+      throw new Error("Session creation recovery identity mismatch")
+    await Storage.write(StoragePath.sessionIndex(asSessionID(id)), toIndex(persisted))
+    await upsertPageIndexEntry(scope.id, toPageIndexEntry(persisted))
+    if (persisted.parentID) await upsertChildIndexEntry(scope.id, persisted.parentID, toChildIndexEntry(persisted))
+    await writeEndpointIndex(persisted)
+    await SessionNav.upsertNavEntry(toNavEntry(persisted))
+    if (persisted.agenda) {
+      await Storage.write(StoragePath.agendaSession(persisted.agenda.itemID, id), { sessionID: id, scopeID: scope.id })
+    }
+    return withClientInfo(persisted)
+  }
+
   export async function applyWorkspaceSelection(
     sessionID: string,
     selection?: WorkspaceSelection,

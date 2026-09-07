@@ -113,6 +113,22 @@ export const IntakeClaim = z
   .strict()
 export type IntakeClaim = z.infer<typeof IntakeClaim>
 
+export const EngineeringStart = z
+  .object({
+    schemaVersion: z.literal(1),
+    caseId: z.string().min(1),
+    sessionId: z.string().startsWith("ses_"),
+    state: z.enum(["pending", "blocked", "started"]),
+    reason: z.string().optional(),
+    directory: z.string().optional(),
+    scopeId: z.string().optional(),
+    baselineSha: z.string().optional(),
+    attemptId: z.string().optional(),
+    updatedAt: z.number().int().positive(),
+  })
+  .strict()
+export type EngineeringStart = z.infer<typeof EngineeringStart>
+
 export const HumanDecision = z
   .object({
     schemaVersion: z.literal(1),

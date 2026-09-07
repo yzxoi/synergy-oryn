@@ -112,6 +112,8 @@ Workers are created with `boss_spawn` (a role label and an optional agent) and r
 
 Host integrations can supply a stable delivery key to `BossService.assign` and register a task-report provider for their durable structured reports. Oryn preserves its Assignment delivery identity, accepts reports by bound worker and stage, delivers a unique result event to the engineering root and uses the persisted accepted report to satisfy worker continuation. See [Oryn worker handoff](../decisions/implemented/architecture/2026-09-08-oryn-worker-handoff.md) for replay behavior and remaining integration limits.
 
+Oryn Feishu Case submission starts a dedicated engineering Boss root in the configured repository Scope and delivers its initial task through Inbox. Runtime startup resumes incomplete creation using reserved identities and wakes existing runnable work. Boss roots still do not poll or continue unconditionally. See [engineering startup](../decisions/implemented/architecture/2026-09-08-oryn-engineering-startup.md) for configuration validation and recovery.
+
 The model prompt is injected at the workflow context layer: the root receives `<boss-context>` plus a live `<boss-tree>` overview, and workers receive `<boss-worker-context>`. `WorkflowUserWrapper` supports Boss Mode for message projection, and `boss_report` deliveries are never wrapped again.
 
 ### Runtime Boss Mode

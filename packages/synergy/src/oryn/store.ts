@@ -5,11 +5,10 @@ import { Storage } from "../storage/storage"
 import { NamedError } from "@ericsanchezok/synergy-util/error"
 import z from "zod"
 import { OrynPath } from "./path"
-import { ChannelSource, OutboxEntry, RunReceipt, ReviewReport, WorkerReport } from "./schema"
+import { Attempt, ChannelSource, OutboxEntry, RunReceipt, ReviewReport, WorkerReport } from "./schema"
 import type { CheckPlan } from "./schema"
 import type {
   ActionReceipt,
-  Attempt,
   Assignment,
   Case,
   CaseControl,
@@ -829,7 +828,7 @@ export namespace OrynStore {
   /** Host-only: return the active attempt, creating the initial one at most once. */
   export async function ensureAttempt(
     caseId: string,
-    input: { baselineSha: string; baseBranchSha?: string },
+    input: { baselineSha: string; baseBranchSha?: string; attemptId?: string },
   ): Promise<Attempt> {
     using _lock = await Lock.write(`oryn-case:${caseId}`)
     const current = await getCase(caseId)
@@ -838,10 +837,29 @@ export namespace OrynStore {
       const existing = await getAttempt(caseId, current.activeAttemptId)
       if (existing) return existing
     }
+    if (input.attemptId) {
+      let reserved: Attempt | undefined
+      try {
+        reserved = Attempt.parse(await Storage.read(OrynPath.attempt(caseId, input.attemptId)))
+      } catch (error) {
+        if (!(error instanceof Storage.NotFoundError)) throw error
+      }
+      if (reserved) {
+        if (
+          reserved.id !== input.attemptId ||
+          reserved.caseId !== caseId ||
+          reserved.baselineSha !== input.baselineSha
+        ) {
+          throw storeError("STALE_REVISION", "reserved attempt identity or baseline changed")
+        }
+        await writeCase({ ...current, activeAttemptId: reserved.id, updatedAt: now() })
+        return reserved
+      }
+    }
     const ts = now()
     const attempt: Attempt = {
       schemaVersion: 1,
-      id: Identifier.ascending("oryn_attempt"),
+      id: input.attemptId ?? Identifier.ascending("oryn_attempt"),
       caseId,
       revision: 0,
       baselineSha: input.baselineSha,

@@ -31,6 +31,7 @@ export namespace OrynPath {
   export const casesRoot = () => ["oryn", "cases"]
   export const caseRoot = (caseId: string) => [...casesRoot(), caseId]
   export const caseInfo = (caseId: string) => [...caseRoot(caseId), "info"]
+  export const engineeringStart = (caseId: string) => [...caseRoot(caseId), "engineering_start"]
 
   /** Versioned candidate validation cycles per case. */
   export const attemptsRoot = (caseId: string) => [...caseRoot(caseId), "attempts"]

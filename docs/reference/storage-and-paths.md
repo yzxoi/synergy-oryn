@@ -182,6 +182,8 @@ Oryn reply intents live under the `oryn/outbox` Storage namespace. Schema versio
 
 Oryn `channel_sources` records preserve provider reply targets keyed by hashed source identity; `channel_turns` maps a QA Session/root message to that source. They are version 1 host-owned records, written before durable Inbox acceptance and retained with the corresponding conversations and outbox during backup or restore. The current message target must not overwrite an earlier root's target.
 
+Each Oryn Case can have a version 1 `engineering_start` record containing its reserved Session/Attempt identities, fixed repository Scope and baseline, startup phase and blocked reason. It is a recovery record, not an execution queue. Include it with the Case and Session records in backup and restore. The startup owner repairs interrupted creation; absent records are reserved when an active Case first starts. See [engineering startup](../decisions/implemented/architecture/2026-09-08-oryn-engineering-startup.md).
+
 Stop the server before raw filesystem backup or relocation. For supported selective movement, use `synergy data pack`, `merge`, `move`, and `set-home`. Use session export/import for portable session artifacts.
 
 Never include `data/auth/` in a public diagnostics bundle, issue attachment, or repository commit.

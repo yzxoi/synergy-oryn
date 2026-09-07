@@ -4,6 +4,14 @@ This runbook covers deploying the Oryn feedback-to-PR runtime on a single Linux 
 
 Oryn is dormant unless `oryn.enabled` is `true`. Every preflight step below assumes a stock Synergy deployment already runs successfully; if the baseline runtime is unhealthy, fix that first — Oryn does not debug the host it runs on.
 
+## Engineering Checkout and Startup
+
+Automatic Feishu Case startup requires `oryn.repositories[alias].directory` to name an absolute, trusted, pre-fetched local checkout. Its canonical directory must be the Git root, its `origin` must match the configured GitHub owner/repository, and `refs/remotes/origin/<baseBranch>` must resolve to a commit. Prepare or fetch that checkout through the authorized deployment workflow before enabling intake. `workRoot` is a container for worker directories and does not replace this checkout.
+
+Case submission returns separate acceptance and engineering startup results. Missing or mismatched setup leaves a durable blocked reason visible through `oryn_case` get; it does not use the QA directory. Correct the setup and resubmit the same request or restart the dedicated test runtime to retry. Startup preserves its reserved Session/Attempt and baseline across retries; it does not switch or reset the checkout. The engineering root reads that configured checkout, so keep it under operator control; this path does not yet provide frozen candidate execution.
+
+Run `bun test test/oryn/engineering-start.test.ts test/session/creation-recovery.test.ts` from `packages/synergy` to verify creation interruption, replay, origin validation and cancellation against temporary repositories. It holds Session leases to avoid invoking a live model. The full execution and publishing pipeline remains under integration review; this runbook is not yet evidence of a production-ready deployment.
+
 ## Isolation Preflight
 
 Oryn executes untrusted repository code through its execution profiles. Before enabling the runtime, verify each capability a profile declares (`oryn.executionProfiles.<id>.requiredCapabilities`):

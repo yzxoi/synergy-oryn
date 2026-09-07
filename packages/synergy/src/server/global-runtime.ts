@@ -18,6 +18,7 @@ import { SessionInvoke } from "@/session/invoke"
 import { ActivitySummary } from "@/session/activity-summary"
 import { LatticeRuntime } from "@/lattice/runtime"
 import { PushBridge } from "@/push/bridge"
+import { OrynEngineering } from "@/oryn/engineering"
 
 export namespace GlobalRuntime {
   const log = Log.create({ service: "global-runtime" })
@@ -51,6 +52,9 @@ export namespace GlobalRuntime {
           await BossRuntime.ensure().catch((error) => {
             log.warn("runtime boss provisioning failed", { error })
           })
+          const orynRecovery = await OrynEngineering.recover()
+          if (orynRecovery.failed || orynRecovery.blocked)
+            log.warn("oryn engineering recovery incomplete", orynRecovery)
           log.info("started")
         },
       })

@@ -6,6 +6,8 @@ import { Provider } from "../../src/provider/provider"
 import { ProviderTransform } from "../../src/provider/transform"
 import { OrynCaseTool, OrynResultTool, registerOrynTools } from "../../src/oryn/tools"
 import { OrynStore, sourceKey } from "../../src/oryn/store"
+import { OrynPath } from "../../src/oryn/path"
+import { Storage } from "../../src/storage/storage"
 import type { Tool } from "../../src/tool/tool"
 import { tmpdir } from "../fixture/fixture"
 
@@ -48,6 +50,25 @@ function context(sessionID: string): Tool.Context {
     async ask() {},
   }
 }
+
+test("case reads expose engineering startup gaps without exposing the checkout", async () => {
+  await caseFixture(true, async ({ callerSessionID, own }) => {
+    await Storage.write(OrynPath.engineeringStart(own), {
+      schemaVersion: 1,
+      caseId: own,
+      sessionId: "ses_reserved",
+      state: "blocked",
+      reason: "repository_origin_mismatch",
+      directory: "/private/repository",
+      updatedAt: Date.now(),
+    })
+    const result = await (
+      await OrynCaseTool.init()
+    ).execute({ input: { action: "get", caseId: own } }, context(callerSessionID))
+    expect(JSON.parse(result.output).engineering).toEqual({ state: "blocked", reason: "repository_origin_mismatch" })
+    expect(result.output).not.toContain("/private/repository")
+  })
+})
 
 async function caseFixture(
   enabled: boolean,
