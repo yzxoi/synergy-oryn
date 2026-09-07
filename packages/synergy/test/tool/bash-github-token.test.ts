@@ -34,11 +34,11 @@ beforeEach(async () => {
 })
 afterEach(reset)
 
-function testContext() {
+function testContext(agent?: string) {
   return {
     sessionID: "ses_bash_github_token",
     messageID: "msg_bash_github_token",
-    agent: "synergy-max",
+    agent: agent ?? "synergy-max",
     abort: new AbortController().signal,
     extra: { shellBypassSandbox: true },
     metadata() {},
@@ -235,4 +235,54 @@ test("local bash adds no output notice when no GitHub credential is connected", 
     if (savedPath === undefined) delete process.env.PATH
     else process.env.PATH = savedPath
   }
+})
+
+test("oryn worker sessions never receive the injected GitHub credential", async () => {
+  await withManagedToken(async (tmp) => {
+    const shell = Shell.acceptable()
+    const usesPosixShell = process.platform !== "win32" || /(?:^|[\\/])bash(?:\.exe)?$/i.test(shell)
+    const printTokenOrMissing = usesPosixShell
+      ? "printf '%s' \"${GH_TOKEN:-missing}\""
+      : "if defined GH_TOKEN (<nul set /p dummy=%GH_TOKEN%) else (<nul set /p dummy=missing)"
+
+    await ScopeContext.provide({
+      scope: await tmp.scope(),
+      fn: async () => {
+        // Even a direct gh invocation sees no injected token for an Oryn
+        // worker agent: the host delivers GitHub writes through the
+        // controlled publisher, so the worker must not be able to read the
+        // credential via gh, curl, or any helper script.
+        const ghResult = await LocalBashBackend.execute(
+          {
+            command: "gh",
+            description: "worker gh invocation must not see the managed token",
+            workdir: tmp.path,
+          },
+          testContext("oryn-code"),
+        )
+        expect(ghResult.output).toBe("")
+
+        const envResult = await LocalBashBackend.execute(
+          {
+            command: printTokenOrMissing,
+            description: "worker token availability probe",
+            workdir: tmp.path,
+          },
+          testContext("oryn-repro"),
+        )
+        expect(envResult.output).toBe("missing")
+
+        // Non-Oryn agents keep the existing injection behavior.
+        const stillInjected = await LocalBashBackend.execute(
+          {
+            command: "gh",
+            description: "non-oryn agent still receives the managed token",
+            workdir: tmp.path,
+          },
+          testContext("synergy-max"),
+        )
+        expect(stillInjected.output).toBe("stored-gh-token")
+      },
+    })
+  })
 })

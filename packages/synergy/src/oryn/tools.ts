@@ -342,6 +342,115 @@ export const OrynReplyTool = Tool.define(
   },
 )
 
+const CheckParameters = z.discriminatedUnion("action", [
+  z
+    .object({
+      action: z.literal("propose"),
+      caseId: z.string().min(1),
+      attemptId: z.string().min(1),
+      assignmentId: z.string().min(1),
+      scenario: z.string().min(1).max(2000).describe("What behavior this plan asserts and how it is triggered"),
+      profileId: z.string().min(1).describe("Execution profile from oryn.executionProfiles"),
+      argv: z
+        .array(z.array(z.string().min(1)).min(1).max(8))
+        .min(1)
+        .max(8)
+        .describe("Concrete command lines; each first token must be allowlisted by the profile"),
+      checks: z.array(z.string().min(1).max(500)).min(1).max(16).describe("Assertions this run must reach"),
+      overlay: z.boolean().optional().describe("Declare that this run applies a verification overlay patch"),
+    })
+    .describe("Propose a verification plan; it is approved when the host executes it"),
+  z
+    .object({
+      action: z.literal("run"),
+      caseId: z.string().min(1),
+      attemptId: z.string().min(1),
+      assignmentId: z.string().min(1),
+      planId: z.string().min(1),
+      lane: z.enum(["baseline", "candidate", "experiment"]),
+    })
+    .describe("Execute an approved plan through the trusted executor; only its receipt is evidence"),
+  z
+    .object({
+      action: z.literal("get"),
+      caseId: z.string().min(1),
+      planId: z.string().min(1),
+    })
+    .describe("Read a check plan"),
+])
+
+export const OrynCheckTool = Tool.define(
+  "oryn_check",
+  {
+    description:
+      "Verification runs: propose a check plan (scenario, profile, commands, assertions), execute it through the trusted executor in your assigned workspace, or read a plan. Local runs you did with bash are development aid — only receipts from this executor count as evidence.",
+    parameters: CheckParameters,
+    async execute(params, ctx): Promise<Tool.ExecutionResult> {
+      return execute(async () => {
+        if (params.action === "propose") {
+          const result = await OrynService.proposeCheck({
+            callerSessionID: ctx.sessionID,
+            caseId: params.caseId,
+            attemptId: params.attemptId,
+            assignmentId: params.assignmentId,
+            scenario: params.scenario,
+            profileId: params.profileId,
+            argv: params.argv,
+            checks: params.checks,
+            overlay: params.overlay,
+          })
+          return {
+            title: "Check plan proposed",
+            output: `planId: ${result.planId}\nstatus: proposed (approved on run)`,
+            metadata: { planId: result.planId },
+          }
+        }
+        if (params.action === "run") {
+          const result = await OrynService.runCheck({
+            callerSessionID: ctx.sessionID,
+            caseId: params.caseId,
+            attemptId: params.attemptId,
+            assignmentId: params.assignmentId,
+            planId: params.planId,
+            lane: params.lane,
+            abort: ctx.abort,
+          })
+          return {
+            title: `Run ${result.outcome}`,
+            output: `runId: ${result.runId}\noutcome: ${result.outcome}\noverlayApplied: ${result.overlayApplied}`,
+            metadata: { ...result },
+          }
+        }
+        const plan = await OrynService.getCheck({
+          callerSessionID: ctx.sessionID,
+          caseId: params.caseId,
+          planId: params.planId,
+        })
+        return {
+          title: `Check plan ${plan.id}`,
+          output: JSON.stringify(
+            {
+              planId: plan.id,
+              status: plan.status,
+              scenario: plan.scenario,
+              profileId: plan.profileId,
+              argv: plan.argv,
+              checks: plan.checks,
+              overlay: plan.overlay,
+            },
+            null,
+            2,
+          ),
+          metadata: { planId: plan.id, status: plan.status },
+        }
+      })
+    },
+  },
+  {
+    exposure: { mode: "resident" },
+  },
+)
+
 export function registerOrynTools(): Tool.Info[] {
-  return [OrynCaseTool, OrynDispatchTool, OrynResultTool, OrynReplyTool]
+  return [OrynCaseTool, OrynDispatchTool, OrynResultTool, OrynCheckTool, OrynReplyTool]
 }

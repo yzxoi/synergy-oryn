@@ -6,7 +6,8 @@ import { SessionManager } from "../session/manager"
 import { BossService } from "../boss/boss"
 import { OrynStore, sourceKey, storeError } from "./store"
 import { OrynConfig } from "./config"
-import type { ReviewDomain, SourceIdentity, Stage } from "./schema"
+import type { ReviewDomain, RunReceipt, SourceIdentity, Stage } from "./schema"
+import { OrynExecutor } from "./executor"
 
 /**
  * Stage → agent mapping is Host-owned: models request a stage, never an
@@ -233,7 +234,10 @@ export namespace OrynService {
       role: input.stage,
       agent: STAGE_AGENT[input.stage],
       instructions: `Oryn case ${input.caseId}: ${input.stage} assignment.`,
-      ...(input.stage === "code" ? { workspace: "worktree" as const } : {}),
+      // The code worker's worktree is pinned to the attempt baseline so the
+      // candidate branch shares the frozen base — never the caller's moving
+      // current checkout HEAD.
+      ...(input.stage === "code" ? { workspace: "worktree" as const, baseRevision: attempt.baselineSha } : {}),
     })
     await OrynStore.setAssignmentSession(input.caseId, assignment.id, worker.id)
     if (binding.identity) {
@@ -347,6 +351,79 @@ export namespace OrynService {
       await OrynStore.attachRunEvidence(input.caseId, input.attemptId, runId)
     }
     return { reportId: report.id, accepted: true, stale: false }
+  }
+
+  /**
+   * Worker proposes a verification plan. The host validates the assignment
+   * binding; the plan stays proposed until the executor approves it on run.
+   */
+  export async function proposeCheck(input: {
+    callerSessionID: string
+    caseId: string
+    attemptId: string
+    assignmentId: string
+    scenario: string
+    profileId: string
+    argv: string[][]
+    checks: string[]
+    overlay?: boolean
+  }): Promise<{ planId: string }> {
+    await requireEnabled()
+    const binding = await requireBinding(input.callerSessionID, ["worker"])
+    if (binding.caseId !== input.caseId) {
+      throw storeError("NOT_AUTHORIZED", "case does not belong to this session")
+    }
+    const assignment = await OrynStore.getAssignment(input.caseId, input.assignmentId)
+    if (!assignment) throw storeError("NOT_AUTHORIZED", `assignment ${input.assignmentId} not found`)
+    if (assignment.sessionId !== input.callerSessionID) {
+      throw storeError("NOT_AUTHORIZED", "assignment does not belong to this session")
+    }
+    if (assignment.attemptId !== input.attemptId) {
+      throw storeError("INVALID_STAGE", "assignment belongs to a different attempt")
+    }
+    const plan = await OrynStore.writeCheckPlan({
+      caseId: input.caseId,
+      attemptId: input.attemptId,
+      scenario: input.scenario,
+      profileId: input.profileId,
+      argv: input.argv,
+      checks: input.checks,
+      proposedBySessionId: input.callerSessionID,
+      overlay: input.overlay ?? false,
+    })
+    return { planId: plan.id }
+  }
+
+  /**
+   * Execute a check plan through the trusted executor. The working directory
+   * is the caller session's host-assigned workspace, never a model parameter.
+   */
+  export async function runCheck(input: {
+    callerSessionID: string
+    caseId: string
+    attemptId: string
+    assignmentId: string
+    planId: string
+    lane: RunReceipt["lane"]
+    abort: AbortSignal
+  }): Promise<{ runId: string; outcome: RunReceipt["outcome"]; overlayApplied: boolean }> {
+    await requireEnabled()
+    const session = await Session.get(input.callerSessionID).catch(() => undefined)
+    const cwd = session?.workspace?.path
+    if (!cwd) throw storeError("ENVIRONMENT_UNAVAILABLE", "session has no workspace to execute checks in")
+    return OrynExecutor.run({ ...input, cwd })
+  }
+
+  /** Binding-scoped check plan read for workers and the engineering root. */
+  export async function getCheck(input: { callerSessionID: string; caseId: string; planId: string }) {
+    await requireEnabled()
+    const binding = await requireBinding(input.callerSessionID, ["worker", "engineering"])
+    if (binding.caseId !== input.caseId) {
+      throw storeError("NOT_AUTHORIZED", "case does not belong to this session")
+    }
+    const plan = await OrynStore.getCheckPlan(input.caseId, input.planId)
+    if (!plan) throw storeError("NOT_AUTHORIZED", `check plan ${input.planId} not found`)
+    return plan
   }
 
   /**

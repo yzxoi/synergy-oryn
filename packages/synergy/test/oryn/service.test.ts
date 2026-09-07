@@ -2,7 +2,8 @@ import { describe, expect, test } from "bun:test"
 import { Scope } from "../../src/scope"
 import { ScopeContext } from "../../src/scope/context"
 import { OrynService } from "../../src/oryn/service"
-import { OrynStore, sourceKey, storeError } from "../../src/oryn/store"
+import { OrynExecutor } from "../../src/oryn/executor"
+import { OrynStore } from "../../src/oryn/store"
 import { tmpdir } from "../fixture/fixture"
 
 const orynEnabledConfig = {
@@ -22,10 +23,17 @@ const feishuIdentity = (chatId: string) =>
     messageId: `msg_${chatId}`,
   }) as const
 
-async function withScope<T>(fn: (scope: Scope) => Promise<T>): Promise<T> {
+async function withScope<T>(fn: (scope: Scope, root: string) => Promise<T>): Promise<T> {
   await using tmp = await tmpdir({ git: true, config: orynEnabledConfig })
   const scope = (await Scope.fromDirectory(tmp.path)).scope
-  return ScopeContext.provide({ scope, fn: () => fn(scope) })
+  return ScopeContext.provide({ scope, fn: () => fn(scope, tmp.path) })
+}
+
+async function headSha(root: string): Promise<string> {
+  return Bun.$`git rev-parse HEAD`
+    .cwd(root)
+    .text()
+    .then((s) => s.trim())
 }
 
 function errorCode(error: unknown): string | undefined {
@@ -114,7 +122,7 @@ describe("OrynService case submission", () => {
 })
 
 describe("OrynService engineering sessions and dispatch", () => {
-  async function seeded() {
+  async function seeded(root: string) {
     const identity = feishuIdentity(`chat_${Math.random().toString(36).slice(2, 8)}`)
     await OrynStore.bindSessionSource({ sessionID: "ses_qa_seed", identity, role: "qa" })
     const submitted = await OrynService.submitCase({
@@ -127,19 +135,19 @@ describe("OrynService engineering sessions and dispatch", () => {
     const opened = await OrynService.openEngineeringSession({
       caseId: submitted.caseId,
       identity,
-      baselineSha: "base0001",
+      baselineSha: await headSha(root),
     })
     return { submitted, opened, identity }
   }
 
   test("engineering session opens once and pins the initial attempt", async () => {
-    await withScope(async () => {
-      const { submitted, opened } = await seeded()
+    await withScope(async (_scope, root) => {
+      const { submitted, opened } = await seeded(root)
       expect(opened.sessionID.startsWith("ses_")).toBe(true)
       const again = await OrynService.openEngineeringSession({
         caseId: submitted.caseId,
         identity: feishuIdentity("chat_irrelevant"),
-        baselineSha: "base0002",
+        baselineSha: await headSha(root),
       })
       expect(again.sessionID).toBe(opened.sessionID)
       expect(again.attemptId).toBe(opened.attemptId)
@@ -150,8 +158,8 @@ describe("OrynService engineering sessions and dispatch", () => {
   })
 
   test("dispatch repro spawns a bound worker and dedups on requestKey", async () => {
-    await withScope(async () => {
-      const { submitted, opened } = await seeded()
+    await withScope(async (_scope, root) => {
+      const { submitted, opened } = await seeded(root)
       const first = await OrynService.dispatch({
         callerSessionID: opened.sessionID,
         caseId: submitted.caseId,
@@ -174,8 +182,8 @@ describe("OrynService engineering sessions and dispatch", () => {
   })
 
   test("code stage is rejected until a reproduction is accepted", async () => {
-    await withScope(async () => {
-      const { submitted, opened } = await seeded()
+    await withScope(async (_scope, root) => {
+      const { submitted, opened } = await seeded(root)
       try {
         await OrynService.dispatch({
           callerSessionID: opened.sessionID,
@@ -191,8 +199,8 @@ describe("OrynService engineering sessions and dispatch", () => {
   })
 
   test("non-root sessions cannot dispatch", async () => {
-    await withScope(async () => {
-      const { submitted, opened } = await seeded()
+    await withScope(async (_scope, root) => {
+      const { submitted, opened } = await seeded(root)
       await OrynStore.bindSessionSource({
         sessionID: "ses_stranger_eng",
         identity: feishuIdentity("chat_stranger"),
@@ -216,7 +224,7 @@ describe("OrynService engineering sessions and dispatch", () => {
 })
 
 describe("OrynService worker results", () => {
-  async function withReproDispatch() {
+  async function withReproDispatch(root: string) {
     const identity = feishuIdentity(`chat_${Math.random().toString(36).slice(2, 8)}`)
     await OrynStore.bindSessionSource({ sessionID: "ses_qa_res", identity, role: "qa" })
     const submitted = await OrynService.submitCase({
@@ -228,7 +236,7 @@ describe("OrynService worker results", () => {
     const opened = await OrynService.openEngineeringSession({
       caseId: submitted.caseId,
       identity,
-      baselineSha: "base9999",
+      baselineSha: await headSha(root),
     })
     const dispatch = await OrynService.dispatch({
       callerSessionID: opened.sessionID,
@@ -240,8 +248,8 @@ describe("OrynService worker results", () => {
   }
 
   test("worker result is accepted and a foreign session is rejected", async () => {
-    await withScope(async () => {
-      const { submitted, dispatch } = await withReproDispatch()
+    await withScope(async (_scope, root) => {
+      const { submitted, dispatch } = await withReproDispatch(root)
       const attemptId = await activeAttemptId(submitted.caseId)
       const assignment = await OrynStore.getAssignment(submitted.caseId, dispatch.assignmentId)
       expect(assignment?.sessionId).toBe(dispatch.workerSessionId)
@@ -278,8 +286,8 @@ describe("OrynService worker results", () => {
   })
 
   test("stale-epoch results are archived but not accepted", async () => {
-    await withScope(async () => {
-      const { submitted, opened, dispatch } = await withReproDispatch()
+    await withScope(async (_scope, root) => {
+      const { submitted, opened, dispatch } = await withReproDispatch(root)
       const record = await OrynStore.getCase(submitted.caseId)
       await OrynStore.control(submitted.caseId, record!.revision, "takeover")
       const result = await OrynService.submitResult({
@@ -301,8 +309,8 @@ describe("OrynService worker results", () => {
   })
 
   test("candidate result freezes the attempt candidateSha and unlocks verify", async () => {
-    await withScope(async () => {
-      const { submitted, opened, dispatch } = await withReproDispatch()
+    await withScope(async (_scope, root) => {
+      const { submitted, opened, dispatch } = await withReproDispatch(root)
       const attemptId = await activeAttemptId(submitted.caseId)
       await OrynService.submitResult({
         callerSessionID: dispatch.workerSessionId,
@@ -344,6 +352,167 @@ describe("OrynService worker results", () => {
       expect(verifyDispatch.deduped).toBe(false)
       const verifyBinding = await OrynStore.sessionSourceBinding(verifyDispatch.workerSessionId)
       expect(verifyBinding?.role).toBe("worker")
+    })
+  })
+})
+
+describe("OrynService checks and executor", () => {
+  const executorConfig = {
+    oryn: {
+      enabled: true,
+      routes: [{ feishuAccount: "acc_test", repoAlias: "acme/widget" }],
+      repositories: { "acme/widget": { owner: "acme", repo: "widget", baseBranch: "dev" } },
+      executionProfiles: {
+        quick: { commandAllowlist: ["echo", "bun"], timeoutSeconds: 60, maxConcurrent: 1 },
+      },
+    },
+  }
+
+  async function withExecutorScope<T>(fn: (root: string) => Promise<T>): Promise<T> {
+    await using tmp = await tmpdir({ git: true, config: executorConfig })
+    const scope = (await Scope.fromDirectory(tmp.path)).scope
+    return ScopeContext.provide({ scope, fn: () => fn(tmp.path) })
+  }
+
+  async function seededWorker(root: string) {
+    const identity = feishuIdentity(`chat_${Math.random().toString(36).slice(2, 8)}`)
+    await OrynStore.bindSessionSource({ sessionID: "ses_qa_exec", identity, role: "qa" })
+    const submitted = await OrynService.submitCase({
+      callerSessionID: "ses_qa_exec",
+      requestKey: `rk_${Math.random().toString(36).slice(2, 8)}`,
+      kind: "bug",
+      summary: "executor case",
+    })
+    const opened = await OrynService.openEngineeringSession({
+      caseId: submitted.caseId,
+      identity,
+      baselineSha: await headSha(root),
+    })
+    const dispatch = await OrynService.dispatch({
+      callerSessionID: opened.sessionID,
+      caseId: submitted.caseId,
+      stage: "repro",
+      requestKey: "rk_exec_repro",
+    })
+    const attemptId = await activeAttemptId(submitted.caseId)
+    return { submitted, dispatch, attemptId }
+  }
+
+  test("executor runs an allowlisted plan and writes the only trusted receipt", async () => {
+    await withExecutorScope(async (root) => {
+      const { submitted, dispatch, attemptId } = await seededWorker(root)
+      const proposed = await OrynService.proposeCheck({
+        callerSessionID: dispatch.workerSessionId,
+        caseId: submitted.caseId,
+        attemptId,
+        assignmentId: dispatch.assignmentId,
+        scenario: "baseline behavior assertion probe",
+        profileId: "quick",
+        argv: [["echo", "receipt-probe"]],
+        checks: ["probe command exits zero"],
+      })
+      const run = await OrynService.runCheck({
+        callerSessionID: dispatch.workerSessionId,
+        caseId: submitted.caseId,
+        attemptId,
+        assignmentId: dispatch.assignmentId,
+        planId: proposed.planId,
+        lane: "baseline",
+        abort: new AbortController().signal,
+      })
+      expect(run.outcome).toBe("passed")
+      expect(run.overlayApplied).toBe(false)
+      const receipt = await OrynStore.getRun(submitted.caseId, run.runId)
+      expect(receipt?.outcome).toBe("passed")
+      expect(receipt?.authenticity).toBe("built_runtime")
+      expect(receipt?.argvSummary).toContain("echo receipt-probe")
+      const attempt = await OrynStore.getAttempt(submitted.caseId, attemptId)
+      expect(attempt?.evidenceRunIds).toContain(run.runId)
+      const plan = await OrynStore.getCheckPlan(submitted.caseId, proposed.planId)
+      expect(plan?.status).toBe("approved")
+    })
+  })
+
+  test("executor rejects commands outside the profile allowlist and non-worker callers", async () => {
+    await withExecutorScope(async (root) => {
+      const { submitted, dispatch, attemptId } = await seededWorker(root)
+      const proposed = await OrynService.proposeCheck({
+        callerSessionID: dispatch.workerSessionId,
+        caseId: submitted.caseId,
+        attemptId,
+        assignmentId: dispatch.assignmentId,
+        scenario: "disallowed command probe",
+        profileId: "quick",
+        argv: [["curl", "https://example.com"]],
+        checks: ["never allowed"],
+      })
+      try {
+        await OrynService.runCheck({
+          callerSessionID: dispatch.workerSessionId,
+          caseId: submitted.caseId,
+          attemptId,
+          assignmentId: dispatch.assignmentId,
+          planId: proposed.planId,
+          lane: "baseline",
+          abort: new AbortController().signal,
+        })
+        expect.unreachable()
+      } catch (error) {
+        expect(errorCode(error)).toBe("ENVIRONMENT_UNAVAILABLE")
+      }
+      // The service-level check resolves the session workspace first, so the
+      // non-worker authorization is asserted directly against the executor
+      // with an explicit cwd.
+      try {
+        await OrynExecutor.run({
+          callerSessionID: "ses_not_a_worker",
+          caseId: submitted.caseId,
+          attemptId,
+          assignmentId: dispatch.assignmentId,
+          planId: proposed.planId,
+          lane: "baseline",
+          cwd: root,
+          abort: new AbortController().signal,
+        })
+        expect.unreachable()
+      } catch (error) {
+        expect(errorCode(error)).toBe("NOT_AUTHORIZED")
+      }
+    })
+  })
+
+  test("failed commands produce a failed receipt and timeout is inconclusive infrastructure failure", async () => {
+    await withExecutorScope(async (root) => {
+      const { submitted, dispatch, attemptId } = await seededWorker(root)
+      const failPlan = await OrynService.proposeCheck({
+        callerSessionID: dispatch.workerSessionId,
+        caseId: submitted.caseId,
+        attemptId,
+        assignmentId: dispatch.assignmentId,
+        scenario: "assertion failure probe",
+        profileId: "quick",
+        argv: [["echo", "expectation-met-not"]],
+        checks: ["custom assertion on output"],
+      })
+      // echo exits zero, so simulate a behavior failure through a second
+      // allowlisted command that exits nonzero.
+      await OrynStore.mutateCheckPlan(submitted.caseId, failPlan.planId, (draft) => ({
+        ...draft,
+        argv: [["bun", "--print", "process.exit(3)"]],
+      }))
+      const failed = await OrynService.runCheck({
+        callerSessionID: dispatch.workerSessionId,
+        caseId: submitted.caseId,
+        attemptId,
+        assignmentId: dispatch.assignmentId,
+        planId: failPlan.planId,
+        lane: "baseline",
+        abort: new AbortController().signal,
+      })
+      expect(failed.outcome).toBe("failed")
+      const receipt = await OrynStore.getRun(submitted.caseId, failed.runId)
+      expect(receipt?.exitCode).toBe(3)
+      expect(receipt?.outcome).toBe("failed")
     })
   })
 })

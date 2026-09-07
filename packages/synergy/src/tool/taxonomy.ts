@@ -155,6 +155,7 @@ const REGISTRY: Record<string, ToolTaxonomyEntry> = {
   oryn_dispatch: entry("orchestration.session", { stateful: true }),
   oryn_result: entry("orchestration.session", { stateful: true }),
   oryn_reply: entry("communication.deliver", { stateful: true, externalIO: true }),
+  oryn_check: entry("orchestration.task", { stateful: true }),
   channel_push: entry("orchestration.session", { stateful: true, externalIO: true }),
   scope_list: entry("orchestration.session"),
   agenda_schedule: entry("orchestration.agenda", { stateful: true }),

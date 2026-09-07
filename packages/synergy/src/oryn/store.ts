@@ -6,6 +6,7 @@ import { NamedError } from "@ericsanchezok/synergy-util/error"
 import z from "zod"
 import { OrynPath } from "./path"
 import { OutboxEntry, RunReceipt, ReviewReport, WorkerReport } from "./schema"
+import type { CheckPlan } from "./schema"
 import type {
   ActionReceipt,
   Attempt,
@@ -759,5 +760,67 @@ export namespace OrynStore {
       ...draft,
       evidenceRunIds: draft.evidenceRunIds.includes(runId) ? draft.evidenceRunIds : [...draft.evidenceRunIds, runId],
     }))
+  }
+
+  /** Host-validated check plans; models propose, the host approves on run. */
+  export async function writeCheckPlan(
+    input: Omit<CheckPlan, "schemaVersion" | "id" | "createdAt" | "status"> & { id?: string },
+  ): Promise<CheckPlan> {
+    const record: CheckPlan = {
+      schemaVersion: 1,
+      id: input.id ?? Identifier.ascending("oryn_check"),
+      caseId: input.caseId,
+      attemptId: input.attemptId,
+      scenario: input.scenario,
+      profileId: input.profileId,
+      argv: input.argv,
+      checks: input.checks,
+      proposedBySessionId: input.proposedBySessionId,
+      status: "proposed",
+      overlay: input.overlay,
+      createdAt: now(),
+    }
+    await Storage.write(OrynPath.check(record.caseId, record.id), record)
+    return record
+  }
+
+  export async function getCheckPlan(caseId: string, planId: string): Promise<CheckPlan | undefined> {
+    return Storage.read<CheckPlan>(OrynPath.check(caseId, planId)).catch(() => undefined)
+  }
+
+  export async function listCheckPlans(caseId: string): Promise<CheckPlan[]> {
+    const ids = await Storage.scan(OrynPath.checksRoot(caseId))
+    const records = await Promise.all(ids.map((id) => getCheckPlan(caseId, id)))
+    return records.filter((r): r is CheckPlan => r !== undefined)
+  }
+
+  export async function mutateCheckPlan(
+    caseId: string,
+    planId: string,
+    mutate: (draft: CheckPlan) => CheckPlan,
+  ): Promise<CheckPlan> {
+    using _lock = await Lock.write(`oryn-check:${caseId}:${planId}`)
+    const current = await getCheckPlan(caseId, planId)
+    if (!current) throw storeError("NOT_AUTHORIZED", `check plan ${planId} not found`)
+    const next = { ...mutate(current) }
+    await Storage.write(OrynPath.check(caseId, planId), next)
+    return next
+  }
+
+  export async function listRuns(caseId: string): Promise<RunReceipt[]> {
+    const ids = await Storage.scan(OrynPath.runsRoot(caseId))
+    const records = await Promise.all(ids.map((id) => getRun(caseId, id)))
+    return records.filter((r): r is RunReceipt => r !== undefined)
+  }
+
+  /** Real budget counters per case: heavy-run receipts and elapsed wall clock. */
+  export async function checkBudget(caseId: string): Promise<{ heavyRuns: number; elapsedMinutes: number }> {
+    const record = await getCase(caseId)
+    if (!record) throw storeError("NOT_AUTHORIZED", `case ${caseId} not found`)
+    const runs = await listRuns(caseId)
+    return {
+      heavyRuns: runs.filter((r) => r.lane !== "baseline").length,
+      elapsedMinutes: Math.floor((now() - record.createdAt) / 60000),
+    }
   }
 }

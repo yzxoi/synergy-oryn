@@ -363,3 +363,26 @@ export const OutboxEntry = z
   })
   .strict()
 export type OutboxEntry = z.infer<typeof OutboxEntry>
+
+export const CheckPlan = z
+  .object({
+    schemaVersion: z.literal(1),
+    id: z.string().min(1),
+    caseId: z.string().min(1),
+    attemptId: z.string().min(1),
+    scenario: z.string().min(1).describe("What behavior this plan asserts and how it is triggered"),
+    profileId: z.string().min(1).describe("Execution profile from oryn.executionProfiles"),
+    /** Concrete command lines; the host validates each argv[0] against the profile allowlist. */
+    argv: z
+      .array(z.array(z.string().min(1)).min(1).max(8))
+      .min(1)
+      .max(8),
+    checks: z.array(z.string()).min(1).max(16).describe("Concrete assertions; the run must reach them to count"),
+    proposedBySessionId: z.string().min(1),
+    status: z.enum(["proposed", "approved", "rejected"]),
+    /** True when the plan declares it runs with a verification overlay patch. */
+    overlay: z.boolean().default(false),
+    createdAt: z.number().int().positive(),
+  })
+  .strict()
+export type CheckPlan = z.infer<typeof CheckPlan>

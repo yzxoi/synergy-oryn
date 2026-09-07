@@ -44,6 +44,10 @@ export namespace OrynPath {
   export const runsRoot = (caseId: string) => [...caseRoot(caseId), "runs"]
   export const run = (caseId: string, runId: string) => [...runsRoot(caseId), runId]
 
+  /** Host-approved check plans per case. */
+  export const checksRoot = (caseId: string) => [...caseRoot(caseId), "checks"]
+  export const check = (caseId: string, planId: string) => [...checksRoot(caseId), planId]
+
   /** Structured reviewer reports (model judgment, host-validated references). */
   export const reviewsRoot = (caseId: string) => [...caseRoot(caseId), "reviews"]
   export const review = (caseId: string, reviewId: string) => [...reviewsRoot(caseId), reviewId]
