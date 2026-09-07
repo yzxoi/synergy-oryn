@@ -105,6 +105,47 @@ async function run(
 }
 
 describe("Oryn per-assignment workspaces", () => {
+  test("oversized process output cannot become successful delivery evidence", async () => {
+    await fixture(async (input) => {
+      const worker = await OrynService.dispatch({
+        callerSessionID: input.rootId,
+        caseId: input.caseId,
+        attemptId: input.attemptId,
+        stage: "repro",
+        requestKey: "bounded-output",
+      })
+      const plan = await OrynService.proposeCheck({
+        callerSessionID: worker.workerSessionId,
+        caseId: input.caseId,
+        attemptId: input.attemptId,
+        assignmentId: worker.assignmentId,
+        scenario: "bounded output",
+        profileId: "fixture",
+        argv: [
+          [
+            "bun",
+            "-e",
+            "import {writeSync} from 'node:fs';const b=Buffer.alloc(65536,120);for(let i=0;i<32;i++){writeSync(1,b);writeSync(2,b)}",
+          ],
+        ],
+        checks: ["output remains bounded"],
+      })
+      const result = await OrynService.runCheck({
+        callerSessionID: worker.workerSessionId,
+        caseId: input.caseId,
+        attemptId: input.attemptId,
+        assignmentId: worker.assignmentId,
+        planId: plan.planId,
+        lane: "baseline",
+        abort: new AbortController().signal,
+      })
+      const receipt = await OrynStore.getRun(input.caseId, result.runId)
+      expect(result.outcome).toBe("inconclusive")
+      expect(receipt?.infrastructureFailure).toBe(true)
+      expect(receipt?.observations).toContain("process output truncated; evidence is inconclusive")
+    })
+  })
+
   test("reproduction reads the fixed baseline after the engineering checkout moves", async () => {
     await fixture(async (input) => {
       await commit(input.directory, "moving main")

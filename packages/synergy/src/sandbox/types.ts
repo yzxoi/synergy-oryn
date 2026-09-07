@@ -77,6 +77,8 @@ export interface SandboxExecutionWrapper {
 export interface SandboxExecuteOpts {
   fallbackPolicy: FallbackPolicy
   env?: Record<string, string>
+  /** Default true; false uses only the caller environment and network marker. */
+  inheritEnv?: boolean
   cwd?: string
   signal?: AbortSignal
   timeoutMs?: number

@@ -1,5 +1,6 @@
 import { realpath } from "node:fs/promises"
 import { Session } from "../session"
+import { SandboxBackend } from "../sandbox/backend"
 import { OrynGit } from "./git"
 import { externalIdentityHash } from "../util/identity"
 import { OrynStore, storeError } from "./store"
@@ -61,6 +62,7 @@ type RunOneResult = {
   exitCode: number
   timedOut: boolean
   aborted: boolean
+  truncated: boolean
   startedAt: number
   endedAt: number
   observations: string[]
@@ -68,35 +70,30 @@ type RunOneResult = {
 
 async function runOne(argv: string[], cwd: string, timeoutSeconds: number, abort: AbortSignal): Promise<RunOneResult> {
   const startedAt = Date.now()
-  const child = Bun.spawn(argv, {
-    cwd,
-    env: childEnv(),
-    stdin: "ignore",
-    stdout: "pipe",
-    stderr: "pipe",
-  })
-  let timedOut = false
-  const timer = setTimeout(() => {
-    timedOut = true
-    child.kill(9)
-  }, timeoutSeconds * 1000)
-  const onAbort = () => child.kill(9)
-  abort.addEventListener("abort", onAbort, { once: true })
-  const output = await new Response(child.stdout).text()
-  const stderr = await new Response(child.stderr).text()
-  const exitCode = await child.exited
-  clearTimeout(timer)
-  abort.removeEventListener("abort", onAbort)
+  const result = await SandboxBackend.executeAsync(
+    { command: argv[0], args: argv.slice(1), sandboxed: false },
+    {
+      cwd,
+      env: childEnv(),
+      inheritEnv: false,
+      fallbackPolicy: "allow",
+      signal: abort,
+      timeoutMs: timeoutSeconds * 1000,
+      maxOutputBytes: 64 * 1024,
+    },
+  )
   return {
     argv,
-    exitCode,
-    timedOut,
+    exitCode: result.exitCode,
+    timedOut: result.timedOut,
     aborted: abort.aborted,
+    truncated: result.truncated,
     startedAt,
     endedAt: Date.now(),
     observations: [
-      ...(output ? [`stdout: ${output.slice(0, 2000)}`] : []),
-      ...(stderr ? [`stderr: ${stderr.slice(0, 2000)}`] : []),
+      ...(result.truncated ? ["process output truncated; evidence is inconclusive"] : []),
+      ...(result.stdout ? [`stdout: ${result.stdout.slice(0, 2000)}`] : []),
+      ...(result.stderr ? [`stderr: ${result.stderr.slice(0, 2000)}`] : []),
     ],
   }
 }
@@ -214,7 +211,9 @@ export namespace OrynExecutor {
       const results: RunOneResult[] = []
       for (const command of plan.argv) {
         await currentInputs()
-        results.push(await runOne(command, cwd, timeoutSeconds, input.abort))
+        const result = await runOne(command, cwd, timeoutSeconds, input.abort)
+        results.push(result)
+        if (result.timedOut || result.aborted || result.truncated) break
       }
 
       const after = await OrynGit.snapshot(cwd).catch(() => undefined)
@@ -225,10 +224,11 @@ export namespace OrynExecutor {
       )
       const timedOut = results.some((r) => r.timedOut)
       const aborted = results.some((r) => r.aborted)
+      const truncated = results.some((r) => r.truncated)
       const failed = results.some((r) => r.exitCode !== 0)
       const outcome: RunReceipt["outcome"] = aborted
         ? "cancelled"
-        : timedOut || changed || !active
+        : timedOut || truncated || changed || !active
           ? "inconclusive"
           : failed
             ? "failed"
@@ -258,7 +258,7 @@ export namespace OrynExecutor {
         authenticity: "built_runtime",
         outcome,
         overlayApplied: plan.overlay,
-        infrastructureFailure: timedOut || changed || !active,
+        infrastructureFailure: timedOut || truncated || changed || !active,
       })
       await OrynStore.attachRunEvidence(input.caseId, input.attemptId, receipt.id)
       return { runId: receipt.id, outcome, overlayApplied: plan.overlay }

@@ -59,6 +59,9 @@ import { MacBackend } from "./macos"
 import { LinuxBackend } from "./linux"
 import { WindowsBackend } from "./windows"
 import { startDenialLogger, type DenialLoggerSession } from "./macos-diagnostics"
+import { spawn, type ChildProcess } from "node:child_process"
+import { Shell } from "@/util/shell"
+import { ChildProcessClose } from "@/process/child-process-close"
 import { Log } from "@/util/log"
 const log = Log.create({ service: "sandbox-backend" })
 
@@ -190,11 +193,12 @@ export namespace SandboxBackend {
   function buildSandboxEnv(
     requestedEnv?: Record<string, string>,
     networkMode?: SandboxNetworkMode,
+    inheritEnv = true,
   ): Record<string, string> {
     const env: Record<string, string> = {}
     const processEnv = process.env
 
-    for (const key of SANDBOX_ENV_ALLOWLIST) {
+    for (const key of inheritEnv ? SANDBOX_ENV_ALLOWLIST : []) {
       const val = processEnv[key]
       if (val !== undefined) {
         env[key] = val
@@ -230,7 +234,7 @@ export namespace SandboxBackend {
    *
    * Features:
    *   - Env allowlist: only safe env vars pass through
-   *   - Timeout: SIGTERM → 2s grace → SIGKILL
+   *   - Timeout: owned process-group termination through Shell.killTree
    *   - Output cap: maxOutputBytes (default 1 MB); truncated set when exceeded
    *   - Signal: AbortSignal support
    *   - Temp profile cleanup in finally block
@@ -241,129 +245,99 @@ export namespace SandboxBackend {
     wrapper: SandboxExecutionWrapper,
     opts: SandboxExecuteOpts,
   ): Promise<ExecuteAsyncResult> {
-    if (wrapper.skipReason) {
-      if (opts.fallbackPolicy === "deny") {
-        throw new Error(`Sandbox required but unavailable: ${wrapper.skipReason}`)
-      }
-      // warn/allow: run unsandboxed with warning logged
-    }
-
-    const env = buildSandboxEnv(opts.env, opts.networkMode)
-    const cwd = opts.cwd ?? process.cwd()
-
-    const cmd: string[] = [wrapper.command, ...wrapper.args]
-
-    const child = Bun.spawn({
-      cmd,
-      cwd,
-      env,
-      stdout: "pipe",
-      stderr: "pipe",
-      stdin: null,
-      onExit: () => {},
-    })
-
-    // ── macOS denial logger: capture sandboxd audit events ───────
+    let child: ChildProcess | undefined
     let denialSession: DenialLoggerSession | null = null
-    if (wrapper.sandboxed) {
-      const platform = detectPlatform()
-      if (platform === "macos") {
-        denialSession = startDenialLogger(child.pid)
-      }
-    }
-    // ── after_spawn hook: caller callback after child process created ─────
-    if (opts.after_spawn) {
-      try {
-        await opts.after_spawn(child.pid)
-      } catch (e) {
-        child.kill("SIGKILL")
-        throw e
-      }
-    }
-
-    const outputChunks: Buffer[] = []
-    const stderrChunks: Buffer[] = []
-
-    const reader = child.stdout.getReader()
-    const errReader = child.stderr.getReader()
-
-    const MAX_OUTPUT_BYTES = opts.maxOutputBytes ?? 1024 * 1024 // 1 MB default
-    let totalBytes = 0
+    let timeout: ReturnType<typeof setTimeout> | undefined
+    let stopPromise: Promise<void> | undefined
+    let completion: Promise<ChildProcessClose.Result> | undefined
+    let exitCode = -1
     let timedOut = false
     let truncated = false
-
-    const readStream = async (
-      r: ReadableStreamDefaultReader<Uint8Array>,
-      collector: Buffer[],
-      onChunk?: (chunk: Buffer) => void,
-    ) => {
-      while (true) {
-        const { done, value } = await r.read()
-        if (done) break
-        if (onChunk) onChunk(Buffer.from(value))
-        if (totalBytes + value.length > MAX_OUTPUT_BYTES) {
-          collector.push(Buffer.from(value.slice(0, MAX_OUTPUT_BYTES - totalBytes)))
-          truncated = true
-          break
-        }
-        collector.push(Buffer.from(value))
-        totalBytes += value.length
+    let totalBytes = 0
+    const outputChunks: Buffer[] = []
+    const stderrChunks: Buffer[] = []
+    const maxOutputBytes = opts.maxOutputBytes ?? 1024 * 1024
+    const interrupted = Promise.withResolvers<void>()
+    const failed = Promise.withResolvers<never>()
+    // Attach before spawn: output and process errors can precede the hook.
+    void failed.promise.catch(() => {})
+    const stop = () => {
+      if (!child) return Promise.resolve()
+      return (stopPromise ??= Shell.killTree(child, {
+        allowExitedParent: true,
+        exited: () => child!.exitCode !== null || child!.signalCode !== null,
+      }))
+    }
+    const interrupt = () => {
+      timedOut = true
+      interrupted.resolve()
+      void stop()
+    }
+    const collect = (chunks: Buffer[], callback?: (chunk: Buffer) => void) => (value: Buffer) => {
+      const accepted = value.subarray(0, Math.max(0, maxOutputBytes - totalBytes))
+      if (accepted.length < value.length) truncated = true
+      if (!accepted.length) return
+      const chunk = Buffer.from(accepted)
+      totalBytes += chunk.length
+      chunks.push(chunk)
+      try {
+        callback?.(chunk)
+      } catch (error) {
+        failed.reject(error)
       }
     }
-
-    const tempPath = wrapper.tempPath
 
     try {
-      if (opts.signal) {
-        const abort = () => {
-          timedOut = true
-          child.kill("SIGTERM")
-          setTimeout(() => child.kill("SIGKILL"), 2000)
-        }
-        if (opts.signal.aborted) {
-          abort()
-        } else {
-          opts.signal.addEventListener("abort", abort, { once: true })
-        }
-      }
+      opts.signal?.throwIfAborted()
+      if (!Number.isSafeInteger(maxOutputBytes) || maxOutputBytes < 0)
+        throw new Error("maxOutputBytes must be a non-negative safe integer")
+      if (wrapper.skipReason && opts.fallbackPolicy === "deny")
+        throw new Error(`Sandbox required but unavailable: ${wrapper.skipReason}`)
 
-      if (opts.timeoutMs && opts.timeoutMs > 0) {
-        const timeout = setTimeout(() => {
-          timedOut = true
-          child.kill("SIGTERM")
-          setTimeout(() => child.kill("SIGKILL"), 2000)
-        }, opts.timeoutMs)
+      const invocation = Shell.prepareOwnedProcessGroup(wrapper)
+      child = spawn(invocation.command, invocation.args, {
+        cwd: opts.cwd ?? process.cwd(),
+        env: buildSandboxEnv(opts.env, opts.networkMode, opts.inheritEnv),
+        stdio: ["ignore", "pipe", "pipe"],
+        detached: process.platform !== "win32",
+      })
+      completion = ChildProcessClose.wait(child, {
+        onDrainTimeout: async () => {
+          truncated = true
+          await stop()
+        },
+      })
+      void completion.catch(() => {})
+      child.stdout?.on("data", collect(outputChunks, opts.onStdout))
+      child.stderr?.on("data", collect(stderrChunks, opts.onStderr))
+      child.stdout?.on("error", failed.reject)
+      child.stderr?.on("error", failed.reject)
+      opts.signal?.addEventListener("abort", interrupt, { once: true })
+      if (opts.timeoutMs && opts.timeoutMs > 0) timeout = setTimeout(interrupt, opts.timeoutMs)
+      if (opts.signal?.aborted) interrupt()
+      if (wrapper.sandboxed && detectPlatform() === "macos" && child.pid) denialSession = startDenialLogger(child.pid)
 
-        await Promise.all([
-          readStream(reader, outputChunks, opts.onStdout),
-          readStream(errReader, stderrChunks, opts.onStderr),
-          child.exited,
-        ])
-        clearTimeout(timeout)
-      } else {
-        await Promise.all([
-          readStream(reader, outputChunks, opts.onStdout),
-          readStream(errReader, stderrChunks, opts.onStderr),
-          child.exited,
-        ])
-      }
-    } catch (e) {
-      child.kill("SIGKILL")
-      throw e
+      const pid = child.pid
+      const hook = Promise.resolve().then(async () => {
+        if (!timedOut && pid) await opts.after_spawn?.(pid)
+      })
+      const finished = Promise.all([completion, hook])
+      await Promise.race([finished, interrupted.promise, failed.promise])
+      if (timedOut) await stop()
+      const result = await completion
+      exitCode = result.code ?? -1
     } finally {
-      if (tempPath) {
-        cleanupTemp(tempPath)
-      }
+      if (timeout) clearTimeout(timeout)
+      opts.signal?.removeEventListener("abort", interrupt)
+      await stop()
+      // Reap the command and bound inherited pipe draining on every error path.
+      await completion?.catch(() => {})
+      denialSession?.stop()
+      if (wrapper.tempPath) cleanupTemp(wrapper.tempPath)
     }
 
-    const exitCode = child.exitCode ?? -1
     const stdout = Buffer.concat(outputChunks).toString("utf-8")
     const stderr = Buffer.concat(stderrChunks).toString("utf-8")
-
-    // ── Stop macOS denial logger ─────────────────────────────────
-    if (denialSession) {
-      denialSession.stop()
-    }
 
     // ── Sandbox denial detection ──────────────────────────────────
     // When the sandbox is active and the command fails, scan output

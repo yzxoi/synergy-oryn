@@ -30,6 +30,8 @@ Built-in/plugin and MCP execution race the combined session and tool-timeout abo
 
 The scheduler is one logical execution layer, not one universal sandbox process. Local commands and command-backed search remain child processes with bounded output; installed plugin implementations reuse the plugin process runtime; MCP, Browser, and Link use their existing isolated transports or canonical runtimes. File operations and narrow operations that mutate canonical session/workflow state run asynchronously under scheduled Control Plane ownership. Classification changes admission and fault accounting, not authorization semantics.
 
+`SandboxBackend.executeAsync` uses the existing owned process-group and bounded-close helpers. It drains both pipes under one retained-output/callback limit, covers spawn hooks with timeout/cancellation, and cleans up profiles and owned processes on all exit paths. `inheritEnv: false` selects a caller-supplied environment. Wrapper preparation still determines OS containment; invoking this runner with an unwrapped command does not provide a sandbox. See [check process lifecycle](../decisions/implemented/bug-fix/2026-09-08-owned-check-process-lifecycle.md) for behavior and platform limits.
+
 The process boundary follows three ownership layers:
 
 - the Control Plane owns HTTP/WebSocket service, sessions, durable state, authorization, scheduling, Browser session ownership, and plugin coordination;

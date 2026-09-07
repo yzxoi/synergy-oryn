@@ -8,6 +8,8 @@ Oryn authorization must be configured in the installation-owned `120-runtime.jso
 
 Worker source separation is covered by [versioned-workspace tests](../decisions/implemented/architecture/2026-09-08-oryn-versioned-worker-workspaces.md). Every new worker needs enough disk for a worktree; repro/code pin baseline and verify/review pin candidate. Historical main-checkout workers must be stopped and replaced, not rebound while active. Git filters, submodules and dirty overlays require a contained execution path that is not delivered by these checks. The check executor still needs sandbox/admission hardening before this runbook can be treated as deployment acceptance.
 
+The shared check runner bounds output and manages ordinary Unix descendants, as described in [check process lifecycle](../decisions/implemented/bug-fix/2026-09-08-owned-check-process-lifecycle.md). Oryn still passes an uncontained wrapper and retains its custom admission queue. Do not interpret this runner integration or the profile preflight table below as enforced OS containment or completed deployment acceptance.
+
 ## Engineering Checkout and Startup
 
 Automatic Feishu Case startup requires `oryn.repositories[alias].directory` to name an absolute, trusted, pre-fetched local checkout. Its canonical directory must be the Git root, its `origin` must match the configured GitHub owner/repository, and `refs/remotes/origin/<baseBranch>` must resolve to a commit. Prepare or fetch that checkout through the authorized deployment workflow before enabling intake. `workRoot` is a container for worker directories and does not replace this checkout.
