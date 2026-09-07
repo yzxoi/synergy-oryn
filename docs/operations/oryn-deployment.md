@@ -49,6 +49,8 @@ Before starting candidate work, verify the actual helper through the native Oryn
 
 The local mock ingress check needs no Feishu credentials. From `packages/synergy`, run `bun test test/oryn/feishu-ingress.test.ts test/oryn/outbox.test.ts test/oryn/tools.test.ts`. It enters the real ChannelHost, persists Inbox tasks, executes the reply tool and sends through a captured provider. It verifies thread/reply routing and uncertain dispatch with synthetic assistant output. It does not prove live Feishu delivery, model behavior, candidate execution, or GitHub publication; those require separate evidence.
 
+To exercise model-driven QA without model or Feishu credentials, run `bun run test test/oryn/model-pipeline.test.ts` from `packages/synergy`. The reusable `test/oryn/fixtures/model.ts` serves deterministic OpenAI-compatible SSE on a loopback ephemeral port; the configured provider, LLM loop, real tool resolver, Case intake, human handoff and explicit reply outbox all execute normally under the isolated test home. The fixture deliberately omits the approved repository directory and verifies one `needs_human` response, no PR, no internal progress messages and no repeated QA inference for the duplicate provider event. It waits for the owning QA task to settle before checking replay. It does not yet run reproduction, coding, review, GitHub publication or a model worker subprocess, and scripted choices do not establish a live model's judgment.
+
 ### Feishu
 
 1. Create a dedicated test tenant app (placeholder name `oryn-test-app`); do not point Oryn at a production bot.
