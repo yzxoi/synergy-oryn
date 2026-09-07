@@ -790,3 +790,27 @@ test("an acknowledged publication cannot ready a later attempt with the same SHA
     expect((await OrynStore.getAttempt(seeded.caseId, rotated.next.id))?.disposition).toBe("open")
   })
 })
+
+test("a label receipt cannot acknowledge a model publication through a reused request key", async () => {
+  await withPubScope(async (root) => {
+    const seeded = await seedFrozen(root)
+    await OrynStore.writeAction({
+      caseId: seeded.caseId,
+      operation: "sync_labels",
+      payloadDigest: "label-projection",
+      expectedRevision: 0,
+      epoch: 0,
+      requestKey: "shared-request",
+      state: "acknowledged",
+      remoteRefs: { issueNumber: 12 },
+    })
+    await expect(
+      OrynPublish.publish({
+        callerSessionID: seeded.engineeringSessionId,
+        caseId: seeded.caseId,
+        operation: "ensure_issue",
+        requestKey: "shared-request",
+      }),
+    ).rejects.toThrow("different publication operation")
+  })
+})

@@ -130,3 +130,29 @@ Set `oryn.enabled: false` (or remove the `oryn` key) and restart the runtime. Di
 Oryn builds issue and PR bodies from Case observations, actual frozen Git changes and accepted assignment reports. PR titles use a conventional type. Tool-provided body text is bounded implementation commentary, separate from host evidence; it does not replace evidence sections. The Mermaid scope map depicts changed files between base and candidate, not runtime dependencies. Commands containing recognized private context are omitted; raw logs remain in the authorized workspace. Public text checks reject known credential and local-path patterns but are not a general personal-data classifier.
 
 Draft-to-ready refreshes the PR description with current accepted verification and review before changing GitHub readiness. A transport failure after an attempted write is reconciled as an uncertain action, not blindly repeated. Evidence display is not proof that the full feedback pipeline, application behavior or live Feishu canary has passed.
+
+## Optional GitHub labels
+
+Set `oryn.repositories[alias].labels: true` in the installation config to enable label projection. It defaults to false. `defaultPriority` optionally selects the initial `p0`–`p3` label; leave it unset for `untriaged`. Existing `oryn:priority/*` labels are preserved, including priorities set by humans. Priorities on the issue and PR remain independently editable; this feature does not overwrite one with the other.
+
+The ordinary GitHub poll drives a bounded rotation of active Cases. The Host derives type and progress from current assignments/Attempt, and the provider verifies the App author, Case marker and pinned PR head/branch/base before writing. Only known Oryn type/status labels are replaced; other labels remain. Paused, taken-over, cancelled and closed Cases receive no new label writes. A label is a progress display, never a delivery check or merge permission; external head changes still require the engineering lifecycle to invalidate the candidate.
+
+Prepare label definitions on the authorized target before enabling this setting. From a trusted Oryn source checkout, with `bun`, `gh` and `rg` available, the following bootstrap preserves definitions that already exist. Replace the repository placeholder and run only with an account authorized to configure that repository:
+
+```bash
+set -euo pipefail
+ORYN_TARGET_REPO=owner/repo
+ORYN_LABEL_TMP=$(mktemp -d)
+trap 'rm -rf "$ORYN_LABEL_TMP"' EXIT
+bun -e 'import { OrynLabel } from "./packages/synergy/src/oryn/schema"; console.log(OrynLabel.options.join("\n"))' > "$ORYN_LABEL_TMP/desired"
+gh label list --repo "$ORYN_TARGET_REPO" --limit 1000 --json name --jq '.[].name' > "$ORYN_LABEL_TMP/existing"
+while IFS= read -r label; do
+  if ! rg --fixed-strings --line-regexp --quiet -- "$label" "$ORYN_LABEL_TMP/existing"; then
+    gh label create "$label" --repo "$ORYN_TARGET_REPO" --color 64748b --description 'Oryn progress metadata; does not grant execution or merge authority'
+  fi
+done < "$ORYN_LABEL_TMP/desired"
+```
+
+Each attempted update has a `sync_labels` ActionReceipt with schema version 3 and a fixed target. A lost response is reconciled from current remote labels; replay applies only the remaining delta. After three unsuccessful apply attempts for the same projection, label writes stop while the Case continues. Inspect the receipt and repository permissions/definitions, then apply the intended labels manually; a later poll acknowledges a matching remote result. A subsequent changed projection has its own bounded intent. A superseded intent is cancelled locally; this does not roll back label requests already sent.
+
+Run `bun test test/oryn/labels.test.ts test/oryn/action-migration.test.ts test/channel/provider/github/oryn-labels.test.ts` from `packages/synergy` for local verification. These fixtures mock GitHub transport; they do not establish live App permissions. Updating one label at a time can temporarily show both old and new stages during synchronization; the acknowledged projection contains one known type and one known status.

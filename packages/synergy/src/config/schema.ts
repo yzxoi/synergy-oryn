@@ -553,6 +553,18 @@ export type OrynPublishOperation = z.infer<typeof OrynPublishOperation>
 
 export const OrynRepository = z
   .object({
+    labels: z
+      .boolean()
+      .optional()
+      .describe(
+        "Synchronize Oryn-owned type/progress labels on bound issues and PRs; preserve existing priorities (default: false)",
+      ),
+    defaultPriority: z
+      .enum(["p0", "p1", "p2", "p3"])
+      .optional()
+      .describe(
+        "Initial label priority when none is present; unset means untriaged. Existing priorities are never overwritten",
+      ),
     owner: z.string().min(1).describe("GitHub owner (user or organization)"),
     repo: z.string().min(1).describe("Repository name"),
     directory: z

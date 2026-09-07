@@ -343,6 +343,48 @@ export namespace GitHubChannelAuth {
       })
     }
 
+    export function listIssueLabels(input: {
+      owner: string
+      repo: string
+      issueNumber: number
+      page: number
+      installationToken: string
+    }) {
+      return request({
+        path: `/repos/${input.owner}/${input.repo}/issues/${input.issueNumber}/labels?per_page=100&page=${input.page}`,
+        installationToken: input.installationToken,
+      })
+    }
+
+    export function addIssueLabels(input: {
+      owner: string
+      repo: string
+      issueNumber: number
+      labels: string[]
+      installationToken: string
+    }) {
+      return request({
+        path: `/repos/${input.owner}/${input.repo}/issues/${input.issueNumber}/labels`,
+        method: "POST",
+        body: { labels: input.labels },
+        installationToken: input.installationToken,
+      })
+    }
+
+    export function removeIssueLabel(input: {
+      owner: string
+      repo: string
+      issueNumber: number
+      name: string
+      installationToken: string
+    }) {
+      return request({
+        path: `/repos/${input.owner}/${input.repo}/issues/${input.issueNumber}/labels/${encodeURIComponent(input.name)}`,
+        method: "DELETE",
+        installationToken: input.installationToken,
+      })
+    }
+
     export function createIssue(input: {
       owner: string
       repo: string

@@ -4190,6 +4190,14 @@ export type OrynPublishOperationConfig =
 
 export type OrynRepositoryConfig = {
   /**
+   * Synchronize Oryn-owned type/progress labels on bound issues and PRs; preserve existing priorities (default: false)
+   */
+  labels?: boolean
+  /**
+   * Initial label priority when none is present; unset means untriaged. Existing priorities are never overwritten
+   */
+  defaultPriority?: "p0" | "p1" | "p2" | "p3"
+  /**
    * GitHub owner (user or organization)
    */
   owner: string

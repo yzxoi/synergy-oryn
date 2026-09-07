@@ -30,6 +30,8 @@ import { RuntimeReloadExecutor } from "./config/reload-executor"
 import { registerBossDomain } from "./boss/register"
 import { registerOrynDomain } from "./oryn/register"
 import { setTransport } from "./oryn/publish"
+import { OrynLabels, setLabelTransport } from "./oryn/labels"
+import { OrynGithubLabels } from "./channel/provider/github/labels"
 import { OrynGithubPublish, setGithubPollReconciler } from "./channel/provider/github/publish"
 import { setMemoryPromoter } from "./oryn/learn"
 import { LibraryDB } from "./library/database"
@@ -172,9 +174,12 @@ RuntimeReloadExecutor.setExecutor((input, options) => RuntimeReload.reload(input
 // an injected transport so the oryn domain stays acyclic (the provider owns
 // credential access; tokens are never returned to model callers).
 setTransport(OrynGithubPublish.createTransport())
-setGithubPollReconciler(() =>
-  import("./oryn/publish").then((m) => m.OrynPublish.reconcileAllAmbiguous().then(() => undefined)),
-)
+setLabelTransport(OrynGithubLabels.createTransport())
+setGithubPollReconciler(async () => {
+  const { OrynPublish } = await import("./oryn/publish")
+  await OrynPublish.reconcileAllAmbiguous()
+  await OrynLabels.syncAll()
+})
 RuntimeReloadExecutor.setGlobalExecutor((input, options) => RuntimeReload.reloadGlobal(input, options))
 
 // L4 assembly: Oryn verified-memory promotion writes through the Library

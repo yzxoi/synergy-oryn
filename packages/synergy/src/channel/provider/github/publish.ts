@@ -252,6 +252,8 @@ export namespace OrynGithubPublish {
               throw new GitHubApiError(0, "POST", "/graphql", "Oryn readiness outcome requires reconciliation")
             }
           }
+          case "sync_labels":
+            throw new Error("label synchronization uses the label transport")
           case "notify_feishu": {
             // Feishu results flow through the oryn outbox, never GitHub.
             return { refs: {} }

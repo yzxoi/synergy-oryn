@@ -42,6 +42,7 @@ export const PublishOperation = z.enum([
   "publish_review",
   "mark_ready",
   "notify_feishu",
+  "sync_labels",
 ])
 export type PublishOperation = z.infer<typeof PublishOperation>
 
@@ -284,9 +285,43 @@ export const ReviewReport = z
   .strict()
 export type ReviewReport = z.infer<typeof ReviewReport>
 
+export const OrynLabel = z.enum([
+  "oryn:type/bug",
+  "oryn:type/feature",
+  "oryn:type/question",
+  "oryn:type/performance",
+  "oryn:type/usage",
+  "oryn:status/triage",
+  "oryn:status/reproducing",
+  "oryn:status/coding",
+  "oryn:status/verifying",
+  "oryn:status/reviewing",
+  "oryn:status/needs-human",
+  "oryn:status/ready",
+  "oryn:priority/untriaged",
+  "oryn:priority/p0",
+  "oryn:priority/p1",
+  "oryn:priority/p2",
+  "oryn:priority/p3",
+])
+export type OrynLabel = z.infer<typeof OrynLabel>
+
+export const LabelTarget = z
+  .object({
+    repository: z.string().regex(/^[\w.-]+\/[\w.-]+$/),
+    number: z.number().int().positive(),
+    kind: z.enum(["issue", "pull"]),
+    labels: z.array(OrynLabel).min(2).max(3),
+    candidateSha: z.string().optional(),
+    baseBranch: z.string().min(1),
+  })
+  .strict()
+export type LabelTarget = z.infer<typeof LabelTarget>
+
 export const ActionReceipt = z
   .object({
-    schemaVersion: z.literal(2),
+    schemaVersion: z.literal(3),
+    labelTarget: LabelTarget.optional(),
     id: z.string().min(1),
     caseId: z.string().min(1),
     operation: PublishOperation,

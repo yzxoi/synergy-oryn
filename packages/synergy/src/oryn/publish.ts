@@ -170,6 +170,7 @@ export namespace OrynPublish {
     refs?: PublishRefs
     deduped: boolean
   }> {
+    if (input.operation === "sync_labels") throw storeError("NOT_AUTHORIZED", "label synchronization is host-owned")
     if (!(await OrynConfig.enabled())) throw storeError("NOT_AUTHORIZED", "oryn runtime is disabled")
     const binding = await OrynStore.sessionSourceBinding(input.callerSessionID)
     if (!binding || binding.role !== "engineering") {
@@ -208,6 +209,8 @@ export namespace OrynPublish {
     }
     const existing = await OrynStore.findActionByRequestKey(input.caseId, input.requestKey)
     if (existing) {
+      if (existing.operation !== input.operation)
+        throw storeError("INVALID_STAGE", "requestKey belongs to a different publication operation")
       if (existing.epoch !== record.epoch) {
         return { actionId: existing.id, state: "cancelled", refs: existing.remoteRefs, deduped: true }
       }
@@ -449,6 +452,7 @@ export namespace OrynPublish {
     const action = await OrynStore.getAction(actionId)
     if (!action) throw storeError("NOT_AUTHORIZED", `action ${actionId} not found`)
     if (action.caseId !== caseId) throw storeError("NOT_AUTHORIZED", "action belongs to another Case")
+    if (action.operation === "sync_labels") return action
     if (action.state !== "ambiguous") {
       await completeReady(action)
       return action
@@ -568,6 +572,7 @@ export namespace OrynPublish {
         await completeReady(action).catch(() => undefined)
         continue
       }
+      if (action.operation === "sync_labels") continue
       if (action.state !== "ambiguous") continue
       const before = action.state
       const after = await reconcileAmbiguous(action.caseId, action.id).catch(() => undefined)
