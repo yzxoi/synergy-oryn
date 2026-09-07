@@ -116,12 +116,40 @@ export const OrynCaseTool = Tool.define(
           const binding = await requireBinding(ctx.sessionID, params.caseId)
           const record = await OrynStore.getCaseForSource(params.caseId, binding.sourceKey)
           const engineering = await OrynEngineering.get(record.id)
+          const attempt =
+            binding.role !== "qa" && record.activeAttemptId
+              ? await OrynStore.getAttempt(record.id, record.activeAttemptId)
+              : undefined
+          const reviewReports =
+            binding.role !== "qa"
+              ? (await OrynStore.listReviews(record.id))
+                  .sort((left, right) => left.createdAt - right.createdAt)
+                  .slice(-64)
+                  .map((report) => ({
+                    id: report.id,
+                    domain: report.domain,
+                    attemptId: report.attemptId,
+                    headSha: report.headSha,
+                  }))
+              : undefined
           return {
             title: `Case ${record.id}`,
             output: JSON.stringify(
               {
                 caseId: record.id,
+                reviewReports,
                 engineering: engineering ? { state: engineering.state, reason: engineering.reason } : undefined,
+                attempt: attempt
+                  ? {
+                      id: attempt.id,
+                      baselineSha: attempt.baselineSha,
+                      candidateSha: attempt.candidateSha,
+                      disposition: attempt.disposition,
+                      evidenceRunIds: attempt.evidenceRunIds,
+                      reviewIds: attempt.reviewIds,
+                      assignmentIds: attempt.assignmentIds,
+                    }
+                  : undefined,
                 revision: record.revision,
                 kind: record.kind,
                 summary: record.summary,
@@ -316,16 +344,6 @@ const ResultParameters = z.discriminatedUnion("kind", [
     recommendation: z.enum(["changes_required", "needs_human", "ready_for_human"]),
     limitedScope: z.string().min(1).max(1000).optional(),
   }),
-  z.object({
-    kind: z.literal("review_note"),
-    caseId: z.string().min(1),
-    attemptId: z.string().min(1),
-    assignmentId: z.string().min(1),
-    requestKey: z.string().min(1).max(200),
-    outcome: z.string().min(1).max(64),
-    summary: z.string().min(1).max(4000),
-    limitations: z.array(z.string()).max(16).optional(),
-  }),
 ])
 
 export const OrynResultTool = Tool.define(
@@ -338,12 +356,14 @@ export const OrynResultTool = Tool.define(
       return execute(async () => {
         if (params.kind === "get") {
           await requireBinding(ctx.sessionID, params.caseId)
-          const report = await OrynStore.getWorkerReport(params.caseId, params.reportId)
+          const report =
+            (await OrynStore.getWorkerReport(params.caseId, params.reportId)) ??
+            (await OrynStore.getReview(params.caseId, params.reportId))
           if (!report) throw toolError("NOT_AUTHORIZED", `report ${params.reportId} not found`)
           return {
             title: `Report ${report.id}`,
             output: JSON.stringify(report, null, 2),
-            metadata: { reportId: report.id, reportKind: report.kind },
+            metadata: { reportId: report.id, reportKind: "kind" in report ? report.kind : "review" },
           }
         }
         if (params.kind === "review") {
@@ -468,6 +488,9 @@ const CheckParameters = z.discriminatedUnion("action", [
       planId: z.string().min(1),
     })
     .describe("Read a check plan"),
+  z
+    .object({ action: z.literal("get_run"), caseId: z.string().min(1), runId: z.string().min(1) })
+    .describe("Read a persisted execution receipt for independent verification or review"),
 ])
 
 export const OrynCheckTool = Tool.define(
@@ -478,6 +501,18 @@ export const OrynCheckTool = Tool.define(
     parameters: z.object({ input: CheckParameters }),
     async execute({ input: params }, ctx): Promise<Tool.ExecutionResult> {
       return execute(async () => {
+        if (params.action === "get_run") {
+          const binding = await requireBinding(ctx.sessionID, params.caseId)
+          if (binding.role === "qa")
+            throw toolError("NOT_AUTHORIZED", "raw execution receipts are restricted to engineering")
+          const receipt = await OrynStore.getRun(params.caseId, params.runId)
+          if (!receipt || receipt.caseId !== params.caseId) throw toolError("NOT_AUTHORIZED", "run receipt not found")
+          return {
+            title: `Run ${receipt.id}`,
+            output: JSON.stringify(receipt, null, 2),
+            metadata: { runId: receipt.id, outcome: receipt.outcome },
+          }
+        }
         if (params.action === "propose") {
           const result = await OrynService.proposeCheck({
             callerSessionID: ctx.sessionID,

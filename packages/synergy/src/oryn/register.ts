@@ -2,6 +2,7 @@ import { ToolRegistry } from "../tool/registry"
 import { BossService } from "../boss/boss"
 import { OrynStore } from "./store"
 import { registerOrynTools } from "./tools"
+import { externalIdentityHash } from "../util/identity"
 import "./migration"
 
 /**
@@ -25,11 +26,32 @@ export function registerOrynDomain(): void {
 
   ToolRegistry.registerToolProvider("oryn", registerOrynTools)
   BossService.registerTaskReportProvider("oryn", async (session, taskID) => {
-    if (!["oryn-repro", "oryn-code", "oryn-review"].includes(session.agentOverride ?? "")) return false
+    if (!["oryn-repro", "oryn-code", "oryn-review"].includes(session.agentOverride ?? "")) return undefined
     const sessionID = session.id
     const binding = await OrynStore.sessionSourceBinding(sessionID)
     if (binding?.role !== "worker" || !binding.caseId) return false
     const assignment = await OrynStore.getAssignment(binding.caseId, taskID)
-    return assignment?.sessionId === sessionID && Boolean(assignment.acceptedReportId)
+    if (!assignment || assignment.sessionId !== sessionID) return false
+    const record = await OrynStore.getCase(binding.caseId)
+    if (
+      !record ||
+      record.control !== "active" ||
+      record.epoch !== assignment.epoch ||
+      record.activeAttemptId !== assignment.attemptId
+    )
+      return true
+    const attempt = await OrynStore.getAttempt(binding.caseId, assignment.attemptId)
+    if (!attempt || ["superseded", "failed", "handed_off", "ready"].includes(attempt.disposition)) return true
+    if (
+      assignment.stage === "review" &&
+      assignment.frozenInputsDigest !==
+        externalIdentityHash(attempt.baselineSha, attempt.candidateSha ?? "", record.acceptanceDigest, "review")
+    )
+      return true
+    if (assignment.stage === "review")
+      return Boolean(
+        assignment.acceptedReportId && (await OrynStore.getReview(binding.caseId, assignment.acceptedReportId)),
+      )
+    return Boolean(assignment.acceptedReportId)
   })
 }

@@ -443,18 +443,41 @@ export namespace OrynStore {
 
   export async function writeReview(
     report: Omit<z.input<typeof ReviewReport>, "id" | "schemaVersion" | "createdAt">,
+    requestKey?: string,
   ): Promise<ReviewReport> {
-    const record = ReviewReport.parse({
-      schemaVersion: 1,
-      id: Identifier.ascending("oryn_review"),
-      createdAt: now(),
-      ...report,
-    })
-    await Storage.write(OrynPath.review(record.caseId, record.id), record)
-    await mutateAttempt(record.caseId, record.attemptId, (draft) => ({
-      ...draft,
-      reviewIds: draft.reviewIds.includes(record.id) ? draft.reviewIds : [...draft.reviewIds, record.id],
-    }))
+    const id = requestKey
+      ? `orv_${externalIdentityHash(report.caseId, report.assignmentId, requestKey)}`
+      : Identifier.ascending("oryn_review")
+    using _lock = await Lock.write(`oryn-review-request:${id}`)
+    const payloadSchema = ReviewReport.omit({ id: true, schemaVersion: true, createdAt: true })
+    const payload = payloadSchema.parse(report)
+    let existing: ReviewReport | undefined
+    try {
+      existing = ReviewReport.parse(await Storage.read(OrynPath.review(report.caseId, id)))
+    } catch (error) {
+      if (!(error instanceof Storage.NotFoundError)) throw error
+    }
+    if (existing) {
+      const { id: _id, schemaVersion: _version, createdAt: _createdAt, ...previous } = existing
+      if (JSON.stringify(payloadSchema.parse(previous)) !== JSON.stringify(payload)) {
+        throw storeError("INVALID_STAGE", "review request key was already used with different content")
+      }
+    }
+    const record =
+      existing ??
+      ReviewReport.parse({
+        schemaVersion: 1,
+        id,
+        createdAt: now(),
+        ...report,
+      })
+    if (!existing) await Storage.write(OrynPath.review(record.caseId, record.id), record)
+    if (!(await getAttempt(record.caseId, record.attemptId))?.reviewIds.includes(record.id)) {
+      await mutateAttempt(record.caseId, record.attemptId, (draft) => ({
+        ...draft,
+        reviewIds: draft.reviewIds.includes(record.id) ? draft.reviewIds : [...draft.reviewIds, record.id],
+      }))
+    }
     return record
   }
 
@@ -783,6 +806,7 @@ export namespace OrynStore {
     if (current.acceptedReportId && current.acceptedReportId !== reportId) {
       throw storeError("INVALID_STAGE", "assignment already accepted a different report", { caseId })
     }
+    if (current.acceptedReportId === reportId) return current
     const next: Assignment = { ...current, acceptedReportId: reportId, updatedAt: now() }
     await Storage.write(OrynPath.assignment(caseId, assignmentId), next)
     return next

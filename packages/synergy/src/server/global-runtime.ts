@@ -19,6 +19,7 @@ import { ActivitySummary } from "@/session/activity-summary"
 import { LatticeRuntime } from "@/lattice/runtime"
 import { PushBridge } from "@/push/bridge"
 import { OrynEngineering } from "@/oryn/engineering"
+import { OrynReports } from "@/oryn/reports"
 
 export namespace GlobalRuntime {
   const log = Log.create({ service: "global-runtime" })
@@ -53,6 +54,8 @@ export namespace GlobalRuntime {
             log.warn("runtime boss provisioning failed", { error })
           })
           const orynRecovery = await OrynEngineering.recover()
+          const reportRecovery = await OrynReports.recover()
+          if (reportRecovery.failed) log.warn("oryn report recovery incomplete", reportRecovery)
           if (orynRecovery.failed || orynRecovery.blocked)
             log.warn("oryn engineering recovery incomplete", orynRecovery)
           log.info("started")

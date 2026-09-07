@@ -23,20 +23,21 @@ import { MessageV2 } from "../session/message-v2"
  * caller's direct child in the same tree.
  */
 export namespace BossService {
-  const taskReportProviders = new Map<string, (session: Session.Info, taskID: string) => Promise<boolean>>()
+  const taskReportProviders = new Map<string, (session: Session.Info, taskID: string) => Promise<boolean | undefined>>()
 
   export function registerTaskReportProvider(
     name: string,
-    provider: (session: Session.Info, taskID: string) => Promise<boolean>,
+    provider: (session: Session.Info, taskID: string) => Promise<boolean | undefined>,
   ) {
     taskReportProviders.set(name, provider)
   }
 
-  export async function hasTaskReport(session: Session.Info, taskID: string): Promise<boolean> {
+  export async function hasTaskReport(session: Session.Info, taskID: string): Promise<boolean | undefined> {
     for (const provider of taskReportProviders.values()) {
-      if (await provider(session, taskID)) return true
+      const result = await provider(session, taskID)
+      if (result !== undefined) return result
     }
-    return false
+    return undefined
   }
 
   export class BossError extends Error {

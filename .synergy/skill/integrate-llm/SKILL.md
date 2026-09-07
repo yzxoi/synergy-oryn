@@ -44,6 +44,8 @@ Use `SessionInvoke` when the caller already owns the target session: direct user
 
 When extending an existing specialized workflow with structured task reports, preserve its assignment metadata, durable delivery identity, parent wake and completion detection together. Test a persisted report followed by interrupted delivery and replay, plus an idle worker after successful reporting; an extra model-generated natural-language report must not be the only mechanism that closes the task.
 
+When a workflow requires a typed result, completion detection must not let a generic natural-language report bypass it. Provide model tools to retrieve the exact candidate, prior findings and actual execution receipts used for the judgment; an instruction to review evidence is ineffective if only plans or IDs are readable. Quiesce invalidated assignments instead of repeatedly requesting an impossible result.
+
 When an in-place internal operation reuses a root user message only for task identity or attribution while selecting a different model, strip root-owned execution settings that do not belong to the target call. Compaction specifically keeps the persisted root unchanged but clears its `variant` from the ephemeral processor envelope, so the compaction model retains normal provider options without validating or applying another model's variant.
 
 Use `Cortex.launch()` for new child-agent work. Cortex owns:

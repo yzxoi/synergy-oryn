@@ -3,6 +3,7 @@ import { Scope } from "../../src/scope"
 import { ScopeContext } from "../../src/scope/context"
 import { OrynService } from "../../src/oryn/service"
 import { OrynStore } from "../../src/oryn/store"
+import { OrynCheckTool } from "../../src/oryn/tools"
 import { tmpdir } from "../fixture/fixture"
 
 function errorCode(error: unknown): string | undefined {
@@ -396,6 +397,24 @@ describe("OrynService delivery gate", () => {
         abort: new AbortController().signal,
       })
       expect(candRun.outcome).toBe("passed")
+      const receipt = await (
+        await OrynCheckTool.init()
+      ).execute(
+        { input: { action: "get_run", caseId, runId: candRun.runId } },
+        {
+          sessionID: verify.workerSessionId,
+          messageID: "fixture",
+          agent: "oryn-repro",
+          abort: new AbortController().signal,
+          metadata() {},
+          async ask() {},
+        },
+      )
+      expect(JSON.parse(receipt.output)).toMatchObject({
+        id: candRun.runId,
+        outcome: "passed",
+        actualSha: seeded.candidateSha,
+      })
 
       const payload = `Fix forwarded-message handling\n\ncandidate: ${seeded.candidateSha}`
 

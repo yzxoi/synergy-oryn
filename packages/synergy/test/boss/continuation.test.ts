@@ -111,6 +111,28 @@ async function gateFor(sessionID: string, terminalMessageID: string) {
 }
 
 describe("BossContinuationPolicy", () => {
+  test("a host-owned incomplete result cannot be bypassed by a plain Boss report", async () => {
+    await withScope(async () => {
+      const { boss, worker } = await bossAndWorker()
+      const lease = SessionManager.acquire(worker.id)!
+      const key = `host-result-${worker.id}`
+      let complete = false
+      BossService.registerTaskReportProvider(key, async (session) => (session.id === worker.id ? complete : undefined))
+      try {
+        const task = await assignedTaskMaterialized(worker.id, boss.id)
+        const terminal = await terminalAssistant(worker.id, task)
+        await completedBossReport(worker.id, terminal)
+        expect((await BossContinuationPolicy.handle(await gateFor(worker.id, terminal)))?.kind).toBe("inbox")
+        complete = true
+        expect(await BossContinuationPolicy.handle(await gateFor(worker.id, terminal))).toBeUndefined()
+      } finally {
+        BossService.registerTaskReportProvider(key, async () => undefined)
+        await SessionInbox.removeByMode(worker.id, ["task", "steer", "context"])
+        await SessionManager.release(lease, { requestNextWork: false })
+        await Session.remove(boss.id)
+      }
+    })
+  })
   test("worker with an unreported assigned task gets an inbox proposal", async () => {
     await withScope(async () => {
       const { boss, worker } = await bossAndWorker()
