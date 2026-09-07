@@ -195,6 +195,7 @@ File: `120-runtime.jsonc` · Merge: merge
 | `compaction` | object (optional) | Enable Codex Remote Compaction V2 for openai-codex sessions: request an opaque server-side compaction artifact alongside the local text summary and replay it on later same-model turns (default: false). |
 | `experimental` | object (optional) | Enable Runtime Boss Mode: auto-provision a home-scope runtime boss session and route all Feishu messages to it |
 | `observability` | ObservabilityConfig.optional (optional) | Local logs, indexed telemetry, and diagnostics settings |
+| `oryn` | Oryn.optional (optional) | Oryn feedback-to-PR runtime configuration (requires explicit enable) |
 
 ## Voice
 

@@ -3663,6 +3663,194 @@ export type GithubConfig = {
   watch?: GithubWatchConfig
 }
 
+export type OrynRouteConfig = {
+  /**
+   * Feishu channel account ID that accepts feedback through Oryn
+   */
+  feishuAccount: string
+  /**
+   * Optional chat ID allowlist. Unset means every group chat on the account is handled
+   */
+  chats?: Array<string>
+  /**
+   * Repository alias (from oryn.repositories) that feedback is routed to
+   */
+  repoAlias: string
+}
+
+export type OrynPublishOperationConfig =
+  | "ensure_issue"
+  | "ensure_draft"
+  | "refresh_pr"
+  | "publish_review"
+  | "mark_ready"
+
+export type OrynRepositoryConfig = {
+  /**
+   * GitHub owner (user or organization)
+   */
+  owner: string
+  /**
+   * Repository name
+   */
+  repo: string
+  /**
+   * Base branch automated pull requests target (default: dev)
+   */
+  baseBranch?: string
+  /**
+   * GitHub channel account ID used for publishing
+   */
+  githubAccount?: string
+  /**
+   * Directory under which case worktrees are created. Must live outside the runtime home
+   */
+  workRoot?: string
+  /**
+   * Publishing operations allowed for this repository (default: all five)
+   */
+  allowedOperations?: Array<OrynPublishOperationConfig>
+  /**
+   * Execution profile IDs (from oryn.executionProfiles) available for verification on this repository
+   */
+  testProfiles?: Array<string>
+}
+
+/**
+ * Review and bounded rework policy
+ */
+export type OrynReviewConfig = {
+  /**
+   * Automatic repair/re-review rounds per candidate before handing off to a human (default: 3)
+   */
+  maxRepairRounds?: number
+  /**
+   * Consecutive rounds without verifiable progress before handing off (default: 2)
+   */
+  maxNoProgressRounds?: number
+}
+
+/**
+ * Concurrency, budget, and output limits
+ */
+export type OrynLimitsConfig = {
+  /**
+   * Maximum concurrently active cases (default: 4)
+   */
+  maxActiveCases?: number
+  /**
+   * Maximum concurrently running worker sessions across cases (default: 6)
+   */
+  maxConcurrentWorkers?: number
+  /**
+   * Concurrent heavy build/test lanes shared by all cases (default: 2)
+   */
+  heavyConcurrency?: number
+  /**
+   * Concurrent light read/analyze lanes (default: 6)
+   */
+  lightConcurrency?: number
+  /**
+   * Wall-clock budget per case in minutes. Exhaustion requires human handoff (default: 720)
+   */
+  maxCaseMinutes?: number
+  /**
+   * Model token budget per case. Exhaustion requires human handoff
+   */
+  maxCaseTokens?: number
+  /**
+   * Maximum model-visible output size per tool result (default: 20000)
+   */
+  maxOutputChars?: number
+  /**
+   * Maximum retained artifact size per run receipt
+   */
+  maxArtifactBytes?: number
+}
+
+/**
+ * Isolation strategy: worktree (directory separation only), sandbox (OS-level), external_vm (offload to an approved VM)
+ */
+export type OrynIsolationModeConfig = "worktree" | "sandbox" | "external_vm"
+
+export type OrynExecutionProfileConfig = {
+  /**
+   * What this profile is for, e.g. server-side unit tests
+   */
+  description?: string
+  /**
+   * Isolation capabilities the host must verify before this profile may run
+   */
+  requiredCapabilities?: Array<"uid" | "namespace" | "seccomp" | "cgroup" | "browser" | "network_egress">
+  /**
+   * Exact executable names this profile may run (for example: bun, node, git)
+   */
+  commandAllowlist: Array<string>
+  isolation?: OrynIsolationModeConfig
+  /**
+   * Lane concurrency for this profile (default: 1)
+   */
+  maxConcurrent?: number
+  /**
+   * Maximum wall-clock seconds for one run under this profile (default: 1800)
+   */
+  timeoutSeconds?: number
+}
+
+/**
+ * Silent delivery policy for Feishu results
+ */
+export type OrynNotificationsConfig = {
+  /**
+   * Result kinds delivered back to Feishu (default: all six). Process noise such as tool calls, worker reports, and retries is never delivered regardless of this setting
+   */
+  kinds?: Array<"answer" | "clarification" | "accepted" | "needs_human" | "ready" | "released">
+}
+
+/**
+ * Verified memory promotion and reward policy
+ */
+export type OrynLearningConfig = {
+  /**
+   * Allow promotion of verified, evidence-backed lessons into shared Library memory (default: false)
+   */
+  verifiedMemory?: boolean
+  /**
+   * Automatically write Experience rewards from case outcomes. Default: false until the reward API provides event idempotency
+   */
+  autoReward?: boolean
+}
+
+/**
+ * Oryn feedback-to-PR runtime configuration (requires explicit enable)
+ */
+export type OrynConfig = {
+  /**
+   * Enable the Oryn feedback-to-PR runtime. Default: false. Existing Synergy channel, Boss, Feishu, and GitHub behavior is unchanged while disabled
+   */
+  enabled?: boolean
+  /**
+   * Explicit Feishu account/chat to repository routing. Unknown targets require clarification, never a default repo
+   */
+  routes: Array<OrynRouteConfig>
+  /**
+   * Repository alias to target repository mapping
+   */
+  repositories: {
+    [key: string]: OrynRepositoryConfig
+  }
+  review?: OrynReviewConfig
+  limits?: OrynLimitsConfig
+  /**
+   * Named verification environments with capability and command rules
+   */
+  executionProfiles?: {
+    [key: string]: OrynExecutionProfileConfig
+  }
+  notifications?: OrynNotificationsConfig
+  learning?: OrynLearningConfig
+}
+
 /**
  * @deprecated Always uses stretch layout.
  */
@@ -4014,6 +4202,7 @@ export type Config = {
   holos?: HolosConfig
   email?: EmailConfig
   github?: GithubConfig
+  oryn?: OrynConfig
   formatter?:
     | false
     | {

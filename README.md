@@ -150,6 +150,14 @@ See the [CLI reference](docs/reference/cli.md), [configuration reference](docs/r
 | CLI                | Runtime management, one-off `send` execution, configuration, sessions, integrations, diagnostics, and development workflows.          |
 | Server API and SDK | Shared contract used by first-party clients and integrations.                                                                         |
 
+## Oryn: feedback-to-PR automation
+
+This repository hosts **Synergy Oryn**, a product configuration and runtime extension of Synergy that closes the loop from Feishu feedback to reviewable GitHub pull requests: a QA agent answers questions and files cases per chat thread, engineering cases run through reproduction, coding in isolated worktrees, independent verification, and independent review, and only fully gated results are delivered back to the reporter. Humans always perform the merge; Oryn never merges, releases, or force-pushes.
+
+Oryn is dormant until explicitly enabled: set `oryn.enabled` (with routes and repository mappings) in the `120-runtime.jsonc` config domain. While disabled, all Synergy channel, Boss, Feishu, and GitHub behavior is unchanged.
+
+Implementation status: the runtime roles (`oryn`, `oryn-work`, `oryn-repro`, `oryn-code`, `oryn-review`), the controlled `oryn_*` tool surface, case/attempt/evidence persistence, and the GitHub publishing path follow the [implementation proposal](docs/decisions/proposed/architecture/2026-09-07-synergy-oryn.md) with [research background](docs/research/2026-09-07-maintenance-automation-proposal.md) and the [developer handoff](docs/research/2026-09-07-synergy-oryn-handoff.md). Locally verifiable behavior is covered by tests under `packages/synergy/test/oryn/`; live Feishu canary, real GitHub App publishing, and VPS deployment verification remain pending environment acceptance and are not claimed complete.
+
 ## Develop Synergy
 
 Synergy is a Bun monorepo using TypeScript ESM modules. The pinned package manager is declared in [`package.json`](package.json).

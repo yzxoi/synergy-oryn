@@ -28,6 +28,7 @@ import { RuntimeReload } from "./runtime/reload"
 import { RuntimeReloadExecutor } from "./config/reload-executor"
 
 import { registerBossDomain } from "./boss/register"
+import { registerOrynDomain } from "./oryn/register"
 import { registerLightLoopDomain } from "./light-loop/register"
 import { registerBlueprintDomain } from "./blueprint/register"
 import { registerLatticeDomain } from "./lattice/register"
@@ -89,7 +90,7 @@ registerBossDomain()
 registerLightLoopDomain()
 registerBlueprintDomain()
 registerLatticeDomain()
-registerSkillDomain()
+registerOrynDomain()
 registerCommandDomain()
 registerAgendaTools()
 registerNoteTools()

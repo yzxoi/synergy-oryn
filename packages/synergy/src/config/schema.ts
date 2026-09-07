@@ -531,6 +531,199 @@ export const Github = z
   .meta({ ref: "GithubConfig" })
 export type Github = z.infer<typeof Github>
 
+export const OrynRoute = z
+  .object({
+    feishuAccount: z.string().min(1).describe("Feishu channel account ID that accepts feedback through Oryn"),
+    chats: z
+      .array(z.string())
+      .optional()
+      .describe("Optional chat ID allowlist. Unset means every group chat on the account is handled"),
+    repoAlias: z.string().min(1).describe("Repository alias (from oryn.repositories) that feedback is routed to"),
+  })
+  .strict()
+  .meta({ ref: "OrynRouteConfig" })
+export type OrynRoute = z.infer<typeof OrynRoute>
+
+export const OrynPublishOperation = z
+  .enum(["ensure_issue", "ensure_draft", "refresh_pr", "publish_review", "mark_ready"])
+  .meta({ ref: "OrynPublishOperationConfig" })
+export type OrynPublishOperation = z.infer<typeof OrynPublishOperation>
+
+export const OrynRepository = z
+  .object({
+    owner: z.string().min(1).describe("GitHub owner (user or organization)"),
+    repo: z.string().min(1).describe("Repository name"),
+    baseBranch: z.string().min(1).optional().describe("Base branch automated pull requests target (default: dev)"),
+    githubAccount: z.string().min(1).optional().describe("GitHub channel account ID used for publishing"),
+    workRoot: z
+      .string()
+      .min(1)
+      .optional()
+      .describe("Directory under which case worktrees are created. Must live outside the runtime home"),
+    allowedOperations: z
+      .array(OrynPublishOperation)
+      .optional()
+      .describe("Publishing operations allowed for this repository (default: all five)"),
+    testProfiles: z
+      .array(z.string())
+      .optional()
+      .describe("Execution profile IDs (from oryn.executionProfiles) available for verification on this repository"),
+  })
+  .strict()
+  .meta({ ref: "OrynRepositoryConfig" })
+export type OrynRepository = z.infer<typeof OrynRepository>
+
+export const OrynReview = z
+  .object({
+    maxRepairRounds: z
+      .number()
+      .int()
+      .min(1)
+      .optional()
+      .describe("Automatic repair/re-review rounds per candidate before handing off to a human (default: 3)"),
+    maxNoProgressRounds: z
+      .number()
+      .int()
+      .min(1)
+      .optional()
+      .describe("Consecutive rounds without verifiable progress before handing off (default: 2)"),
+  })
+  .strict()
+  .meta({ ref: "OrynReviewConfig" })
+export type OrynReview = z.infer<typeof OrynReview>
+
+export const OrynLimits = z
+  .object({
+    maxActiveCases: z.number().int().min(1).optional().describe("Maximum concurrently active cases (default: 4)"),
+    maxConcurrentWorkers: z
+      .number()
+      .int()
+      .min(1)
+      .optional()
+      .describe("Maximum concurrently running worker sessions across cases (default: 6)"),
+    heavyConcurrency: z
+      .number()
+      .int()
+      .min(1)
+      .optional()
+      .describe("Concurrent heavy build/test lanes shared by all cases (default: 2)"),
+    lightConcurrency: z.number().int().min(1).optional().describe("Concurrent light read/analyze lanes (default: 6)"),
+    maxCaseMinutes: z
+      .number()
+      .int()
+      .min(1)
+      .optional()
+      .describe("Wall-clock budget per case in minutes. Exhaustion requires human handoff (default: 720)"),
+    maxCaseTokens: z
+      .number()
+      .int()
+      .min(1)
+      .optional()
+      .describe("Model token budget per case. Exhaustion requires human handoff"),
+    maxOutputChars: z
+      .number()
+      .int()
+      .min(1)
+      .optional()
+      .describe("Maximum model-visible output size per tool result (default: 20000)"),
+    maxArtifactBytes: z.number().int().min(1).optional().describe("Maximum retained artifact size per run receipt"),
+  })
+  .strict()
+  .meta({ ref: "OrynLimitsConfig" })
+export type OrynLimits = z.infer<typeof OrynLimits>
+
+export const OrynIsolationMode = z.enum(["worktree", "sandbox", "external_vm"]).meta({ ref: "OrynIsolationModeConfig" })
+export type OrynIsolationMode = z.infer<typeof OrynIsolationMode>
+
+export const OrynExecutionProfile = z
+  .object({
+    description: z.string().optional().describe("What this profile is for, e.g. server-side unit tests"),
+    requiredCapabilities: z
+      .array(z.enum(["uid", "namespace", "seccomp", "cgroup", "browser", "network_egress"]))
+      .optional()
+      .describe("Isolation capabilities the host must verify before this profile may run"),
+    commandAllowlist: z
+      .array(z.string().min(1))
+      .min(1)
+      .describe("Exact executable names this profile may run (for example: bun, node, git)"),
+    isolation: OrynIsolationMode.optional().describe(
+      "Isolation strategy: worktree (directory separation only), sandbox (OS-level), external_vm (offload to an approved VM)",
+    ),
+    maxConcurrent: z.number().int().min(1).optional().describe("Lane concurrency for this profile (default: 1)"),
+    timeoutSeconds: z
+      .number()
+      .int()
+      .min(1)
+      .optional()
+      .describe("Maximum wall-clock seconds for one run under this profile (default: 1800)"),
+  })
+  .strict()
+  .meta({ ref: "OrynExecutionProfileConfig" })
+export type OrynExecutionProfile = z.infer<typeof OrynExecutionProfile>
+
+export const OrynNotifications = z
+  .object({
+    kinds: z
+      .array(z.enum(["answer", "clarification", "accepted", "needs_human", "ready", "released"]))
+      .optional()
+      .describe(
+        "Result kinds delivered back to Feishu (default: all six). Process noise such as tool calls, worker reports, and retries is never delivered regardless of this setting",
+      ),
+  })
+  .strict()
+  .meta({ ref: "OrynNotificationsConfig" })
+export type OrynNotifications = z.infer<typeof OrynNotifications>
+
+export const OrynLearning = z
+  .object({
+    verifiedMemory: z
+      .boolean()
+      .optional()
+      .describe("Allow promotion of verified, evidence-backed lessons into shared Library memory (default: false)"),
+    autoReward: z
+      .boolean()
+      .optional()
+      .describe(
+        "Automatically write Experience rewards from case outcomes. Default: false until the reward API provides event idempotency",
+      ),
+  })
+  .strict()
+  .meta({ ref: "OrynLearningConfig" })
+export type OrynLearning = z.infer<typeof OrynLearning>
+
+export const Oryn = z
+  .object({
+    enabled: z
+      .boolean()
+      .optional()
+      .describe(
+        "Enable the Oryn feedback-to-PR runtime. Default: false. Existing Synergy channel, Boss, Feishu, and GitHub behavior is unchanged while disabled",
+      ),
+    routes: z
+      .array(OrynRoute)
+      .min(1)
+      .describe(
+        "Explicit Feishu account/chat to repository routing. Unknown targets require clarification, never a default repo",
+      ),
+    repositories: z
+      .record(z.string(), OrynRepository)
+      .refine((repositories) => Object.keys(repositories).length > 0, {
+        error: "At least one repository mapping is required",
+      })
+      .describe("Repository alias to target repository mapping"),
+    review: OrynReview.optional().describe("Review and bounded rework policy"),
+    limits: OrynLimits.optional().describe("Concurrency, budget, and output limits"),
+    executionProfiles: z
+      .record(z.string(), OrynExecutionProfile)
+      .optional()
+      .describe("Named verification environments with capability and command rules"),
+    notifications: OrynNotifications.optional().describe("Silent delivery policy for Feishu results"),
+    learning: OrynLearning.optional().describe("Verified memory promotion and reward policy"),
+  })
+  .strict()
+  .meta({ ref: "OrynConfig" })
+export type Oryn = z.infer<typeof Oryn>
+
 export const PermissionAction = z.enum(["ask", "allow", "deny"]).meta({
   ref: "PermissionActionConfig",
 })
@@ -1960,6 +2153,7 @@ export const Info = z
     holos: Holos.optional().describe("Holos platform configuration"),
     email: Email.optional().describe("Outgoing email configuration"),
     github: Github.optional().describe("GitHub integration settings (git identity sync, agenda watch)"),
+    oryn: Oryn.optional().describe("Oryn feedback-to-PR runtime configuration (requires explicit enable)"),
     formatter: z
       .union([
         z.literal(false),
