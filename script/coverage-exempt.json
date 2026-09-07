@@ -930,6 +930,10 @@
           "reason": "settings panels render through the app shell; unit suite covers hooks/models"
         },
         {
+          "glob": "src/components/settings/panels/StoragePanel.tsx",
+          "reason": "Vite-compiled Solid panel is executed in Chromium by test/components/settings/panels/StoragePanel.test.ts (usage refresh/recovery, preview-confirm-apply, failed maintenance, snapshot preference); Bun lcov records only the host process and cannot attribute browser execution to this TSX file."
+        },
+        {
           "glob": "src/components/settings/panels/BossModePanel.tsx",
           "reason": "settings panels render through the app shell; unit suite covers hooks/models"
         },

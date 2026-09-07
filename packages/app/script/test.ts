@@ -30,6 +30,7 @@ const playwrightIsolated = [
   "test/components/settings/settings-mobile-layout.test.ts",
   "test/components/settings/panels/BossModePanel.test.ts",
   "test/components/settings/panels/VoicePanel.test.ts",
+  "test/components/settings/panels/StoragePanel.test.ts",
   "test/components/session/question-prompt-style.test.ts",
   "test/components/session/raw-messages-layout.test.ts",
   "test/components/session/session-progress-island-motion.test.ts",
