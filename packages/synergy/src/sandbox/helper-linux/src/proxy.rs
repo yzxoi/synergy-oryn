@@ -756,7 +756,6 @@ mod tests {
             upstream: "http://127.0.0.1:3128".to_string(),
             headers: vec![],
         }];
-        let result = create_host_bridge(&routes, "/tmp/test.sock");
         if cfg!(target_os = "linux") {
             // On Linux the real implementation blocks forever on
             // listener.incoming(), so we only verify the empty-routes
@@ -765,6 +764,7 @@ mod tests {
             assert!(empty_result.is_err());
             assert!(empty_result.unwrap_err().to_string().contains("route"));
         } else {
+            let result = create_host_bridge(&routes, "/tmp/test.sock");
             assert!(result.is_err());
             assert!(result.unwrap_err().to_string().contains("Linux"));
         }
