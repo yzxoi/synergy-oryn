@@ -568,6 +568,12 @@ export const OrynRepository = z
       .array(z.string())
       .optional()
       .describe("Execution profile IDs (from oryn.executionProfiles) available for verification on this repository"),
+    deliveryCheck: z
+      .boolean()
+      .optional()
+      .describe(
+        "Allow the controlled App identity to write oryn/delivery check runs on this repository (default: false). Only enable after the deployment has verified the check live; never register it as a required check before that",
+      ),
   })
   .strict()
   .meta({ ref: "OrynRepositoryConfig" })

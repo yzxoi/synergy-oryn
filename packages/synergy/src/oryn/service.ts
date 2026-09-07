@@ -245,6 +245,9 @@ export namespace OrynService {
       ...(input.stage === "code" ? { workspace: "worktree" as const, baseRevision: attempt.baselineSha } : {}),
     })
     await OrynStore.setAssignmentSession(input.caseId, assignment.id, worker.id)
+    if (input.stage === "code" && worker.workspace?.type === "git_worktree") {
+      await OrynStore.setAssignmentWorkspace(input.caseId, assignment.id, worker.workspace.path)
+    }
     if (binding.identity) {
       await OrynStore.bindSessionSource({
         sessionID: worker.id,

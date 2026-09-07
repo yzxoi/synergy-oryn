@@ -51,6 +51,7 @@ export type ToolKind =
   | "communication.visual"
   | "communication.audio"
   | "communication.deliver"
+  | "communication.publish"
   | "browser.navigate"
   | "browser.interact"
   | "browser.inspect"
@@ -156,6 +157,7 @@ const REGISTRY: Record<string, ToolTaxonomyEntry> = {
   oryn_result: entry("orchestration.session", { stateful: true }),
   oryn_reply: entry("communication.deliver", { stateful: true, externalIO: true }),
   oryn_check: entry("orchestration.task", { stateful: true }),
+  oryn_publish: entry("communication.publish", { stateful: true, externalIO: true }),
   channel_push: entry("orchestration.session", { stateful: true, externalIO: true }),
   scope_list: entry("orchestration.session"),
   agenda_schedule: entry("orchestration.agenda", { stateful: true }),
@@ -342,6 +344,7 @@ export namespace ToolTaxonomy {
     "communication.visual": "Visual",
     "communication.deliver": "Deliver",
     "communication.audio": "Audio",
+    "communication.publish": "Publish",
     "browser.navigate": "Navigate",
     "browser.interact": "Interact",
     "browser.inspect": "Inspect",

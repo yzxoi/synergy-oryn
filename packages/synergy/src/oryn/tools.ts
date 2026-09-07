@@ -1,6 +1,7 @@
 import z from "zod"
 import { Tool } from "../tool/tool"
 import { Finding } from "./schema"
+import { OrynPublish } from "./publish"
 import { OrynService } from "./service"
 import { OrynStore, OrynStoreError } from "./store"
 
@@ -514,6 +515,70 @@ export const OrynCheckTool = Tool.define(
   },
 )
 
+const PublishParameters = z.object({
+  caseId: z.string().min(1),
+  operation: z.enum(["ensure_issue", "ensure_draft", "refresh_pr", "publish_review", "mark_ready"]),
+  requestKey: z
+    .string()
+    .min(1)
+    .max(200)
+    .describe("Unique key for this publish action; repeated keys return the existing receipt"),
+  title: z.string().min(1).max(300).optional(),
+  body: z.string().max(8000).optional().describe("Redacted engineering facts only; the host appends the case marker"),
+  pullNumber: z
+    .number()
+    .int()
+    .positive()
+    .optional()
+    .describe("Only for refresh_pr / publish_review when targeting a specific pull request"),
+  payload: z
+    .string()
+    .max(8000)
+    .optional()
+    .describe("mark_ready only: user-facing summary that must cite the frozen candidate SHA and contain no secrets"),
+})
+
+export const OrynPublishTool = Tool.define(
+  "oryn_publish",
+  {
+    description:
+      "Publish host-verified artifacts for your case: the tracking issue, a draft PR from the frozen candidate, PR updates, the review comment, or the final ready delivery. The host records every action in the ledger, verifies the frozen candidate and the delivery gate, and holds all credentials — you never touch tokens or endpoints. A timeout leaves the action ambiguous; reconciliation settles it, never a blind retry.",
+    parameters: PublishParameters,
+    async execute(params, ctx): Promise<Tool.ExecutionResult> {
+      return execute(async () => {
+        const result = await OrynPublish.publish(
+          {
+            callerSessionID: ctx.sessionID,
+            caseId: params.caseId,
+            operation: params.operation,
+            requestKey: params.requestKey,
+            title: params.title,
+            body: params.body,
+            pullNumber: params.pullNumber,
+            payload: params.payload,
+          },
+          ctx.abort,
+        )
+        return {
+          title:
+            result.state === "acknowledged"
+              ? result.deduped
+                ? "Already published (idempotent)"
+                : "Published"
+              : `Action ${result.state}`,
+          output: `actionId: ${result.actionId ?? "n/a"}\nstate: ${result.state}\ndeduped: ${result.deduped}${
+            result.refs ? `\nrefs: ${JSON.stringify(result.refs)}` : ""
+          }`,
+          metadata: { ...result },
+        }
+      })
+    },
+  },
+  {
+    exposure: { mode: "resident" },
+  },
+)
+
 export function registerOrynTools(): Tool.Info[] {
-  return [OrynCaseTool, OrynDispatchTool, OrynResultTool, OrynCheckTool, OrynReplyTool]
+  return [OrynCaseTool, OrynDispatchTool, OrynResultTool, OrynCheckTool, OrynPublishTool, OrynReplyTool]
 }

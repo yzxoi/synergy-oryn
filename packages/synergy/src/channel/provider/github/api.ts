@@ -12,7 +12,7 @@ type InstallationToken = {
 
 export type RequestDescriptor = {
   url: string
-  method: "GET" | "POST" | "DELETE"
+  method: "GET" | "POST" | "PATCH" | "DELETE"
   headers: Record<string, string>
   body?: string
 }
@@ -207,6 +207,26 @@ export namespace GitHubChannelAuth {
     return token.token
   }
 
+  /**
+   * Resolve the ephemeral installation token for a repository. Shared by the
+   * channel provider and the Oryn publish transport so both paths mint tokens
+   * through one code path; tokens are never returned to model callers.
+   */
+  export async function resolveInstallationToken(owner: string, repo: string, signal?: AbortSignal): Promise<string> {
+    const jwt = generateJWT({
+      appId: Number(process.env.SYNERGY_GITHUB_APP_ID),
+      privateKey: process.env.SYNERGY_GITHUB_APP_PRIVATE_KEY?.replaceAll("\\n", "\n") ?? "",
+    })
+    const installation = await GitHubClient.send<{ id?: unknown }>(
+      GitHubClient.resolveInstallation({ owner, repo, jwt }),
+      signal,
+    )
+    if (typeof installation?.id !== "number" || !Number.isInteger(installation.id) || installation.id <= 0) {
+      throw new Error(`GitHub App installation for ${owner}/${repo} has no valid ID`)
+    }
+    return getInstallationToken(installation.id, signal)
+  }
+
   export namespace GitHubClient {
     /** Authenticated GitHub App metadata; `slug` is the @mention name users type. */
     export function getApp(input: { jwt: string }) {
@@ -306,13 +326,119 @@ export namespace GitHubChannelAuth {
       body: string
       head: string
       base: string
+      draft?: boolean
       installationToken: string
     }) {
       return request({
         path: `/repos/${input.owner}/${input.repo}/pulls`,
         method: "POST",
         installationToken: input.installationToken,
-        body: { title: input.title, body: input.body, head: input.head, base: input.base },
+        body: {
+          title: input.title,
+          body: input.body,
+          head: input.head,
+          base: input.base,
+          ...(input.draft === undefined ? {} : { draft: input.draft }),
+        },
+      })
+    }
+
+    export function createIssue(input: {
+      owner: string
+      repo: string
+      title: string
+      body: string
+      installationToken: string
+    }) {
+      return request({
+        path: `/repos/${input.owner}/${input.repo}/issues`,
+        method: "POST",
+        installationToken: input.installationToken,
+        body: { title: input.title, body: input.body },
+      })
+    }
+
+    export function updatePullRequest(input: {
+      owner: string
+      repo: string
+      pullNumber: number
+      title?: string
+      body?: string
+      draft?: boolean
+      installationToken: string
+    }) {
+      return request({
+        path: `/repos/${input.owner}/${input.repo}/pulls/${input.pullNumber}`,
+        method: "PATCH",
+        installationToken: input.installationToken,
+        body: {
+          ...(input.title === undefined ? {} : { title: input.title }),
+          ...(input.body === undefined ? {} : { body: input.body }),
+          ...(input.draft === undefined ? {} : { draft: input.draft }),
+        },
+      })
+    }
+
+    export function createPullRequestReview(input: {
+      owner: string
+      repo: string
+      pullNumber: number
+      body: string
+      installationToken: string
+    }) {
+      return request({
+        path: `/repos/${input.owner}/${input.repo}/pulls/${input.pullNumber}/reviews`,
+        method: "POST",
+        installationToken: input.installationToken,
+        body: { event: "COMMENT", body: input.body },
+      })
+    }
+
+    export function createCheckRun(input: {
+      owner: string
+      repo: string
+      headSha: string
+      name: string
+      conclusion: "success" | "failure" | "neutral"
+      summary: string
+      installationToken: string
+    }) {
+      return request({
+        path: `/repos/${input.owner}/${input.repo}/check-runs`,
+        method: "POST",
+        installationToken: input.installationToken,
+        body: {
+          name: input.name,
+          head_sha: input.headSha,
+          conclusion: input.conclusion,
+          output: { title: input.name, summary: input.summary },
+        },
+      })
+    }
+
+    export function getIssue(input: { owner: string; repo: string; issueNumber: number; installationToken: string }) {
+      return request({
+        path: `/repos/${input.owner}/${input.repo}/issues/${input.issueNumber}`,
+        installationToken: input.installationToken,
+      })
+    }
+
+    export function getCombinedStatus(input: { owner: string; repo: string; ref: string; installationToken: string }) {
+      return request({
+        path: `/repos/${input.owner}/${input.repo}/commits/${input.ref}/status`,
+        installationToken: input.installationToken,
+      })
+    }
+
+    export function listCheckRunsForRef(input: {
+      owner: string
+      repo: string
+      ref: string
+      installationToken: string
+    }) {
+      return request({
+        path: `/repos/${input.owner}/${input.repo}/commits/${input.ref}/check-runs`,
+        installationToken: input.installationToken,
       })
     }
 

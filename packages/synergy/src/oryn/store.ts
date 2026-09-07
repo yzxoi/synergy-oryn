@@ -495,6 +495,22 @@ export namespace OrynStore {
     return next
   }
 
+  export async function listActions(filter: { caseId?: string } = {}): Promise<ActionReceipt[]> {
+    const ids = await Storage.scan(OrynPath.actionsRoot())
+    const records = await Promise.all(
+      ids.map((id) => Storage.read<ActionReceipt>(OrynPath.action(id)).catch(() => undefined)),
+    )
+    return records
+      .filter((r): r is ActionReceipt => r !== undefined)
+      .filter((r) => (filter.caseId ? r.caseId === filter.caseId : true))
+  }
+
+  /** requestKey idempotency for external actions: replays return the existing receipt. */
+  export async function findActionByRequestKey(caseId: string, requestKey: string): Promise<ActionReceipt | undefined> {
+    const actions = await listActions({ caseId })
+    return actions.find((a) => a.requestKey === requestKey)
+  }
+
   export async function writeLearning(input: {
     caseId: string
     outcomeVersion: string
@@ -700,6 +716,29 @@ export namespace OrynStore {
     return next
   }
 
+  /** Host-only: record the worker workspace directory for publishing pushes. */
+  export async function setAssignmentWorkspace(
+    caseId: string,
+    assignmentId: string,
+    workspaceRef: string,
+  ): Promise<Assignment> {
+    using _lock = await Lock.write(`oryn-assignment:${caseId}:${assignmentId}`)
+    const current = await getAssignment(caseId, assignmentId)
+    if (!current) throw storeError("NOT_AUTHORIZED", `assignment ${assignmentId} not found`)
+    if (current.workspaceRef === workspaceRef) return current
+    const next: Assignment = { ...current, workspaceRef, updatedAt: now() }
+    await Storage.write(OrynPath.assignment(caseId, assignmentId), next)
+    return next
+  }
+
+  export async function listAssignments(caseId: string): Promise<Assignment[]> {
+    const ids = await Storage.scan(OrynPath.assignmentsRoot(caseId))
+    const records = await Promise.all(
+      ids.map((id) => Storage.read<Assignment>(OrynPath.assignment(caseId, id)).catch(() => undefined)),
+    )
+    return records.filter((r): r is Assignment => r !== undefined)
+  }
+
   /** Host-only: attach the engineering root session to the case (idempotent). */
   export async function attachEngineeringSession(caseId: string, sessionID: string): Promise<Case> {
     using _lock = await Lock.write(`oryn-case:${caseId}`)
@@ -760,6 +799,31 @@ export namespace OrynStore {
       ...draft,
       evidenceRunIds: draft.evidenceRunIds.includes(runId) ? draft.evidenceRunIds : [...draft.evidenceRunIds, runId],
     }))
+  }
+
+  /**
+   * Host-only: record remote refs acknowledged through the publish ledger.
+   * Issue numbers are single-valued; pull numbers accumulate append-only so
+   * replacement PRs keep history.
+   */
+  export async function attachRemoteRefs(
+    caseId: string,
+    refs: { issueNumber?: number; pullNumber?: number },
+  ): Promise<Case> {
+    using _lock = await Lock.write(`oryn-case:${caseId}`)
+    const current = await getCase(caseId)
+    if (!current) throw storeError("NOT_AUTHORIZED", `case ${caseId} not found`)
+    const record: Case = {
+      ...current,
+      issueNumber: refs.issueNumber ?? current.issueNumber,
+      pullNumbers:
+        refs.pullNumber && !current.pullNumbers.includes(refs.pullNumber)
+          ? [...current.pullNumbers, refs.pullNumber]
+          : current.pullNumbers,
+      updatedAt: now(),
+    }
+    await writeCase(record)
+    return record
   }
 
   /** Host-validated check plans; models propose, the host approves on run. */

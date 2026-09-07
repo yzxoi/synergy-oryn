@@ -29,6 +29,8 @@ import { RuntimeReloadExecutor } from "./config/reload-executor"
 
 import { registerBossDomain } from "./boss/register"
 import { registerOrynDomain } from "./oryn/register"
+import { setTransport } from "./oryn/publish"
+import { OrynGithubPublish, setGithubPollReconciler } from "./channel/provider/github/publish"
 import { registerLightLoopDomain } from "./light-loop/register"
 import { registerBlueprintDomain } from "./blueprint/register"
 import { registerLatticeDomain } from "./lattice/register"
@@ -158,4 +160,12 @@ setLightLoopAgendaAssertClear((input) => AgendaSessionWakeup.assertClear(input))
 // L4 assembly: L1 write paths reach the runtime reload orchestrator through
 // the executor port in config/reload-executor (no L1 import of runtime/).
 RuntimeReloadExecutor.setExecutor((input, options) => RuntimeReload.reload(input, options))
+
+// L4 assembly: the Oryn publish ledger consumes the GitHub provider through
+// an injected transport so the oryn domain stays acyclic (the provider owns
+// credential access; tokens are never returned to model callers).
+setTransport(OrynGithubPublish.createTransport())
+setGithubPollReconciler(() =>
+  import("./oryn/publish").then((m) => m.OrynPublish.reconcileAllAmbiguous().then(() => undefined)),
+)
 RuntimeReloadExecutor.setGlobalExecutor((input, options) => RuntimeReload.reloadGlobal(input, options))
