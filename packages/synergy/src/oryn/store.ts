@@ -823,4 +823,71 @@ export namespace OrynStore {
       elapsedMinutes: Math.floor((now() - record.createdAt) / 60000),
     }
   }
+
+  export async function listReviews(caseId: string): Promise<ReviewReport[]> {
+    const ids = await Storage.scan(OrynPath.reviewsRoot(caseId))
+    const records = await Promise.all(ids.map((id) => getReview(caseId, id)))
+    return records.filter((r): r is ReviewReport => r !== undefined)
+  }
+
+  export async function listAttempts(caseId: string): Promise<Attempt[]> {
+    const ids = await Storage.scan(OrynPath.attemptsRoot(caseId))
+    const records = await Promise.all(ids.map((id) => getAttempt(caseId, id)))
+    return records.filter((r): r is Attempt => r !== undefined).sort((a, b) => a.createdAt - b.createdAt)
+  }
+
+  /**
+   * Rotate the attempt: supersede the active attempt with an invalidation
+   * reason, open the next attempt pinned to the previous candidate (so the
+   * PR history stays fast-forward), advance the case pointer, and update the
+   * rework counters. Serialized under the case lock so a stale worker cannot
+   * resurrect the old attempt mid-rotation.
+   */
+  export async function rotateAttempt(input: {
+    caseId: string
+    fromAttemptId: string
+    invalidationReason: string
+    nextBaselineSha: string
+    countRepair: boolean
+    countNoProgress: boolean
+  }): Promise<{ previous: Attempt; next: Attempt; case: Case }> {
+    using _lock = await Lock.write(`oryn-case:${input.caseId}`)
+    const record = await getCase(input.caseId)
+    if (!record) throw storeError("NOT_AUTHORIZED", `case ${input.caseId} not found`)
+    if (record.activeAttemptId !== input.fromAttemptId) {
+      throw storeError("INVALID_STAGE", "rotation targets a non-active attempt", { caseId: input.caseId })
+    }
+    const previous = await getAttempt(input.caseId, input.fromAttemptId)
+    if (!previous) throw storeError("NOT_AUTHORIZED", `attempt ${input.fromAttemptId} not found`)
+    const superseded = await mutateAttempt(input.caseId, input.fromAttemptId, (draft) => ({
+      ...draft,
+      disposition: "superseded" as const,
+      invalidationReason: input.invalidationReason,
+    }))
+    const ts = now()
+    const next: Attempt = {
+      schemaVersion: 1,
+      id: Identifier.ascending("oryn_attempt"),
+      caseId: input.caseId,
+      revision: 0,
+      baselineSha: input.nextBaselineSha,
+      ...(previous.baseBranchSha ? { baseBranchSha: previous.baseBranchSha } : {}),
+      assignmentIds: [],
+      evidenceRunIds: [],
+      reviewIds: [],
+      disposition: "open",
+      createdAt: ts,
+      updatedAt: ts,
+    }
+    await Storage.write(OrynPath.attempt(input.caseId, next.id), next)
+    const updated: Case = {
+      ...record,
+      activeAttemptId: next.id,
+      repairRounds: record.repairRounds + (input.countRepair ? 1 : 0),
+      noProgressRounds: input.countNoProgress ? record.noProgressRounds + 1 : 0,
+      updatedAt: now(),
+    }
+    await writeCase(updated)
+    return { previous: superseded, next, case: updated }
+  }
 }

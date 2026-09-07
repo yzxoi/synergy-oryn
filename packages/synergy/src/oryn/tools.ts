@@ -1,5 +1,6 @@
 import z from "zod"
 import { Tool } from "../tool/tool"
+import { Finding } from "./schema"
 import { OrynService } from "./service"
 import { OrynStore, OrynStoreError } from "./store"
 
@@ -169,26 +170,46 @@ export const OrynCaseTool = Tool.define(
   },
 )
 
-const DispatchParameters = z.object({
-  caseId: z.string().min(1),
-  attemptId: z.string().optional().describe("Defaults to the case's active attempt"),
-  stage: z.enum(["repro", "code", "verify", "review"]),
-  requestKey: z
-    .string()
-    .min(1)
-    .max(200)
-    .describe("Unique key for this dispatch; repeated keys return the existing worker, not a new one"),
-  reviewDomain: z.enum(["general", "persistence", "security", "channel", "publishing"]).optional(),
-})
+const DispatchParameters = z.discriminatedUnion("action", [
+  z.object({
+    action: z.literal("dispatch"),
+    caseId: z.string().min(1),
+    attemptId: z.string().optional().describe("Defaults to the case's active attempt"),
+    stage: z.enum(["repro", "code", "verify", "review"]),
+    requestKey: z
+      .string()
+      .min(1)
+      .max(200)
+      .describe("Unique key for this dispatch; repeated keys return the existing worker, not a new one"),
+    reviewDomain: z.enum(["general", "persistence", "security", "channel", "publishing"]).optional(),
+  }),
+  z.object({
+    action: z.literal("rework"),
+    caseId: z.string().min(1),
+    reason: z.string().min(1).max(2000).describe("What review found or why the frozen candidate must be redone"),
+  }),
+])
 
 export const OrynDispatchTool = Tool.define(
   "oryn_dispatch",
   {
     description:
-      "Request the next engineering stage for your case. The host picks the agent, workspace, and frozen inputs — you request a stage, never an agent. Repeated requestKeys dedupe to the existing worker.",
+      "Request the next engineering stage for your case (dispatch), or open a bounded rework round on the frozen candidate when review demands changes (rework). The host picks the agent, workspace, and frozen inputs. Repeated dispatch requestKeys dedupe to the existing worker.",
     parameters: DispatchParameters,
     async execute(params, ctx): Promise<Tool.ExecutionResult> {
       return execute(async () => {
+        if (params.action === "rework") {
+          const result = await OrynService.rework({
+            callerSessionID: ctx.sessionID,
+            caseId: params.caseId,
+            reason: params.reason,
+          })
+          return {
+            title: result.handedOff ? "Rework cap reached — handed to human" : "Attempt rotated for rework",
+            output: `attemptId: ${result.attemptId}\nrepairRounds: ${result.repairRounds}\nnoProgressRounds: ${result.noProgressRounds}\nhandedOff: ${result.handedOff}`,
+            metadata: { ...result },
+          }
+        }
         const result = await OrynService.dispatch({
           callerSessionID: ctx.sessionID,
           caseId: params.caseId,
@@ -253,6 +274,25 @@ const ResultParameters = z.discriminatedUnion("kind", [
     limitations: z.array(z.string()).max(16).optional(),
   }),
   z.object({
+    kind: z.literal("review"),
+    caseId: z.string().min(1),
+    attemptId: z.string().min(1),
+    assignmentId: z.string().min(1),
+    requestKey: z.string().min(1).max(200),
+    headSha: z.string().min(1).describe("Candidate SHA under review; must match the frozen candidate"),
+    baseSha: z.string().min(1).describe("Attempt baseline SHA the candidate builds on"),
+    domain: z.enum(["general", "persistence", "security", "channel", "publishing"]).optional(),
+    findings: z
+      .array(Finding)
+      .max(64)
+      .describe("Findings: id, severity P0-P3, category, trigger, impact, and explicit disposition for prior findings"),
+    questions: z.array(z.string()).max(16).optional(),
+    evidenceAssessment: z.string().min(1).max(4000),
+    designDecisions: z.array(z.string()).max(16).optional(),
+    recommendation: z.enum(["changes_required", "needs_human", "ready_for_human"]),
+    limitedScope: z.string().min(1).max(1000).optional(),
+  }),
+  z.object({
     kind: z.literal("review_note"),
     caseId: z.string().min(1),
     attemptId: z.string().min(1),
@@ -279,6 +319,29 @@ export const OrynResultTool = Tool.define(
             title: `Report ${report.id}`,
             output: JSON.stringify(report, null, 2),
             metadata: { reportId: report.id, reportKind: report.kind },
+          }
+        }
+        if (params.kind === "review") {
+          const result = await OrynService.submitReview({
+            callerSessionID: ctx.sessionID,
+            caseId: params.caseId,
+            attemptId: params.attemptId,
+            assignmentId: params.assignmentId,
+            requestKey: params.requestKey,
+            headSha: params.headSha,
+            baseSha: params.baseSha,
+            domain: params.domain,
+            findings: params.findings,
+            questions: params.questions,
+            evidenceAssessment: params.evidenceAssessment,
+            designDecisions: params.designDecisions,
+            recommendation: params.recommendation,
+            limitedScope: params.limitedScope,
+          })
+          return {
+            title: result.stale ? "Review archived (stale epoch)" : "Review accepted",
+            output: `reviewId: ${result.reviewId}\naccepted: ${result.accepted}\nstale: ${result.stale}`,
+            metadata: { ...result },
           }
         }
         const result = await OrynService.submitResult({

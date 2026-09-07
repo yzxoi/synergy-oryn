@@ -6,7 +6,8 @@ import { SessionManager } from "../session/manager"
 import { BossService } from "../boss/boss"
 import { OrynStore, sourceKey, storeError } from "./store"
 import { OrynConfig } from "./config"
-import type { ReviewDomain, RunReceipt, SourceIdentity, Stage } from "./schema"
+import { Finding as FindingSchema } from "./schema"
+import type { Finding, ReviewDomain, RunReceipt, SourceIdentity, Stage } from "./schema"
 import { OrynExecutor } from "./executor"
 
 /**
@@ -53,19 +54,23 @@ async function requireActiveCase(caseId: string) {
   if (record.control === "paused") throw storeError("HUMAN_OWNED", "case is paused", { caseId })
   return record
 }
-
 async function assertStageAdmission(caseId: string, attemptId: string, stage: Stage): Promise<void> {
-  const reports = (await OrynStore.listWorkerReports(caseId)).filter((r) => r.attemptId === attemptId)
+  const reports = await OrynStore.listWorkerReports(caseId)
   if (stage === "code") {
+    // Reproduction is per-case evidence: after a rework rotation the new
+    // attempt inherits the confirmed bug, so any accepted reproduction on
+    // the case admits coding.
     const reproduced = reports.some(
       (r) => r.kind === "repro" && (r.outcome === "reproduced" || r.outcome === "already_fixed"),
     )
     if (!reproduced) {
-      throw storeError("INVALID_STAGE", "code requires an accepted reproduction on this attempt", { caseId })
+      throw storeError("INVALID_STAGE", "code requires an accepted reproduction on this case", { caseId })
     }
+    return
   }
   if (stage === "verify" || stage === "review") {
-    const frozen = reports.some((r) => r.kind === "candidate" && r.candidateSha)
+    const attemptReports = reports.filter((r) => r.attemptId === attemptId)
+    const frozen = attemptReports.some((r) => r.kind === "candidate" && r.candidateSha)
     if (!frozen) {
       throw storeError("INVALID_STAGE", `${stage} requires a frozen candidate on this attempt`, { caseId })
     }
@@ -351,6 +356,275 @@ export namespace OrynService {
       await OrynStore.attachRunEvidence(input.caseId, input.attemptId, runId)
     }
     return { reportId: report.id, accepted: true, stale: false }
+  }
+
+  /**
+   * Reviewer report intake. Only the review assignment's session may submit;
+   * the host pins head to the frozen candidate and base to the attempt
+   * baseline, enforces prior-finding continuity (an open finding cannot
+   * silently disappear between reviews), and archives stale-epoch reports.
+   */
+  export async function submitReview(input: {
+    callerSessionID: string
+    caseId: string
+    attemptId: string
+    assignmentId: string
+    requestKey: string
+    headSha: string
+    baseSha: string
+    domain?: ReviewDomain
+    findings: Finding[]
+    questions?: string[]
+    evidenceAssessment: string
+    designDecisions?: string[]
+    recommendation: "changes_required" | "needs_human" | "ready_for_human"
+    limitedScope?: string
+  }): Promise<{ reviewId: string; accepted: boolean; stale: boolean }> {
+    await requireEnabled()
+    await requireBinding(input.callerSessionID, ["worker"])
+    const assignment = await OrynStore.getAssignment(input.caseId, input.assignmentId)
+    if (!assignment) throw storeError("NOT_AUTHORIZED", `assignment ${input.assignmentId} not found`)
+    if (assignment.sessionId !== input.callerSessionID) {
+      throw storeError("NOT_AUTHORIZED", "assignment does not belong to this session")
+    }
+    if (assignment.stage !== "review") {
+      throw storeError("INVALID_STAGE", "only review assignments submit review reports")
+    }
+    if (assignment.attemptId !== input.attemptId) {
+      throw storeError("INVALID_STAGE", "assignment belongs to a different attempt")
+    }
+    const attempt = await OrynStore.getAttempt(input.caseId, input.attemptId)
+    if (!attempt) throw storeError("NOT_AUTHORIZED", `attempt ${input.attemptId} not found`)
+    if (!attempt.candidateSha) {
+      throw storeError("INVALID_STAGE", "review requires a frozen candidate", { caseId: input.caseId })
+    }
+    if (input.headSha !== attempt.candidateSha) {
+      throw storeError("STALE_HEAD", "review head does not match the frozen candidate", { caseId: input.caseId })
+    }
+    if (input.baseSha !== attempt.baselineSha) {
+      throw storeError("STALE_HEAD", "review base does not match the attempt baseline", { caseId: input.caseId })
+    }
+    const findings = FindingSchema.array().max(64).parse(input.findings)
+    const prior = (await OrynStore.listReviews(input.caseId))
+      .filter((r) => r.attemptId !== input.attemptId)
+      .sort((a, b) => a.createdAt - b.createdAt)
+    const latestPrior = prior.length > 0 ? prior[prior.length - 1] : undefined
+    if (latestPrior) {
+      for (const previousFinding of latestPrior.findings) {
+        if (previousFinding.disposition !== "open" && previousFinding.disposition !== "still_open") continue
+        const carried = findings.find((f) => f.id === previousFinding.id)
+        if (!carried) {
+          throw storeError(
+            "EVIDENCE_INSUFFICIENT",
+            `prior finding ${previousFinding.id} cannot silently disappear; dispose it explicitly`,
+            { caseId: input.caseId },
+          )
+        }
+      }
+    }
+    const record = await OrynStore.getCase(input.caseId)
+    if (!record) throw storeError("NOT_AUTHORIZED", `case ${input.caseId} not found`)
+    const report = await OrynStore.writeReview({
+      assignmentId: input.assignmentId,
+      caseId: input.caseId,
+      attemptId: input.attemptId,
+      headSha: input.headSha,
+      baseSha: input.baseSha,
+      policyDigest: externalIdentityHash(record.acceptanceDigest),
+      evidenceDigest: externalIdentityHash(JSON.stringify(attempt.evidenceRunIds)),
+      domain: input.domain ?? "general",
+      findings,
+      questions: input.questions ?? [],
+      evidenceAssessment: input.evidenceAssessment,
+      designDecisions: input.designDecisions ?? [],
+      recommendation: input.recommendation,
+      ...(input.limitedScope ? { limitedScope: input.limitedScope } : {}),
+    })
+    if (record.epoch !== assignment.epoch) {
+      return { reviewId: report.id, accepted: false, stale: true }
+    }
+    await OrynStore.acceptAssignmentReport(input.caseId, input.assignmentId, report.id)
+    return { reviewId: report.id, accepted: true, stale: false }
+  }
+
+  /**
+   * Bounded rework: supersede the current attempt and open the next one on
+   * the frozen candidate (append-only history), enforcing the configured
+   * repair-round and no-progress caps. Hitting either cap hands the case to
+   * a human deterministically instead of looping.
+   */
+  export async function rework(input: {
+    callerSessionID: string
+    caseId: string
+    reason: string
+  }): Promise<{ attemptId: string; repairRounds: number; noProgressRounds: number; handedOff: boolean }> {
+    await requireEnabled()
+    const binding = await requireBinding(input.callerSessionID, ["engineering"])
+    if (binding.caseId !== input.caseId) {
+      throw storeError("NOT_AUTHORIZED", "case does not belong to this engineering session")
+    }
+    const record = await requireActiveCase(input.caseId)
+    if (record.engineeringSessionId !== input.callerSessionID) {
+      throw storeError("NOT_AUTHORIZED", "caller is not the case engineering root")
+    }
+    const attemptId = record.activeAttemptId
+    if (!attemptId) throw storeError("INVALID_STAGE", "case has no active attempt", { caseId: input.caseId })
+    const attempt = await OrynStore.getAttempt(input.caseId, attemptId)
+    if (!attempt?.candidateSha) {
+      throw storeError("INVALID_STAGE", "rework requires a frozen candidate on the current attempt", {
+        caseId: input.caseId,
+      })
+    }
+    const oryn = await OrynConfig.info()
+    const maxRepair = oryn?.review?.maxRepairRounds ?? 3
+    const maxNoProgress = oryn?.review?.maxNoProgressRounds ?? 2
+    const attempts = await OrynStore.listAttempts(input.caseId)
+    const previous = attempts.length >= 2 ? attempts[attempts.length - 2] : undefined
+    const noProgress = previous?.candidateSha !== undefined && previous.candidateSha === attempt.candidateSha
+    if (record.repairRounds + 1 > maxRepair || (noProgress ? record.noProgressRounds + 1 : 0) > maxNoProgress) {
+      const handed = await OrynStore.requestHandoff(input.caseId, `rework limit reached: ${input.reason}`)
+      return {
+        attemptId: handed.activeAttemptId ?? attemptId,
+        repairRounds: record.repairRounds,
+        noProgressRounds: record.noProgressRounds,
+        handedOff: true,
+      }
+    }
+    const rotated = await OrynStore.rotateAttempt({
+      caseId: input.caseId,
+      fromAttemptId: attemptId,
+      invalidationReason: input.reason,
+      nextBaselineSha: attempt.candidateSha,
+      countRepair: true,
+      countNoProgress: noProgress,
+    })
+    return {
+      attemptId: rotated.next.id,
+      repairRounds: rotated.case.repairRounds,
+      noProgressRounds: rotated.case.noProgressRounds,
+      handedOff: false,
+    }
+  }
+
+  /**
+   * Deterministic delivery gate (proposal §9): control state, version
+   * consistency, trusted evidence, CI status, independent review closure,
+   * payload completeness, and secret leakage. CI status and the payload
+   * arrive from the caller (the controlled publisher), so the gate stays
+   * locally checkable and fails closed on unknowns.
+   */
+  export async function evaluateDelivery(input: {
+    callerSessionID: string
+    caseId: string
+    attemptId?: string
+    ciStatus?: "passed" | "failed" | "not_applicable"
+    payload?: string
+  }): Promise<{ ready: boolean; failures: Array<{ code: string; message: string }> }> {
+    await requireEnabled()
+    const binding = await requireBinding(input.callerSessionID, ["engineering"])
+    if (binding.caseId !== input.caseId) {
+      throw storeError("NOT_AUTHORIZED", "case does not belong to this engineering session")
+    }
+    const record = await OrynStore.getCase(input.caseId)
+    if (!record) throw storeError("NOT_AUTHORIZED", `case ${input.caseId} not found`)
+    const failures: Array<{ code: string; message: string }> = []
+
+    if (record.control !== "active") {
+      failures.push({ code: "HUMAN_OWNED", message: `case is ${record.control}` })
+    }
+
+    const attemptId = input.attemptId ?? record.activeAttemptId
+    const attempt = attemptId ? await OrynStore.getAttempt(input.caseId, attemptId) : undefined
+    if (!attempt) {
+      failures.push({ code: "INVALID_STAGE", message: "no active attempt" })
+    } else {
+      if (!attempt.candidateSha) {
+        failures.push({ code: "INVALID_STAGE", message: "attempt has no frozen candidate" })
+      }
+      if (attempt.disposition !== "candidate_frozen") {
+        failures.push({ code: "INVALID_STAGE", message: `attempt disposition is ${attempt.disposition}` })
+      }
+
+      const runs = (await OrynStore.listRuns(input.caseId)).filter((r) => r.attemptId === attempt.id)
+      const baselineFailed = runs.some((r) => r.lane === "baseline" && r.outcome === "failed")
+      const cleanCandidatePass = runs.some(
+        (r) =>
+          r.lane === "candidate" && r.outcome === "passed" && !r.overlayApplied && r.actualSha === attempt.candidateSha,
+      )
+      const unresolved = runs.filter((r) => r.outcome === "inconclusive" || r.outcome === "cancelled")
+      if (record.kind === "bug" && !baselineFailed) {
+        failures.push({ code: "EVIDENCE_INSUFFICIENT", message: "bug cases require a failing baseline run" })
+      }
+      if (!cleanCandidatePass) {
+        failures.push({
+          code: "EVIDENCE_INSUFFICIENT",
+          message: "no clean passing candidate run on the frozen candidate",
+        })
+      }
+      if (unresolved.length > 0) {
+        failures.push({
+          code: "EVIDENCE_INSUFFICIENT",
+          message: `${unresolved.length} inconclusive or cancelled run(s) unresolved`,
+        })
+      }
+
+      const reviews = (await OrynStore.listReviews(input.caseId)).filter(
+        (r) => r.attemptId === attempt.id && r.headSha === attempt.candidateSha,
+      )
+      const sorted = reviews.sort((a, b) => a.createdAt - b.createdAt)
+      const latest = sorted.length > 0 ? sorted[sorted.length - 1] : undefined
+      if (!latest) {
+        failures.push({ code: "EVIDENCE_INSUFFICIENT", message: "no review for the frozen candidate" })
+      } else {
+        if (latest.recommendation !== "ready_for_human") {
+          failures.push({
+            code: "EVIDENCE_INSUFFICIENT",
+            message: `reviewer recommendation is ${latest.recommendation}`,
+          })
+        }
+        const blockers = latest.findings.filter(
+          (f) =>
+            (f.disposition === "open" || f.disposition === "still_open") &&
+            (f.severity === "P0" || f.severity === "P1"),
+        )
+        if (blockers.length > 0) {
+          failures.push({ code: "EVIDENCE_INSUFFICIENT", message: `${blockers.length} open blocker finding(s)` })
+        }
+        if (latest.designDecisions.length > 0) {
+          failures.push({ code: "HUMAN_OWNED", message: "unresolved design decisions require an owner" })
+        }
+      }
+    }
+
+    if (input.ciStatus === undefined) {
+      failures.push({ code: "EVIDENCE_INSUFFICIENT", message: "CI status unknown; fail-closed" })
+    } else if (input.ciStatus === "failed") {
+      failures.push({ code: "EVIDENCE_INSUFFICIENT", message: "CI failed on the candidate" })
+    }
+
+    const payload = input.payload
+    if (!payload) {
+      failures.push({ code: "EVIDENCE_INSUFFICIENT", message: "delivery payload missing" })
+    } else {
+      if (attempt?.candidateSha && !payload.includes(attempt.candidateSha)) {
+        failures.push({ code: "STALE_HEAD", message: "payload does not reference the frozen candidate" })
+      }
+      const secretPatterns: Array<[RegExp, string]> = [
+        [/ghp_[A-Za-z0-9]{10,}/, "a GitHub token"],
+        [/github_pat_[A-Za-z0-9_]{10,}/, "a fine-grained GitHub token"],
+        [/sk-[A-Za-z0-9-]{10,}/, "an API key"],
+        [/\bses_[a-zA-Z0-9]{8,}\b/, "an internal session id"],
+        [/\borc_[a-zA-Z0-9]{8,}\b/, "an internal case id"],
+        [/(\/Users\/|\/home\/)[A-Za-z0-9._-]+/, "an absolute home path"],
+      ]
+      for (const [pattern, label] of secretPatterns) {
+        if (pattern.test(payload)) {
+          failures.push({ code: "NOT_AUTHORIZED", message: `payload contains ${label}` })
+        }
+      }
+    }
+
+    return { ready: failures.length === 0, failures }
   }
 
   /**
