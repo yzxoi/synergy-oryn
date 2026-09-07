@@ -57,6 +57,7 @@ function initialRouteWaitsForSessionSurface() {
   if (pathname.includes("/plugins")) return false
   if (pathname.includes("/performance")) return false
   if (pathname.includes("/kanban")) return false
+  if (pathname.includes("/oryn")) return false
   return true
 }
 
@@ -254,6 +255,7 @@ function ConnectedApp() {
                   <Route path="/kanban" component={() => <BuiltinNavigationPage navigationId="kanban" />} />
                   <Route path="/library" component={() => <BuiltinNavigationPage navigationId="library" />} />
                   <Route path="/performance" component={() => <BuiltinNavigationPage navigationId="performance" />} />
+                  <Route path="/oryn" component={() => <BuiltinNavigationPage navigationId="oryn" />} />
                   <Route
                     path="/plugins/marketplace"
                     component={() => <BuiltinNavigationPage navigationId="plugins" />}

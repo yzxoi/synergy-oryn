@@ -7,7 +7,7 @@ import { useLingui } from "@lingui/solid"
 import { appShell } from "@/locales/messages"
 import "./mobile-drawer.css"
 
-type DrawerToolID = "agenda" | "library" | "performance" | "plugins"
+type DrawerToolID = "agenda" | "library" | "performance" | "oryn" | "plugins"
 
 const DRAWER_TOOLS: Array<{
   id: DrawerToolID
@@ -17,6 +17,7 @@ const DRAWER_TOOLS: Array<{
   { id: "agenda", icon: "agenda.main", href: "/agenda" },
   { id: "library", icon: "library.main", href: "/library" },
   { id: "performance", icon: "performance.main", href: "/performance" },
+  { id: "oryn", icon: "oryn.main", href: "/oryn" },
   { id: "plugins", icon: "plugins.main", href: "/plugins/marketplace" },
 ]
 
@@ -29,6 +30,7 @@ export function MobileToolsDrawer() {
     if (id === "agenda") return _(appShell.agenda)
     if (id === "library") return _(appShell.library)
     if (id === "performance") return _(appShell.performance)
+    if (id === "oryn") return _(appShell.oryn)
     return _(appShell.plugins)
   }
 

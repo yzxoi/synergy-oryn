@@ -553,6 +553,15 @@ export namespace OrynStore {
     return next
   }
 
+  /** Learning candidates for one case, oldest first. */
+  export async function listLearnings(caseId: string): Promise<LearningCandidate[]> {
+    const ids = await Storage.scan(OrynPath.learningRoot())
+    const records = await Promise.all(ids.map((id) => getLearning(id)))
+    return records
+      .filter((r): r is LearningCandidate => r !== undefined && r.caseId === caseId)
+      .sort((a, b) => a.createdAt - b.createdAt)
+  }
+
   /** Host-side binding written when a QA/engineering/worker session is created for a source. */
   export async function bindSessionSource(input: {
     sessionID: string

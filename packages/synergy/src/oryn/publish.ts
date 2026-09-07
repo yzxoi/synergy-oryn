@@ -2,6 +2,7 @@ import { externalIdentityHash } from "../util/identity"
 import { OrynStore, storeError } from "./store"
 import { OrynConfig } from "./config"
 import { OrynService } from "./service"
+import { OrynLearning } from "./learn"
 import type { ActionReceipt, PublishOperation } from "./schema"
 
 /**
@@ -42,9 +43,10 @@ export type PublishExecuteInput = {
 export type PublishExecuteResult = { refs: PublishRefs }
 
 export type PublishFacts = {
-  issue?: { number: number; state: string; markerPresent: boolean; authorIsApp: boolean }
+  issue?: { number: number; title: string; state: string; markerPresent: boolean; authorIsApp: boolean }
   pull?: {
     number: number
+    title: string
     headSha: string
     headBranch: string
     baseRef: string
@@ -334,6 +336,9 @@ export namespace OrynPublish {
           text: input.payload ?? `fix is ready for human review${refs.pullNumber ? ` (PR #${refs.pullNumber})` : ""}`,
           dedupKey: `${input.caseId}:ready`,
         })
+        // Config-gated verified-memory promotion happens only after a
+        // delivered attempt; failures here never fail the delivery itself.
+        await OrynLearning.promoteCase(input.caseId).catch(() => undefined)
       }
       return { actionId: settled.id, state: settled.state, refs: settled.remoteRefs, deduped: false }
     } catch (error) {
@@ -480,5 +485,29 @@ export namespace OrynPublish {
       },
       signal,
     )
+  }
+
+  /**
+   * Authorized bounded remote-fact read for oryn_github_read: any Oryn role
+   * may read, but QA sessions must be linked to the case through their
+   * source while engineering/worker sessions must be bound to the case.
+   */
+  export async function readFacts(input: {
+    callerSessionID: string
+    caseId: string
+    ref?: string
+  }): Promise<PublishFacts> {
+    if (!(await OrynConfig.enabled())) throw storeError("NOT_AUTHORIZED", "oryn runtime is disabled")
+    const binding = await OrynStore.sessionSourceBinding(input.callerSessionID)
+    if (!binding) throw storeError("NOT_AUTHORIZED", "session has no Oryn source binding")
+    if (binding.role === "qa") {
+      const link = await OrynStore.getSource(binding.sourceKey)
+      if (!link || !link.caseIds.includes(input.caseId)) {
+        throw storeError("NOT_AUTHORIZED", `source is not linked to case ${input.caseId}`)
+      }
+    } else if (binding.caseId !== input.caseId) {
+      throw storeError("NOT_AUTHORIZED", "case does not belong to this session")
+    }
+    return observeCase({ caseId: input.caseId, ref: input.ref })
   }
 }

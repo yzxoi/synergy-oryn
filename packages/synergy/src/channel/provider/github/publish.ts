@@ -205,6 +205,7 @@ export namespace OrynGithubPublish {
           const login = stringField(record(issue).user, "login") ?? ""
           facts.issue = {
             number: input.issueNumber,
+            title: stringField(issue, "title") ?? "",
             state: stringField(issue, "state") ?? "unknown",
             markerPresent: input.marker ? body.includes(input.marker) : false,
             authorIsApp: login.endsWith("[bot]"),
@@ -223,6 +224,7 @@ export namespace OrynGithubPublish {
           const login = stringField(record(pull).user, "login") ?? ""
           facts.pull = {
             number: input.pullNumber,
+            title: stringField(pull, "title") ?? "",
             headSha: stringField(record(pull).head, "sha") ?? "",
             headBranch: stringField(record(pull).head, "ref") ?? "",
             baseRef: stringField(record(pull).base, "ref") ?? "",

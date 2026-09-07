@@ -63,6 +63,7 @@ const WORK_TOOLS = [
   "oryn_check",
   "oryn_publish",
   "oryn_github_read",
+  "oryn_learn",
 ]
 const REPRO_TOOLS = [
   "skill",
@@ -77,6 +78,7 @@ const REPRO_TOOLS = [
   "oryn_check",
   "oryn_result",
   "oryn_github_read",
+  "oryn_learn",
 ]
 const CODE_TOOLS = [
   "skill",
@@ -91,6 +93,7 @@ const CODE_TOOLS = [
   "oryn_check",
   "oryn_result",
   "oryn_github_read",
+  "oryn_learn",
 ]
 const REVIEW_TOOLS = [
   "memory_search",
@@ -101,6 +104,7 @@ const REVIEW_TOOLS = [
   "oryn_check",
   "oryn_result",
   "oryn_github_read",
+  "oryn_learn",
 ]
 
 export function createBuiltinOrynAgents(ctx: BuiltinAgentContext): Record<string, Agent.Info> {

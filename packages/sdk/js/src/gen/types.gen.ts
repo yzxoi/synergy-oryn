@@ -3714,6 +3714,10 @@ export type OrynRepositoryConfig = {
    * Execution profile IDs (from oryn.executionProfiles) available for verification on this repository
    */
   testProfiles?: Array<string>
+  /**
+   * Allow the controlled App identity to write oryn/delivery check runs on this repository (default: false). Only enable after the deployment has verified the check live; never register it as a required check before that
+   */
+  deliveryCheck?: boolean
 }
 
 /**
@@ -3832,11 +3836,11 @@ export type OrynConfig = {
   /**
    * Explicit Feishu account/chat to repository routing. Unknown targets require clarification, never a default repo
    */
-  routes: Array<OrynRouteConfig>
+  routes?: Array<OrynRouteConfig>
   /**
    * Repository alias to target repository mapping
    */
-  repositories: {
+  repositories?: {
     [key: string]: OrynRepositoryConfig
   }
   review?: OrynReviewConfig
@@ -7743,6 +7747,13 @@ export type BossWorkerCancelInput = {
 
 export type BossSessionOpenResult = {
   sessionID: string
+}
+
+export type AssetInfo = {
+  id: string
+  url: string
+  mime: string
+  size: number
 }
 
 export type OrynCaseListItem = {
@@ -18720,6 +18731,72 @@ export type BossSessionOpenResponses = {
 }
 
 export type BossSessionOpenResponse = BossSessionOpenResponses[keyof BossSessionOpenResponses]
+
+export type AssetUploadData = {
+  body?: {
+    file: unknown
+  }
+  path?: never
+  query?: {
+    directory?: string
+    scopeID?: string
+  }
+  url: "/asset"
+}
+
+export type AssetUploadErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+  /**
+   * Runtime shutting down
+   */
+  503: RuntimeShuttingDownError
+}
+
+export type AssetUploadError = AssetUploadErrors[keyof AssetUploadErrors]
+
+export type AssetUploadResponses = {
+  /**
+   * Uploaded asset info
+   */
+  200: AssetInfo
+}
+
+export type AssetUploadResponse = AssetUploadResponses[keyof AssetUploadResponses]
+
+export type AssetGetData = {
+  body?: never
+  path: {
+    id: string
+  }
+  query?: {
+    directory?: string
+    scopeID?: string
+  }
+  url: "/asset/{id}"
+}
+
+export type AssetGetErrors = {
+  /**
+   * Not found
+   */
+  404: NotFoundError
+  /**
+   * Runtime shutting down
+   */
+  503: RuntimeShuttingDownError
+}
+
+export type AssetGetError = AssetGetErrors[keyof AssetGetErrors]
+
+export type AssetGetResponses = {
+  /**
+   * Asset binary
+   */
+  200: unknown
+}
 
 export type OrynCaseListData = {
   body?: never

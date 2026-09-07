@@ -64,6 +64,22 @@ const builtinNavigation: Array<Parameters<typeof registerNavigation>[0]> = [
     },
   },
   {
+    id: "oryn",
+    navigationId: "oryn",
+    label: pluginNav.oryn.id,
+    labelDescriptor: pluginNav.oryn,
+    iconToken: "oryn.main",
+    placement: "sidebar",
+    path: "/oryn",
+    order: 35,
+    loader: async () => {
+      const oryn = await import("@/components/oryn")
+      const OrynNavigation: Component<NavigationContentProps> = () => <oryn.OrynPanel />
+      return { default: OrynNavigation }
+    },
+  },
+
+  {
     id: "plugins",
     navigationId: "plugins",
     label: pluginNav.plugins.id,

@@ -57,6 +57,10 @@ import type {
   AppAgentsResponses,
   AppLogErrors,
   AppLogResponses,
+  AssetGetErrors,
+  AssetGetResponses,
+  AssetUploadErrors,
+  AssetUploadResponses,
   AttachmentModelPolicy,
   AttachmentPartInput,
   AttachmentPresentation,
@@ -10234,6 +10238,78 @@ export class Boss extends HeyApiClient {
   session = new Session({ client: this.client })
 }
 
+export class Asset extends HeyApiClient {
+  /**
+   * Upload asset
+   *
+   * Upload a binary asset (image, video, etc.) and get a reference URL.
+   */
+  public upload<ThrowOnError extends boolean = false>(
+    parameters?: {
+      directory?: string
+      scopeID?: string
+      file?: unknown
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "directory" },
+            { in: "query", key: "scopeID" },
+            { in: "body", key: "file" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).post<AssetUploadResponses, AssetUploadErrors, ThrowOnError>({
+      ...formDataBodySerializer,
+      url: "/asset",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": null,
+        ...options?.headers,
+        ...params.headers,
+      },
+    })
+  }
+
+  /**
+   * Get asset
+   *
+   * Download a previously uploaded asset.
+   */
+  public get<ThrowOnError extends boolean = false>(
+    parameters: {
+      id: string
+      directory?: string
+      scopeID?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "id" },
+            { in: "query", key: "directory" },
+            { in: "query", key: "scopeID" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).get<AssetGetResponses, AssetGetErrors, ThrowOnError>({
+      url: "/asset/{id}",
+      ...options,
+      ...params,
+    })
+  }
+}
+
 export class Attempt extends HeyApiClient {
   /**
    * Get an Oryn attempt
@@ -12450,6 +12526,8 @@ export class SynergyClient extends HeyApiClient {
   workflow = new Workflow({ client: this.client })
 
   boss = new Boss({ client: this.client })
+
+  asset = new Asset({ client: this.client })
 
   oryn = new Oryn({ client: this.client })
 

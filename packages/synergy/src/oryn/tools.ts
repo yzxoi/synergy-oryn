@@ -2,6 +2,7 @@ import z from "zod"
 import { Tool } from "../tool/tool"
 import { Finding } from "./schema"
 import { OrynPublish } from "./publish"
+import { OrynLearning } from "./learn"
 import { OrynService } from "./service"
 import { OrynStore, OrynStoreError } from "./store"
 
@@ -579,6 +580,85 @@ export const OrynPublishTool = Tool.define(
   },
 )
 
+const GithubReadParameters = z.object({
+  caseId: z.string().min(1),
+})
+
+export const OrynGithubReadTool = Tool.define(
+  "oryn_github_read",
+  {
+    description:
+      "Read bounded remote facts for one of your linked cases: the linked issue and pull request (title, state, author class), and CI status on the candidate. The host resolves the repository and refs from the case; you never name a repo, endpoint, or number. Arbitrary GitHub browsing is intentionally unavailable.",
+    parameters: GithubReadParameters,
+    async execute(params, ctx): Promise<Tool.ExecutionResult> {
+      return execute(async () => {
+        const facts = await OrynPublish.readFacts({
+          callerSessionID: ctx.sessionID,
+          caseId: params.caseId,
+        })
+        return {
+          title: "Remote facts",
+          output: JSON.stringify(facts, null, 2),
+          metadata: { caseId: params.caseId, ci: facts.ci.state },
+        }
+      })
+    },
+  },
+  {
+    exposure: { mode: "resident" },
+  },
+)
+
+const LearnParameters = z.object({
+  caseId: z.string().min(1),
+  lesson: z.string().min(1).max(2000).describe("The reusable engineering lesson, stated as a fact"),
+  applicability: z.string().min(1).max(1000).describe("Where this lesson applies (repo, area, versions)"),
+  invalidation: z.string().min(1).max(1000).describe("When this lesson stops being true"),
+  evidenceRefs: z
+    .array(z.string())
+    .min(1)
+    .max(16)
+    .describe("Record ids from this case that back the lesson (run, review, report, or attempt ids)"),
+})
+
+export const OrynLearnTool = Tool.define(
+  "oryn_learn",
+  {
+    description:
+      "Propose a reusable lesson from this case for host promotion into shared memory. Every claim must cite case records as evidence; raw chat text, private logs, and credentials are rejected. Promotion only happens after the case is delivered and the host has verified-memory promotion enabled, and a wrong lesson can be withdrawn.",
+    parameters: LearnParameters,
+    async execute(params, ctx): Promise<Tool.ExecutionResult> {
+      return execute(async () => {
+        const result = await OrynLearning.propose({
+          callerSessionID: ctx.sessionID,
+          caseId: params.caseId,
+          lesson: params.lesson,
+          applicability: params.applicability,
+          invalidation: params.invalidation,
+          evidenceRefs: params.evidenceRefs,
+        })
+        return {
+          title: result.created ? "Lesson proposed" : "Lesson already proposed",
+          output: `learningId: ${result.learningId}\ncreated: ${result.created}`,
+          metadata: { ...result },
+        }
+      })
+    },
+  },
+  {
+    exposure: { mode: "resident" },
+  },
+)
+
 export function registerOrynTools(): Tool.Info[] {
-  return [OrynCaseTool, OrynDispatchTool, OrynResultTool, OrynCheckTool, OrynPublishTool, OrynReplyTool]
+  return [
+    OrynCaseTool,
+    OrynDispatchTool,
+    OrynResultTool,
+    OrynCheckTool,
+    OrynPublishTool,
+    OrynGithubReadTool,
+    OrynLearnTool,
+    OrynReplyTool,
+  ]
 }

@@ -170,6 +170,7 @@ function fakeTransport(input: {
       if (query.issueNumber) {
         facts.issue = {
           number: query.issueNumber,
+          title: "bug: forwarded message shows placeholder",
           state: "open",
           markerPresent: input.issue?.markerPresent ?? true,
           authorIsApp: input.issue?.authorIsApp ?? true,
@@ -179,6 +180,7 @@ function fakeTransport(input: {
         const head = input.pullHeadSha ?? input.candidateSha
         facts.pull = {
           number: query.pullNumber,
+          title: "fix: forwarded message",
           headSha: head,
           headBranch: orynBranch("any"),
           baseRef: "dev",

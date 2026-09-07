@@ -1354,6 +1354,7 @@ export namespace Server {
         .route("/lattice", LatticeRoute)
         .route("/workflow", WorkflowRoute)
         .route("/boss", BossRoute)
+        .route("/asset", AssetRoute)
         .route("/oryn", OrynRoute)
         .route("/voice", VoiceRoute)
         .route("/holos", HolosDataRoute)
