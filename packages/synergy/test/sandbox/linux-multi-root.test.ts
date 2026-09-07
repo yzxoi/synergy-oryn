@@ -111,6 +111,9 @@ describe("Linux helper default runtime mounts", () => {
       const roots = profile.fileSystem.readableRoots as string[]
       expect(roots).toContain(tmp.path)
       expect(roots.filter((root) => !fs.existsSync(root))).toEqual([])
+      for (const library of ["/lib", "/lib64"].filter((root) => fs.existsSync(root))) {
+        expect(roots).toContain(library)
+      }
     } finally {
       SandboxBackend.cleanupTemp(wrapper.tempPath!)
     }
