@@ -41,8 +41,9 @@ function remote(
     Object.assign(
       async (url: URL | RequestInfo, init?: RequestInit) => {
         const path = new URL(String(url)).pathname
-        if (init?.method === "POST") {
+        if (init?.method === "POST" || init?.method === "PATCH") {
           writes.push({ path, body: JSON.parse(String(init.body)) })
+          if (init?.method === "PATCH" && path.endsWith("/pulls/55")) return Response.json({ number: 55 })
           if (path === "/graphql") {
             if (options.loseResponse) throw new TypeError("connection lost after remote write")
             return Response.json(
@@ -263,4 +264,12 @@ test("Oryn CI includes unfinished jobs beyond the first check page", async () =>
     ref: input.candidateSha,
   })
   expect(facts.ci.state).toBe("pending")
+})
+
+test("ready publication refreshes the host-generated evidence body before leaving Draft", async () => {
+  const network = remote()
+  const body = "Host evidence summary\n\n<!-- oryn:example -->"
+  await OrynGithubPublish.createTransport().execute({ ...input, title: "fix: attachment", body })
+  expect(network.writes.map((write) => write.path)).toEqual(["/repos/acme/widget/pulls/55", "/graphql"])
+  expect(network.writes[0]!.body).toMatchObject({ title: "fix: attachment", body })
 })

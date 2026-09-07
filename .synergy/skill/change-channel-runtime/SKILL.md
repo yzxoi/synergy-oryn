@@ -68,3 +68,7 @@ For Oryn publication changes, verify actual remote state transitions through a f
 ## Handoff
 
 Report provider shape and lifecycle, target identity, Scope/Session ownership, durable state and recovery semantics, routes/SDK/UI wiring, focused and broad checks, isolated runtime evidence, and any environment-only limitation.
+
+## Oryn public evidence
+
+When changing Oryn publication, exercise `test/oryn/publication.test.ts`, `test/oryn/publish.test.ts` and `test/channel/provider/github/oryn-publish.test.ts`. Create a real nonempty candidate commit in successful fixtures; verify that current accepted assignments supply evidence, private context cannot enter public text, and ready refreshes the body before the remote transition. The delivery gate must inspect the generated body that is actually published, not a separate model-authored payload. Distinguish a Git diff scope map from a verified runtime architecture diagram.

@@ -123,7 +123,13 @@ async function seedFrozen(root: string): Promise<Frozen> {
     stage: "code",
     requestKey: "rk_code_learn",
   })
-  const candidateSha = await headSha(root)
+  const assignment = (await OrynStore.getAssignment(caseId, code.assignmentId))!
+  await Bun.write(`${assignment.workspaceRef}/learning-fixture.txt`, "Candidate for the learning gate fixture\n")
+  await Bun.$`git add -- learning-fixture.txt`.cwd(assignment.workspaceRef!).quiet()
+  await Bun.$`git -c user.name=Fixture -c user.email=fixture@example.test commit -m ${"test: create learning candidate\n\nCo-authored-by: synergy-agent <299070056+synergy-agent@users.noreply.github.com>"}`
+    .cwd(assignment.workspaceRef!)
+    .quiet()
+  const candidateSha = await headSha(assignment.workspaceRef!)
   await OrynService.submitResult({
     callerSessionID: code.workerSessionId,
     caseId,

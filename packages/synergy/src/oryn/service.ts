@@ -1,3 +1,4 @@
+import { OrynPublicText } from "./public-text"
 import { Lock } from "../util/lock"
 import { externalIdentityHash } from "../util/identity"
 import { Session } from "../session"
@@ -497,8 +498,7 @@ export namespace OrynService {
         attemptId: input.attemptId,
         headSha: input.headSha,
         baseSha: input.baseSha,
-        policyDigest: externalIdentityHash(record.acceptanceDigest),
-        evidenceDigest: externalIdentityHash(JSON.stringify(attempt.evidenceRunIds)),
+        ...OrynEvidence.reviewDigests(record, attempt),
         domain,
         findings,
         questions: input.questions ?? [],
@@ -729,8 +729,7 @@ export namespace OrynService {
           )
         })
         .sort((left, right) => attempt.reviewIds.indexOf(left.id) - attempt.reviewIds.indexOf(right.id))
-      const evidenceDigest = externalIdentityHash(JSON.stringify(attempt.evidenceRunIds))
-      const policyDigest = externalIdentityHash(record.acceptanceDigest)
+      const { evidenceDigest, policyDigest } = OrynEvidence.reviewDigests(record, attempt)
       for (const domain of requiredDomains) {
         const latest = reviews.filter((report) => report.domain === domain).at(-1)
         if (!latest) {
@@ -781,18 +780,8 @@ export namespace OrynService {
       if (attempt?.candidateSha && !payload.includes(attempt.candidateSha)) {
         failures.push({ code: "STALE_HEAD", message: "payload does not reference the frozen candidate" })
       }
-      const secretPatterns: Array<[RegExp, string]> = [
-        [/ghp_[A-Za-z0-9]{10,}/, "a GitHub token"],
-        [/github_pat_[A-Za-z0-9_]{10,}/, "a fine-grained GitHub token"],
-        [/sk-[A-Za-z0-9-]{10,}/, "an API key"],
-        [/\bses_[a-zA-Z0-9]{8,}\b/, "an internal session id"],
-        [/\borc_[a-zA-Z0-9]{8,}\b/, "an internal case id"],
-        [/(\/Users\/|\/home\/)[A-Za-z0-9._-]+/, "an absolute home path"],
-      ]
-      for (const [pattern, label] of secretPatterns) {
-        if (pattern.test(payload)) {
-          failures.push({ code: "NOT_AUTHORIZED", message: `payload contains ${label}` })
-        }
+      for (const label of OrynPublicText.violations(payload)) {
+        failures.push({ code: "NOT_AUTHORIZED", message: `payload contains ${label}` })
       }
     }
 

@@ -124,3 +124,9 @@ Use a consistent backup of the dedicated runtime root, including its `data/` and
 ## Disable and Rollback
 
 Set `oryn.enabled: false` (or remove the `oryn` key) and restart the runtime. Disabled behavior is a product invariant: no Oryn agents, tools, routes, or poll additions execute, and ordinary Channel/Boss/Feishu/GitHub behavior is unchanged. In-flight external actions recorded before the flip are reconciled on the next enabled window; a case left mid-flight stays paused-safe and requires a human to resume.
+
+## Generated publication content
+
+Oryn builds issue and PR bodies from Case observations, actual frozen Git changes and accepted assignment reports. PR titles use a conventional type. Tool-provided body text is bounded implementation commentary, separate from host evidence; it does not replace evidence sections. The Mermaid scope map depicts changed files between base and candidate, not runtime dependencies. Commands containing recognized private context are omitted; raw logs remain in the authorized workspace. Public text checks reject known credential and local-path patterns but are not a general personal-data classifier.
+
+Draft-to-ready refreshes the PR description with current accepted verification and review before changing GitHub readiness. A transport failure after an attempted write is reconciled as an uncertain action, not blindly repeated. Evidence display is not proof that the full feedback pipeline, application behavior or live Feishu canary has passed.

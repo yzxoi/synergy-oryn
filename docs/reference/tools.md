@@ -89,7 +89,7 @@ Generated from the builtin tool registry in `packages/synergy/src/tool/registry.
 | `oryn_dispatch` | `orchestration.session` | Request the next engineering stage for your case (dispatch), or open a bounded rework round on the frozen candidate when review demands changes (rework). The host picks the agent, workspace, and froze |
 | `oryn_github_read` | `code.read` | Read bounded remote facts for one of your linked cases: the linked issue and pull request (title, state, author class), and CI status on the candidate. The host resolves the repository and refs from t |
 | `oryn_learn` | `knowledge.memory` | Propose a reusable lesson from this case for host promotion into shared memory. Every claim must cite case records as evidence; raw chat text, private logs, and credentials are rejected. Promotion onl |
-| `oryn_publish` | `communication.publish` | Publish host-verified artifacts for your case: the tracking issue, a draft PR from the frozen candidate, PR updates, the review comment, or the final ready delivery. The host records every action in t |
+| `oryn_publish` | `communication.publish` | Publish host-verified artifacts for your case: the tracking issue, a draft PR from the frozen candidate, PR updates, the review comment, or the final ready delivery. The host generates PR scope diagra |
 | `oryn_reply` | `communication.deliver` | Queue a bounded QA reply to your bound reporter source. The host supplies recipient and root turn identity; no account or chat id is accepted. Answers deduplicate within the current turn, and lifecycl |
 | `oryn_result` | `orchestration.session` | Submit your structured worker outcome for an assignment, or read a previously submitted report. The host validates the assignment belongs to your session; stale-epoch reports are archived but not acce |
 | `parse_code` | `code.analyze` | Search code with AST-aware patterns and return anchored file blocks. Use this instead of `ast_grep` in the anchored coding harness. Matched files are returned with real `[path#TAG]` headers and only t |
@@ -1272,7 +1272,7 @@ Propose a reusable lesson from this case for host promotion into shared memory. 
 
 Kind: `communication.publish`
 
-Publish host-verified artifacts for your case: the tracking issue, a draft PR from the frozen candidate, PR updates, the review comment, or the final ready delivery. The host records every action in the ledger, verifies the frozen candidate and the delivery gate, and holds all credentials — you never touch tokens or endpoints. A timeout leaves the action ambiguous; reconciliation settles it, never a blind retry.
+Publish host-verified artifacts for your case: the tracking issue, a draft PR from the frozen candidate, PR updates, the review comment, or the final ready delivery. The host generates PR scope diagrams and evidence sections from the frozen candidate and accepted reports; body is only your implementation notes, and PR titles must use a conventional prefix. The host records every action in the ledger, verifies the frozen candidate and the delivery gate, and holds all credentials — you never touch tokens or endpoints. A timeout leaves the action ambiguous; reconciliation settles it, never a blind retry.
 
 | Parameter | Type | Required | Description |
 | --- | --- | --- | --- |

@@ -116,7 +116,13 @@ async function seedFrozen(root: string): Promise<Frozen> {
     stage: "code",
     requestKey: "rk_code_pub",
   })
-  const candidateSha = await headSha(root)
+  const assignment = (await OrynStore.getAssignment(caseId, code.assignmentId))!
+  await Bun.write(`${assignment.workspaceRef}/publication-fixture.txt`, "Fixed candidate fixture\n")
+  await Bun.$`git add -- publication-fixture.txt`.cwd(assignment.workspaceRef!).quiet()
+  await Bun.$`git -c user.name=Fixture -c user.email=fixture@example.test commit -m ${"fix: update publication fixture\n\nCo-authored-by: synergy-agent <299070056+synergy-agent@users.noreply.github.com>"}`
+    .cwd(assignment.workspaceRef!)
+    .quiet()
+  const candidateSha = await headSha(assignment.workspaceRef!)
   await OrynService.submitResult({
     callerSessionID: code.workerSessionId,
     caseId,
@@ -182,7 +188,7 @@ async function verifyFrozen(seeded: Frozen): Promise<void> {
     assignmentId: review.assignmentId,
     requestKey: "ready-reviewed",
     headSha: seeded.candidateSha,
-    baseSha: seeded.candidateSha,
+    baseSha: (await OrynStore.getAttempt(caseId, attemptId))!.baselineSha,
     findings: [],
     evidenceAssessment: "Fixture meets publication criteria",
     recommendation: "ready_for_human",
@@ -395,7 +401,7 @@ describe("OrynPublish ledger", () => {
         caseId: seeded.caseId,
         operation: "ensure_draft",
         requestKey: "rk_pr_amb",
-        title: "fix",
+        title: "fix: publication fixture",
       })
 
       // refresh_pr with an already-aborted signal → outcome unknown.
@@ -448,7 +454,7 @@ describe("OrynPublish ledger", () => {
         caseId: seeded.caseId,
         operation: "ensure_draft",
         requestKey: "rk_pr_unc",
-        title: "fix",
+        title: "fix: publication fixture",
       })
 
       const controller = new AbortController()
@@ -507,7 +513,7 @@ describe("OrynPublish ledger", () => {
         caseId: seeded.caseId,
         operation: "ensure_draft",
         requestKey: "rk_pr_ep",
-        title: "fix",
+        title: "fix: publication fixture",
       })
 
       const controller = new AbortController()
@@ -558,7 +564,7 @@ describe("OrynPublish ledger", () => {
         caseId: seeded.caseId,
         operation: "ensure_draft",
         requestKey: "rk_pr_ff",
-        title: "fix",
+        title: "fix: publication fixture",
       })
 
       setTransport(
@@ -618,6 +624,11 @@ describe("Oryn ready publication and recovery", () => {
           async onExecute(call) {
             executions++
             expect(call.pullNumber).toBe(55)
+            expect(call.body).toContain("```mermaid")
+            expect(call.body).toContain("publication-fixture.txt")
+            expect(call.body).toContain("candidate | passed | 0")
+            expect(call.body).toContain("general: ready_for_human")
+            expect(call.body).not.toContain(seeded.caseId)
             const actions = await OrynStore.listActions({ caseId: seeded.caseId })
             expect(actions[0]).toMatchObject({
               operation: "mark_ready",
@@ -633,7 +644,6 @@ describe("Oryn ready publication and recovery", () => {
         caseId: seeded.caseId,
         operation: "mark_ready" as const,
         requestKey: "ready",
-        payload: `Verified fixture ${seeded.candidateSha}; ready for review`,
       }
       expect((await OrynPublish.publish(request)).state).toBe("acknowledged")
       expect((await OrynPublish.publish(request)).deduped).toBe(true)

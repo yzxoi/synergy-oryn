@@ -192,6 +192,18 @@ export namespace OrynGithubPublish {
             }
             let url = stringField(pull, "html_url")
             try {
+              if (input.title !== undefined || input.body !== undefined) {
+                await send<unknown>(
+                  GitHubChannelAuth.GitHubClient.updatePullRequest({
+                    owner,
+                    repo,
+                    pullNumber: input.pullNumber,
+                    title: input.title,
+                    body: input.body,
+                    installationToken: token,
+                  }),
+                )
+              }
               if (record(pull).draft === true) {
                 const response = await send<unknown>(
                   GitHubChannelAuth.GitHubClient.markPullRequestReadyForReview({

@@ -604,7 +604,7 @@ export const OrynPublishTool = Tool.define(
   "oryn_publish",
   {
     description:
-      "Publish host-verified artifacts for your case: the tracking issue, a draft PR from the frozen candidate, PR updates, the review comment, or the final ready delivery. The host records every action in the ledger, verifies the frozen candidate and the delivery gate, and holds all credentials — you never touch tokens or endpoints. A timeout leaves the action ambiguous; reconciliation settles it, never a blind retry.",
+      "Publish host-verified artifacts for your case: the tracking issue, a draft PR from the frozen candidate, PR updates, the review comment, or the final ready delivery. The host generates PR scope diagrams and evidence sections from the frozen candidate and accepted reports; body is only your implementation notes, and PR titles must use a conventional prefix. The host records every action in the ledger, verifies the frozen candidate and the delivery gate, and holds all credentials — you never touch tokens or endpoints. A timeout leaves the action ambiguous; reconciliation settles it, never a blind retry.",
     parameters: PublishParameters,
     async execute(params, ctx): Promise<Tool.ExecutionResult> {
       return execute(async () => {

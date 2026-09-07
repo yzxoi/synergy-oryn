@@ -1,8 +1,15 @@
 import { externalIdentityHash } from "../util/identity"
-import type { Assignment, Attempt, CheckPlan, RunReceipt, WorkerReport } from "./schema"
+import type { Assignment, Attempt, Case, CheckPlan, RunReceipt, WorkerReport } from "./schema"
 import { OrynStore, storeError } from "./store"
 
 export namespace OrynEvidence {
+  export function reviewDigests(record: Pick<Case, "acceptanceDigest">, attempt: Pick<Attempt, "evidenceRunIds">) {
+    return {
+      policyDigest: externalIdentityHash(record.acceptanceDigest),
+      evidenceDigest: externalIdentityHash(JSON.stringify(attempt.evidenceRunIds)),
+    }
+  }
+
   export function planDigest(plan: CheckPlan): string {
     return externalIdentityHash(
       plan.id,

@@ -1,3 +1,4 @@
+import { OrynPublication } from "./publication"
 import { externalIdentityHash } from "../util/identity"
 import { OrynStore, storeError } from "./store"
 import { OrynConfig } from "./config"
@@ -225,43 +226,6 @@ export namespace OrynPublish {
       throw storeError("NOT_AUTHORIZED", "publication requires a pull request bound to this Case")
     }
 
-    if (input.operation === "mark_ready") {
-      if (!candidateSha)
-        throw storeError("INVALID_STAGE", "mark_ready requires a frozen candidate", { caseId: input.caseId })
-      const facts = await requireTransport().observe({ repository, pullNumber, ref: candidateSha, marker }, signal)
-      if (
-        !facts.pull ||
-        facts.pull.number !== pullNumber ||
-        facts.pull.state !== "open" ||
-        typeof facts.pull.draft !== "boolean" ||
-        facts.pull.headSha !== candidateSha ||
-        facts.pull.headBranch !== orynBranch(input.caseId) ||
-        facts.pull.baseRef !== (repoCfg.baseBranch ?? "dev") ||
-        !facts.pull.markerPresent ||
-        !facts.pull.authorIsApp
-      ) {
-        throw storeError("REMOTE_AMBIGUOUS", "published pull request no longer matches the authorized candidate")
-      }
-      const ciStatus =
-        facts.ci.state === "success"
-          ? ("passed" as const)
-          : facts.ci.state === "failure"
-            ? ("failed" as const)
-            : undefined
-      const gate = await OrynService.evaluateDelivery({
-        callerSessionID: input.callerSessionID,
-        caseId: input.caseId,
-        payload: input.payload,
-        ciStatus,
-      })
-      if (!gate.ready) {
-        const detail = gate.failures.map((f) => `${f.code}: ${f.message}`).join("; ")
-        throw storeError("EVIDENCE_INSUFFICIENT", `delivery gate not satisfied — ${detail}`, {
-          caseId: input.caseId,
-        })
-      }
-    }
-
     // Case-level artifact idempotency: one oryn issue / one candidate PR per
     // case, verified against remote facts before anything new is created.
     if (input.operation === "ensure_issue" && record.issueNumber) {
@@ -324,22 +288,59 @@ export namespace OrynPublish {
       throw storeError("INVALID_STAGE", "publish_review requires a published pull request", { caseId: input.caseId })
     }
 
-    let directory: string | undefined
-    if (input.operation === "ensure_draft" || input.operation === "refresh_pr") {
-      const codeAssignments = (await OrynStore.listAssignments(input.caseId))
-        .filter((a) => a.attemptId === attemptId && a.stage === "code" && a.workspaceRef)
-        .sort((a, b) => a.createdAt - b.createdAt)
-      directory = codeAssignments[codeAssignments.length - 1]?.workspaceRef
-      if (!directory) {
-        throw storeError("ENVIRONMENT_UNAVAILABLE", "no code worktree recorded for this attempt")
+    const publication =
+      input.operation === "ensure_issue"
+        ? OrynPublication.issue({ record, title: input.title, notes: input.body })
+        : CANDIDATE_OPERATIONS.includes(input.operation) && attempt
+          ? await OrynPublication.capture({ repository, record, attempt, title: input.title, notes: input.body })
+          : undefined
+    const directory =
+      publication && "directory" in publication && typeof publication.directory === "string"
+        ? publication.directory
+        : undefined
+    const title = publication?.title ?? input.title
+    const body = `${publication?.body ?? input.body ?? ""}\n\n${marker}`
+    if (input.operation === "mark_ready") {
+      if (!candidateSha)
+        throw storeError("INVALID_STAGE", "mark_ready requires a frozen candidate", { caseId: input.caseId })
+      const facts = await requireTransport().observe({ repository, pullNumber, ref: candidateSha, marker }, signal)
+      if (
+        !facts.pull ||
+        facts.pull.number !== pullNumber ||
+        facts.pull.state !== "open" ||
+        typeof facts.pull.draft !== "boolean" ||
+        facts.pull.headSha !== candidateSha ||
+        facts.pull.headBranch !== orynBranch(input.caseId) ||
+        facts.pull.baseRef !== (repoCfg.baseBranch ?? "dev") ||
+        !facts.pull.markerPresent ||
+        !facts.pull.authorIsApp
+      ) {
+        throw storeError("REMOTE_AMBIGUOUS", "published pull request no longer matches the authorized candidate")
+      }
+      const ciStatus =
+        facts.ci.state === "success"
+          ? ("passed" as const)
+          : facts.ci.state === "failure"
+            ? ("failed" as const)
+            : undefined
+      const gate = await OrynService.evaluateDelivery({
+        callerSessionID: input.callerSessionID,
+        caseId: input.caseId,
+        payload: body,
+        ciStatus,
+      })
+      if (!gate.ready) {
+        const detail = gate.failures.map((f) => `${f.code}: ${f.message}`).join("; ")
+        throw storeError("EVIDENCE_INSUFFICIENT", `delivery gate not satisfied — ${detail}`, {
+          caseId: input.caseId,
+        })
       }
     }
 
-    const body = input.body === undefined ? marker : `${input.body}\n\n${marker}`
     const receipt = await OrynStore.writeAction({
       caseId: input.caseId,
       operation: input.operation,
-      payloadDigest: externalIdentityHash(input.operation, input.title ?? "", body, candidateSha ?? ""),
+      payloadDigest: externalIdentityHash(input.operation, title ?? "", body, candidateSha ?? ""),
       expectedHead: candidateSha,
       ...(input.operation === "mark_ready"
         ? {
@@ -382,7 +383,7 @@ export namespace OrynPublish {
           branch: orynBranch(input.caseId),
           baseBranch: repoCfg.baseBranch ?? "dev",
           directory,
-          title: input.title,
+          title,
           body,
           pullNumber,
           marker,
