@@ -55,8 +55,12 @@ fn main() {
         exit(1);
     });
 
-    let inner_command = build_inner_command(&current_exe, &helper_args);
-    let plan = bwrap::build_bwrap_plan(
+    let inner_args = HelperArgs {
+        permission_profile: "/.synergy-sandbox/profile.json".into(),
+        ..helper_args.clone()
+    };
+    let inner_command = build_inner_command(Path::new("/.synergy-sandbox/helper"), &inner_args);
+    let mut plan = bwrap::build_bwrap_plan(
         &profile,
         Path::new(&helper_args.sandbox_policy_cwd),
         &inner_command,
@@ -65,6 +69,19 @@ fn main() {
         log::error!("Failed to build bwrap plan: {e}");
         exit(1);
     });
+
+    // The private root and /tmp mounts hide host bootstrap paths. Mount only
+    // the helper and immutable policy after them, not their parent directories.
+    plan.mounts.extend([
+        bwrap::MountOp::RoBind {
+            source: current_exe.to_string_lossy().into_owned(),
+            target: "/.synergy-sandbox/helper".into(),
+        },
+        bwrap::MountOp::RoBind {
+            source: helper_args.permission_profile.clone(),
+            target: "/.synergy-sandbox/profile.json".into(),
+        },
+    ]);
 
     log::info!(
         "Starting bwrap sandbox: workspace={}, command={}",

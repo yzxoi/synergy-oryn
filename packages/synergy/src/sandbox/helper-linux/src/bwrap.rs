@@ -168,8 +168,15 @@ pub fn build_bwrap_plan(
         });
     }
 
+    // Install private /tmp before approved roots so workspaces and scratch
+    // directories underneath /tmp remain reachable through their own mounts.
+    let tmp_source = controlled_tmp_source(policy_cwd);
+    push_bind(&mut mounts, &tmp_source, "/tmp");
+
     for root in &profile.file_system.readable_roots {
-        push_ro_bind(&mut mounts, root, root);
+        if root != "/" {
+            push_ro_bind(&mut mounts, root, root);
+        }
     }
 
     for root in &profile.file_system.writable_roots {
@@ -260,9 +267,6 @@ pub fn build_bwrap_plan(
         // the flag here keeps the Rust helper contract explicit and prevents a
         // future interpretation where the field is silently ignored.
     }
-
-    let tmp_source = controlled_tmp_source(policy_cwd);
-    push_bind(&mut mounts, &tmp_source, "/tmp");
 
     let unshare_net = matches!(profile.network.mode.as_str(), "restricted" | "proxy_only");
     let _allow_local_binding = profile.network.allow_local_binding;

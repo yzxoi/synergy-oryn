@@ -621,7 +621,7 @@ export namespace LinuxBackend {
     ).filter((p) => fs.existsSync(p))
 
     // Build the sandbox permission profile JSON for the helper
-    const profile: Record<string, unknown> = {
+    const profile = opts.permissionProfile ?? {
       fileSystem: {
         workspace,
         readableRoots: [
@@ -655,7 +655,15 @@ export namespace LinuxBackend {
 
     return {
       command: helper.path,
-      args: ["--sandbox-policy-cwd", opts.workspace, "--permission-profile", profilePath, "--", command, ...args],
+      args: [
+        "--sandbox-policy-cwd",
+        opts.executionCwd ?? opts.workspace,
+        "--permission-profile",
+        profilePath,
+        "--",
+        command,
+        ...args,
+      ],
       sandboxed: true,
       tempPath: profilePath,
     }

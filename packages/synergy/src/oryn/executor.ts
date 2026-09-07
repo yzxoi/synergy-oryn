@@ -1,7 +1,9 @@
 import { realpath } from "node:fs/promises"
 import { Session } from "../session"
 import { ToolScheduler } from "../session/tool-scheduler"
-import { SandboxBackend } from "../sandbox/backend"
+import { OrynSandbox } from "./sandbox"
+import { EnforcementError } from "../enforcement/errors"
+import type { OrynExecutionProfile } from "../config/schema"
 import { OrynGit } from "./git"
 import { externalIdentityHash } from "../util/identity"
 import { OrynStore, storeError } from "./store"
@@ -13,17 +15,6 @@ import type { CheckPlan, RunReceipt } from "./schema"
  * Receipts describe observed execution; inherited environment filtering and
  * Git snapshots do not provide process containment or prove behavior coverage.
  */
-
-const CHILD_ENV_ALLOWLIST = ["PATH", "HOME", "LANG", "LC_ALL", "TERM", "SHELL"]
-
-function childEnv(): Record<string, string> {
-  const env: Record<string, string> = {}
-  for (const key of CHILD_ENV_ALLOWLIST) {
-    const value = process.env[key]
-    if (value !== undefined) env[key] = value
-  }
-  return env
-}
 
 function digestPlan(plan: CheckPlan): string {
   return externalIdentityHash(
@@ -41,33 +32,41 @@ type RunOneResult = {
   timedOut: boolean
   aborted: boolean
   truncated: boolean
+  blocked: boolean
   startedAt: number
   endedAt: number
   observations: string[]
 }
 
-async function runOne(argv: string[], cwd: string, timeoutSeconds: number, abort: AbortSignal): Promise<RunOneResult> {
+async function runOne(
+  argv: string[],
+  cwd: string,
+  timeoutSeconds: number,
+  abort: AbortSignal,
+  profile: OrynExecutionProfile,
+): Promise<RunOneResult> {
   const startedAt = Date.now()
+  let blocked = false
   const result = await ToolScheduler.trackPhysicalExecution(() =>
-    SandboxBackend.executeAsync(
-      { command: argv[0], args: argv.slice(1), sandboxed: false },
-      {
-        cwd,
-        env: childEnv(),
-        inheritEnv: false,
-        fallbackPolicy: "allow",
-        signal: abort,
-        timeoutMs: timeoutSeconds * 1000,
-        maxOutputBytes: 64 * 1024,
-      },
-    ),
-  )
+    OrynSandbox.execute({ argv, cwd, timeoutMs: timeoutSeconds * 1000, abort, profile }),
+  ).catch((error) => {
+    if (!(error instanceof EnforcementError.SandboxBlocked)) throw error
+    blocked = true
+    return {
+      exitCode: error.exitCode ?? 1,
+      stdout: "",
+      stderr: "sandbox denied check access; environment is insufficient",
+      timedOut: false,
+      truncated: false,
+    }
+  })
   return {
     argv,
     exitCode: result.exitCode,
     timedOut: result.timedOut,
     aborted: abort.aborted,
     truncated: result.truncated,
+    blocked,
     startedAt,
     endedAt: Date.now(),
     observations: [
@@ -225,9 +224,9 @@ export namespace OrynExecutor {
     const results: RunOneResult[] = []
     for (const command of plan.argv) {
       await currentInputs()
-      const result = await runOne(command, cwd, timeoutSeconds, input.abort)
+      const result = await runOne(command, cwd, timeoutSeconds, input.abort, profile)
       results.push(result)
-      if (result.timedOut || result.aborted || result.truncated) break
+      if (result.timedOut || result.aborted || result.truncated || result.blocked) break
     }
 
     const after = await OrynGit.snapshot(cwd).catch(() => undefined)
@@ -239,10 +238,11 @@ export namespace OrynExecutor {
     const timedOut = results.some((r) => r.timedOut)
     const aborted = results.some((r) => r.aborted)
     const truncated = results.some((r) => r.truncated)
+    const blocked = results.some((r) => r.blocked)
     const failed = results.some((r) => r.exitCode !== 0)
     const outcome: RunReceipt["outcome"] = aborted
       ? "cancelled"
-      : timedOut || truncated || changed || !active
+      : timedOut || truncated || blocked || changed || !active
         ? "inconclusive"
         : failed
           ? "failed"
@@ -272,7 +272,7 @@ export namespace OrynExecutor {
       authenticity: "built_runtime",
       outcome,
       overlayApplied: plan.overlay,
-      infrastructureFailure: timedOut || truncated || changed || !active,
+      infrastructureFailure: timedOut || truncated || blocked || changed || !active,
     })
     await OrynStore.attachRunEvidence(input.caseId, input.attemptId, receipt.id)
     return { runId: receipt.id, outcome, overlayApplied: plan.overlay }

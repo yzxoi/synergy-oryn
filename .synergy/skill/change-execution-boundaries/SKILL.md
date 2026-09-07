@@ -43,3 +43,5 @@ Update the architecture document when the pipeline, profile semantics, capabilit
 ## Handoff
 
 Report the capability and risk, classifier, profile decisions, bypassability, permission/SmartAllow behavior, sandbox policy and platform coverage, workspace effects, tests, and documentation synchronized.
+
+For explicit Host permission profiles, verify the final platform input rather than only wrapper availability. Do not merge interactive user-home allowances into a restricted runner. Exercise read-only source, writable scratch, symlink escape, loopback denial and unsupported backend rejection with real child processes. A Linux two-stage helper must retain read-only access to its own executable and policy after private-root and temporary mounts; mount those individual bootstrap files, not their parent directories.

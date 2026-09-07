@@ -149,6 +149,13 @@ jobs:
       - name: Run release contract tests
         run: bun run release:test
 
+      - name: Build local Linux sandbox for execution tests
+        run: |
+          sudo apt-get install -y bubblewrap
+          cargo build --locked --release --manifest-path packages/synergy/src/sandbox/helper-linux/Cargo.toml
+          mkdir -p "$HOME/.synergy/sandbox-helper"
+          cp packages/synergy/src/sandbox/helper-linux/target/release/synergy-sandbox-linux "$HOME/.synergy/sandbox-helper/"
+
       - name: Run Synergy tests
         run: bun run test:ci
         working-directory: packages/synergy

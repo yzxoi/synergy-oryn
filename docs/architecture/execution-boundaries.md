@@ -223,3 +223,7 @@ These restrictions are evaluated before the tool implementation. A permissive co
 ## Oryn installation authorization
 
 Oryn business policy reads the installation-owned global domain configuration. Candidate project configuration cannot enable Oryn or widen its repository, execution-profile, publication or budget choices. Oryn built-in identities are reserved before config, plugin and external-agent registration; their model roles use installation choices. See [Oryn installation policy](../decisions/implemented/architecture/2026-09-08-oryn-installation-policy.md) for test evidence and the distinction from OS containment and provider execution.
+
+## Explicit check sandbox policies
+
+Host-owned check runners can pass a complete permission profile to `SandboxBackend.prepareWrapper`. Linux preserves it for the verified helper; macOS compiles explicit roots without adding the interactive user/toolchain defaults when `includePlatformDefaults` is false. Legacy wrappers, no-sandbox execution and Windows reject this explicit-profile path. Oryn uses it for read-only source and disposable HOME/temp access with restricted networking; this does not apply to ordinary coder Bash. See [Oryn check containment](../decisions/implemented/bug-fix/2026-09-08-oryn-check-containment.md).

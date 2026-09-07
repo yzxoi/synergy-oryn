@@ -98,6 +98,21 @@ export namespace SandboxBackend {
    * none    → returns unwrapped, sandboxed=false
    */
   export function prepareWrapper(opts: PrepareWrapperOpts): SandboxExecutionWrapper {
+    const selectedPlatform = opts.forcePlatform ?? detectPlatform()
+    if (
+      opts.permissionProfile &&
+      (opts.sandboxMode === "none" ||
+        !["macos", "linux"].includes(selectedPlatform) ||
+        opts.backend === "seatbelt-legacy-allow-default" ||
+        opts.backend === "bwrap-inline-debug")
+    )
+      return {
+        command: opts.command,
+        args: opts.args,
+        sandboxed: false,
+        skipReason: "Selected backend cannot enforce an explicit permission profile",
+      }
+
     if (opts.sandboxMode === "none") {
       return { command: opts.command, args: opts.args, sandboxed: false }
     }
@@ -115,6 +130,8 @@ export namespace SandboxBackend {
           command: opts.command,
           args: opts.args,
           workspace: opts.workspace,
+          executionCwd: opts.executionCwd,
+          permissionProfile: opts.permissionProfile,
           sandboxMode: opts.sandboxMode,
           runtimeReadRoots: opts.runtimeReadRoots,
           extraReadRoots: opts.extraReadRoots,

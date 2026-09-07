@@ -1,3 +1,5 @@
+import type { SynergySandboxPermissionProfile } from "./policy-engine"
+
 // ------------------------------------------------------------------
 // Sandbox types — shared types for the sandbox subsystem
 // ------------------------------------------------------------------
@@ -14,6 +16,8 @@ export interface PlatformInfo {
 }
 
 export interface PrepareWrapperOpts {
+  /** Host-approved policy; backends must not widen its roots with defaults. */
+  permissionProfile?: SynergySandboxPermissionProfile
   command: string
   args: string[]
   workspace: string
@@ -38,6 +42,8 @@ export interface PrepareWrapperOpts {
 }
 
 export interface PrepareLinuxWrapperOpts {
+  permissionProfile?: SynergySandboxPermissionProfile
+  executionCwd?: string
   command: string
   args: string[]
   workspace: string
