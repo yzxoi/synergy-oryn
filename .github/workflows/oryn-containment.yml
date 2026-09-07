@@ -10,8 +10,12 @@ permissions:
 
 jobs:
   linux:
-    name: Linux checks without Docker
-    runs-on: ubuntu-22.04
+    name: Linux checks without Docker (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, ubuntu-24.04]
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -34,4 +38,4 @@ jobs:
           cp packages/synergy/src/sandbox/helper-linux/target/release/synergy-sandbox-linux "$HOME/.synergy/sandbox-helper/"
       - name: Exercise the actual Oryn sandbox and scheduler
         working-directory: packages/synergy
-        run: bun test test/oryn/sandbox.test.ts test/oryn/workspaces.test.ts test/sandbox/explicit-profile.test.ts
+        run: bun test test/oryn/sandbox.test.ts test/oryn/workspaces.test.ts test/oryn/review.test.ts test/sandbox/explicit-profile.test.ts

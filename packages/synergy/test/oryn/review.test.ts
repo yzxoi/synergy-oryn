@@ -117,7 +117,7 @@ async function seedFrozen(root: string): Promise<Frozen> {
     lane: "baseline",
     abort: new AbortController().signal,
   })
-  expect(baselineRun.outcome).toBe("failed")
+  expect(baselineRun.outcome, JSON.stringify(await OrynStore.getRun(caseId, baselineRun.runId))).toBe("failed")
 
   await OrynService.submitResult({
     callerSessionID: repro.workerSessionId,

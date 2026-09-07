@@ -5,6 +5,23 @@ import { OrynSandbox } from "../../src/oryn/sandbox"
 import { tmpdir } from "../fixture/fixture"
 
 test.skipIf(!["darwin", "linux"].includes(process.platform))(
+  "Oryn checks preserve an ordinary nonzero process result",
+  async () => {
+    await using dir = await tmpdir()
+    const result = await OrynSandbox.execute({
+      argv: ["bun", "--print", "process.exit(1)"],
+      cwd: dir.path,
+      timeoutMs: 5000,
+      abort: new AbortController().signal,
+      profile: { commandAllowlist: ["bun"] },
+    })
+    expect(result.exitCode, result.stderr).toBe(1)
+    expect(result.timedOut).toBe(false)
+  },
+  10000,
+)
+
+test.skipIf(!["darwin", "linux"].includes(process.platform))(
   "Oryn checks use a disposable home and deny candidate, sibling and host access",
   async () => {
     await using dir = await tmpdir()
