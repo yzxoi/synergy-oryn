@@ -8,7 +8,7 @@ Candidate submission trusted a model-provided SHA without checking the assigned 
 
 ## Decision
 
-`OrynCandidate.verify` checks the Host-bound code Assignment and Session, real worktree root, shared Git repository, assigned branch, full HEAD commit SHA, baseline ancestry and absence of tracked/untracked or submodule changes reported by Git. Symbolic SHA inputs, detached or changed branches, unavailable workspaces and inconsistent bindings are rejected. Read-only Git commands use bounded subprocesses, suppress hooks and fsmonitor, disable replacement objects and inherited Git configuration, and do not inherit credentials or the runtime home.
+`OrynCandidate.verify` checks the Host-bound code Assignment and Session, real worktree root, shared Git repository, assigned branch, full HEAD commit SHA, baseline ancestry and absence of tracked/untracked changes reported by Git. Configured Git filters and indexed submodules require a contained inspection environment; see [worker workspaces](2026-09-08-oryn-versioned-worker-workspaces.md). Symbolic SHA inputs, detached or changed branches, unavailable workspaces and inconsistent bindings are rejected. Read-only Git commands use bounded subprocesses, suppress hooks and fsmonitor, disable replacement objects and inherited Git configuration, and do not inherit credentials or the runtime home.
 
 Candidate reports remain durable observations before acceptance. On an active Attempt, the Host verifies Git state, freezes the SHA and then accepts the report and delivers its Inbox event. A retry repairs acceptance after interrupted freezing and does not revise an already frozen identical Attempt. A different frozen SHA requires a new Attempt. Reports from inactive work remain historical and cannot grant stage admission.
 

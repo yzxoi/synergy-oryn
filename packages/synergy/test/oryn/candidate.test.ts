@@ -133,6 +133,34 @@ describe("Oryn candidate verification", () => {
     })
   })
 
+  test("candidate inspection does not execute configured Git clean filters", async () => {
+    await fixture(async (input) => {
+      await Bun.write(`${input.directory}/.gitattributes`, "filtered.txt filter=fixture\n")
+      await Bun.write(`${input.directory}/filtered.txt`, "before")
+      await Bun.$`git add .gitattributes filtered.txt`.cwd(input.directory).quiet()
+      await Bun.$`git -c core.hooksPath=/dev/null commit --no-gpg-sign -m fixture`.cwd(input.directory).quiet()
+      const sha = (await Bun.$`git rev-parse HEAD`.cwd(input.directory).text()).trim()
+      await Bun.$`git config filter.fixture.clean ${"touch filter-executed; cat"}`.cwd(input.directory).quiet()
+      // Equal file sizes force Git to inspect content instead of settling from size metadata.
+      await Bun.write(`${input.directory}/filtered.txt`, "after!")
+      await expect(OrynService.submitResult(report({ ...input, candidateSha: sha }))).rejects.toThrow("filters")
+      expect(await Bun.file(`${input.directory}/filter-executed`).exists()).toBe(false)
+      await Bun.$`git -c core.fsmonitor=false status --porcelain`.cwd(input.directory).quiet()
+      expect(await Bun.file(`${input.directory}/filter-executed`).exists()).toBe(true)
+    })
+  })
+
+  test("Git links are rejected before recursive submodule inspection", async () => {
+    await fixture(async (input) => {
+      await Bun.$`git update-index --add --cacheinfo ${`160000,${input.candidateSha},external`}`
+        .cwd(input.directory)
+        .quiet()
+      await Bun.$`git -c core.hooksPath=/dev/null commit --no-gpg-sign -m fixture`.cwd(input.directory).quiet()
+      const sha = (await Bun.$`git rev-parse HEAD`.cwd(input.directory).text()).trim()
+      await expect(OrynService.submitResult(report({ ...input, candidateSha: sha }))).rejects.toThrow("submodule")
+    })
+  })
+
   test("rejects dirty tracked and untracked candidate files", async () => {
     await fixture(async (input) => {
       await Bun.write(`${input.directory}/uncommitted.txt`, "uncommitted")

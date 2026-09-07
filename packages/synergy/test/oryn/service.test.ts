@@ -460,9 +460,6 @@ describe("OrynService checks and executor", () => {
       } catch (error) {
         expect(errorCode(error)).toBe("ENVIRONMENT_UNAVAILABLE")
       }
-      // The service-level check resolves the session workspace first, so the
-      // non-worker authorization is asserted directly against the executor
-      // with an explicit cwd.
       try {
         await OrynExecutor.run({
           callerSessionID: "ses_not_a_worker",
@@ -471,7 +468,6 @@ describe("OrynService checks and executor", () => {
           assignmentId: dispatch.assignmentId,
           planId: proposed.planId,
           lane: "baseline",
-          cwd: root,
           abort: new AbortController().signal,
         })
         expect.unreachable()

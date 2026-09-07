@@ -48,7 +48,12 @@ async function fixture(
         identity,
         baselineSha: (await Bun.$`git rev-parse HEAD`.cwd(tmp.path).text()).trim(),
       })
-      const worker = await BossService.spawn(root.sessionID, { role: "repro", agent: "oryn-repro" })
+      const worker = await BossService.spawn(root.sessionID, {
+        role: "repro",
+        agent: "oryn-repro",
+        workspace: "worktree",
+        baseRevision: (await OrynStore.getAttempt(claim.caseId, root.attemptId))!.baselineSha,
+      })
       await OrynStore.bindSessionSource({ sessionID: worker.id, caseId: claim.caseId, role: "worker", identity })
       const assignment = await OrynStore.createAssignment({
         caseId: claim.caseId,

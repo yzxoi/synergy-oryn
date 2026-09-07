@@ -1,19 +1,15 @@
-import { $ } from "bun"
+import { realpath } from "node:fs/promises"
+import { Session } from "../session"
+import { OrynGit } from "./git"
 import { externalIdentityHash } from "../util/identity"
 import { OrynStore, storeError } from "./store"
 import { OrynConfig } from "./config"
 import type { CheckPlan, RunReceipt } from "./schema"
 
 /**
- * Trusted check executor. This is the only component that writes RunReceipt
- * records: worker models propose plans and reference receipts, but the run
- * itself — command validation against the profile allowlist, concurrency
- * limits, timeout, environment — happens here, host-side, so a receipt is
- * evidence rather than a claim.
- *
- * The child environment is a minimal allowlist. GitHub/SSH credentials are
- * structurally absent: a receipt-producing run can never read the token even
- * through curl or helper scripts, matching the worker bash strip.
+ * Host-side check runner with assignment, profile and version validation.
+ * Receipts describe observed execution; inherited environment filtering and
+ * Git snapshots do not provide process containment or prove behavior coverage.
  */
 
 const CHILD_ENV_ALLOWLIST = ["PATH", "HOME", "LANG", "LC_ALL", "TERM", "SHELL"]
@@ -119,7 +115,6 @@ export namespace OrynExecutor {
     assignmentId: string
     planId: string
     lane: RunReceipt["lane"]
-    cwd: string
     abort: AbortSignal
   }): Promise<{ runId: string; outcome: RunReceipt["outcome"]; overlayApplied: boolean }> {
     const binding = await OrynStore.sessionSourceBinding(input.callerSessionID)
@@ -134,6 +129,40 @@ export namespace OrynExecutor {
     }
     if (assignment.attemptId !== input.attemptId) {
       throw storeError("INVALID_STAGE", "assignment belongs to a different attempt")
+    }
+
+    const session = await Session.get(input.callerSessionID)
+    if (session.workspace?.type !== "git_worktree" || !assignment.workspaceRef)
+      throw storeError("ENVIRONMENT_UNAVAILABLE", "check requires the assigned version-pinned worktree")
+    const cwd = await realpath(session.workspace.path)
+    if (cwd !== (await realpath(assignment.workspaceRef)))
+      throw storeError("NOT_AUTHORIZED", "check workspace binding changed")
+
+    const currentInputs = async () => {
+      input.abort.throwIfAborted()
+      if (!(await OrynConfig.enabled())) throw storeError("NOT_AUTHORIZED", "Oryn is disabled")
+      const [record, attempt] = await Promise.all([
+        OrynStore.getCase(input.caseId),
+        OrynStore.getAttempt(input.caseId, input.attemptId),
+      ])
+      if (
+        !record ||
+        record.control !== "active" ||
+        record.epoch !== assignment.epoch ||
+        record.activeAttemptId !== input.attemptId
+      )
+        throw storeError("HUMAN_OWNED", "check assignment is no longer active")
+      if (!attempt || ["superseded", "failed", "handed_off", "ready"].includes(attempt.disposition))
+        throw storeError("INVALID_STAGE", "check Attempt is no longer active")
+      const sha =
+        input.lane === "candidate"
+          ? attempt.candidateSha
+          : assignment.stage === "review" || assignment.stage === "verify"
+            ? attempt.candidateSha
+            : attempt.baselineSha
+      const expectedSha = input.lane === "baseline" ? attempt.baselineSha : sha
+      if (!expectedSha) throw storeError("INVALID_STAGE", "check lane has no fixed commit")
+      return expectedSha
     }
 
     const plan = await OrynStore.getCheckPlan(input.caseId, input.planId)
@@ -177,35 +206,33 @@ export namespace OrynExecutor {
       await acquire(concurrencyKey, profileMax)
       acquired = true
 
+      const expectedSha = await currentInputs()
+      const before = await OrynGit.snapshot(cwd)
+      if (before.sha !== expectedSha || before.dirty)
+        throw storeError("INVALID_STAGE", "check workspace does not match its clean fixed commit")
       const timeoutSeconds = profile.timeoutSeconds ?? 1800
       const results: RunOneResult[] = []
       for (const command of plan.argv) {
-        results.push(await runOne(command, input.cwd, timeoutSeconds, input.abort))
+        await currentInputs()
+        results.push(await runOne(command, cwd, timeoutSeconds, input.abort))
       }
 
+      const after = await OrynGit.snapshot(cwd).catch(() => undefined)
+      const changed = !after || after.sha !== before.sha || after.tree !== before.tree || after.dirty
+      const active = await currentInputs().then(
+        (sha) => sha === expectedSha,
+        () => false,
+      )
       const timedOut = results.some((r) => r.timedOut)
       const aborted = results.some((r) => r.aborted)
       const failed = results.some((r) => r.exitCode !== 0)
       const outcome: RunReceipt["outcome"] = aborted
         ? "cancelled"
-        : timedOut
+        : timedOut || changed || !active
           ? "inconclusive"
           : failed
             ? "failed"
             : "passed"
-
-      const actualSha = await $`git rev-parse HEAD`
-        .quiet()
-        .nothrow()
-        .cwd(input.cwd)
-        .text()
-        .then((s) => s.trim() || undefined)
-      const treeDigest = await $`git log -1 --format=%T`
-        .quiet()
-        .nothrow()
-        .cwd(input.cwd)
-        .text()
-        .then((s) => s.trim() || undefined)
 
       const receipt = await OrynStore.writeRunReceipt({
         assignmentId: input.assignmentId,
@@ -213,8 +240,8 @@ export namespace OrynExecutor {
         attemptId: input.attemptId,
         planDigest: digestPlan(plan),
         lane: input.lane,
-        actualSha,
-        treeDigest,
+        actualSha: before.sha,
+        treeDigest: before.tree,
         profile: plan.profileId,
         argvSummary: plan.argv
           .map((command) => command.join(" "))
@@ -223,11 +250,15 @@ export namespace OrynExecutor {
         startedAt: results[0].startedAt,
         endedAt: results[results.length - 1].endedAt,
         exitCode: results[results.length - 1].exitCode,
-        observations: results.flatMap((r) => r.observations).slice(0, 64),
+        observations: [
+          ...(changed ? ["source changed during execution; evidence is inconclusive"] : []),
+          ...(!active ? ["assignment inputs or control changed during execution; evidence is inconclusive"] : []),
+          ...results.flatMap((r) => r.observations),
+        ].slice(0, 64),
         authenticity: "built_runtime",
         outcome,
         overlayApplied: plan.overlay,
-        infrastructureFailure: timedOut,
+        infrastructureFailure: timedOut || changed || !active,
       })
       await OrynStore.attachRunEvidence(input.caseId, input.attemptId, receipt.id)
       return { runId: receipt.id, outcome, overlayApplied: plan.overlay }

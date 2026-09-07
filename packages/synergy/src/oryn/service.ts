@@ -267,15 +267,14 @@ export namespace OrynService {
           role: input.stage,
           agent: STAGE_AGENT[input.stage],
           instructions: `Oryn case ${input.caseId}: ${input.stage} assignment.`,
-          // The code worker's worktree is pinned to the attempt baseline so the
-          // candidate branch shares the frozen base — never the caller's moving
-          // current checkout HEAD.
-          ...(input.stage === "code" ? { workspace: "worktree" as const, baseRevision: attempt.baselineSha } : {}),
+          workspace: "worktree",
+          baseRevision:
+            input.stage === "verify" || input.stage === "review" ? attempt.candidateSha! : attempt.baselineSha,
         })
+    if (worker.workspace?.type !== "git_worktree")
+      throw storeError("ENVIRONMENT_UNAVAILABLE", "assignment requires its own version-pinned worktree")
     await OrynStore.setAssignmentSession(input.caseId, assignment.id, worker.id)
-    if (input.stage === "code" && worker.workspace?.type === "git_worktree") {
-      await OrynStore.setAssignmentWorkspace(input.caseId, assignment.id, worker.workspace.path)
-    }
+    await OrynStore.setAssignmentWorkspace(input.caseId, assignment.id, worker.workspace.path)
     if (binding.identity) {
       await OrynStore.bindSessionSource({
         sessionID: worker.id,
@@ -819,10 +818,7 @@ export namespace OrynService {
     abort: AbortSignal
   }): Promise<{ runId: string; outcome: RunReceipt["outcome"]; overlayApplied: boolean }> {
     await requireEnabled()
-    const session = await Session.get(input.callerSessionID).catch(() => undefined)
-    const cwd = session?.workspace?.path
-    if (!cwd) throw storeError("ENVIRONMENT_UNAVAILABLE", "session has no workspace to execute checks in")
-    return OrynExecutor.run({ ...input, cwd })
+    return OrynExecutor.run(input)
   }
 
   /** Binding-scoped check plan read for workers and the engineering root. */
