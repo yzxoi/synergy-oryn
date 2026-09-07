@@ -48,12 +48,14 @@ export type PublishFacts = {
     number: number
     title: string
     headSha: string
+    draft?: boolean
     headBranch: string
     baseRef: string
     state: string
     markerPresent: boolean
     authorIsApp: boolean
   }
+  delivery?: { checkRunId: number; headSha: string }
   ci: { state: "success" | "failure" | "pending" | "none" }
 }
 
@@ -99,6 +101,47 @@ const CANDIDATE_OPERATIONS: PublishOperation[] = ["ensure_draft", "refresh_pr", 
 async function actionTolerantPause(caseId: string, expectedRevision: number): Promise<void> {
   await OrynStore.control(caseId, expectedRevision, "pause").catch(() => undefined)
 }
+function sameReadyConfig(
+  target: NonNullable<ActionReceipt["readyTarget"]>,
+  repo: {
+    owner: string
+    repo: string
+    baseBranch?: string
+    deliveryCheck?: boolean
+  },
+): boolean {
+  return (
+    target.repository === `${repo.owner}/${repo.repo}` &&
+    target.baseBranch === (repo.baseBranch ?? "dev") &&
+    target.deliveryCheck === (repo.deliveryCheck === true)
+  )
+}
+
+async function completeReady(action: ActionReceipt): Promise<void> {
+  if (action.operation !== "mark_ready" || action.state !== "acknowledged" || !action.remoteRefs?.pullNumber) return
+  if (!action.readyTarget) return
+  const record = await OrynStore.getCase(action.caseId)
+  if (!record || record.control !== "active" || record.epoch !== action.epoch || !record.activeAttemptId) return
+  const attempt = await OrynStore.getAttempt(record.id, record.activeAttemptId)
+  if (!attempt || attempt.id !== action.readyTarget.attemptId || attempt.candidateSha !== action.expectedHead) return
+  const config = await OrynConfig.info()
+  const repo = config?.repositories?.[record.repoAlias]
+  if (!config?.enabled || !repo || !sameReadyConfig(action.readyTarget, repo)) return
+  if (attempt.disposition !== "ready") {
+    await OrynStore.mutateAttempt(record.id, attempt.id, (draft) => ({ ...draft, disposition: "ready" as const }))
+  }
+  for (const sourceKeyHash of record.sourceIds) {
+    await OrynStore.writeOutbox({
+      caseId: record.id,
+      sourceKeyHash,
+      kind: "ready",
+      text: `Fix is ready for human review (PR #${action.remoteRefs.pullNumber}, candidate ${action.expectedHead})`,
+      dedupKey: `${record.id}:ready:${attempt.id}`,
+    })
+  }
+  await OrynLearning.promoteCase(record.id).catch(() => undefined)
+}
+
 export namespace OrynPublish {
   /**
    * Execute one host-verified publish operation through the injected
@@ -158,6 +201,8 @@ export namespace OrynPublish {
       if (!attempt?.candidateSha) {
         throw storeError("INVALID_STAGE", `${input.operation} requires a frozen candidate`, { caseId: input.caseId })
       }
+      if (attempt.id !== record.activeAttemptId)
+        throw storeError("INVALID_STAGE", "publication requires the active attempt")
       candidateSha = attempt.candidateSha
     }
     const existing = await OrynStore.findActionByRequestKey(input.caseId, input.requestKey)
@@ -170,13 +215,33 @@ export namespace OrynPublish {
       }
       // Idempotent replay: return the settled receipt without re-running the
       // delivery gate (which would now fail on the rotated disposition).
+      await completeReady(existing)
       return { actionId: existing.id, state: existing.state, refs: existing.remoteRefs, deduped: true }
+    }
+
+    const targetsPull = ["refresh_pr", "publish_review", "mark_ready"].includes(input.operation)
+    const pullNumber = targetsPull ? (input.pullNumber ?? record.pullNumbers.at(-1)) : undefined
+    if (targetsPull && (!pullNumber || !record.pullNumbers.includes(pullNumber))) {
+      throw storeError("NOT_AUTHORIZED", "publication requires a pull request bound to this Case")
     }
 
     if (input.operation === "mark_ready") {
       if (!candidateSha)
         throw storeError("INVALID_STAGE", "mark_ready requires a frozen candidate", { caseId: input.caseId })
-      const facts = await requireTransport().observe({ repository, ref: candidateSha, marker })
+      const facts = await requireTransport().observe({ repository, pullNumber, ref: candidateSha, marker }, signal)
+      if (
+        !facts.pull ||
+        facts.pull.number !== pullNumber ||
+        facts.pull.state !== "open" ||
+        typeof facts.pull.draft !== "boolean" ||
+        facts.pull.headSha !== candidateSha ||
+        facts.pull.headBranch !== orynBranch(input.caseId) ||
+        facts.pull.baseRef !== (repoCfg.baseBranch ?? "dev") ||
+        !facts.pull.markerPresent ||
+        !facts.pull.authorIsApp
+      ) {
+        throw storeError("REMOTE_AMBIGUOUS", "published pull request no longer matches the authorized candidate")
+      }
       const ciStatus =
         facts.ci.state === "success"
           ? ("passed" as const)
@@ -276,20 +341,33 @@ export namespace OrynPublish {
       operation: input.operation,
       payloadDigest: externalIdentityHash(input.operation, input.title ?? "", body, candidateSha ?? ""),
       expectedHead: candidateSha,
+      ...(input.operation === "mark_ready"
+        ? {
+            readyTarget: {
+              attemptId: attemptId!,
+              repository,
+              branch: orynBranch(input.caseId),
+              baseBranch: repoCfg.baseBranch ?? "dev",
+              deliveryCheck: repoCfg.deliveryCheck === true,
+            },
+          }
+        : {}),
       expectedRevision: record.revision,
       epoch: record.epoch,
       requestKey: input.requestKey,
       state: "prepared",
-      remoteRefs:
-        input.operation === "refresh_pr" || input.operation === "publish_review"
-          ? { pullNumber: input.pullNumber ?? record.pullNumbers[record.pullNumbers.length - 1] }
-          : undefined,
+      remoteRefs: pullNumber ? { pullNumber } : undefined,
     })
 
     // Re-check state immediately before flight so a takeover or cancel that
     // raced the preparation invalidates the action instead of publishing.
     const fresh = await OrynStore.getCase(input.caseId)
-    if (!fresh || fresh.epoch !== record.epoch || fresh.control !== "active") {
+    if (
+      !fresh ||
+      fresh.epoch !== record.epoch ||
+      fresh.control !== "active" ||
+      (CANDIDATE_OPERATIONS.includes(input.operation) && fresh.activeAttemptId !== attemptId)
+    ) {
       await OrynStore.mutateAction(receipt.id, (a) => ({ ...a, state: "cancelled" }))
       throw storeError("HUMAN_OWNED", "case state changed; action cancelled", { caseId: input.caseId })
     }
@@ -306,10 +384,7 @@ export namespace OrynPublish {
           directory,
           title: input.title,
           body,
-          pullNumber:
-            input.operation === "refresh_pr" || input.operation === "publish_review"
-              ? (input.pullNumber ?? record.pullNumbers[record.pullNumbers.length - 1])
-              : undefined,
+          pullNumber,
           marker,
           deliveryCheckEnabled: repoCfg.deliveryCheck === true,
         },
@@ -325,26 +400,17 @@ export namespace OrynPublish {
         issueNumber: refs.issueNumber,
         pullNumber: refs.pullNumber,
       })
-      if (input.operation === "mark_ready" && attemptId) {
-        await OrynStore.mutateAttempt(input.caseId, attemptId, (d) => ({ ...d, disposition: "ready" as const }))
-        // One-time silent notification through the durable outbox; duplicates
-        // collapse on the dedup key regardless of retries or crashes.
-        await OrynStore.writeOutbox({
-          caseId: input.caseId,
-          sourceKeyHash: binding.sourceKey,
-          kind: "ready",
-          text: input.payload ?? `fix is ready for human review${refs.pullNumber ? ` (PR #${refs.pullNumber})` : ""}`,
-          dedupKey: `${input.caseId}:ready`,
-        })
-        // Config-gated verified-memory promotion happens only after a
-        // delivered attempt; failures here never fail the delivery itself.
-        await OrynLearning.promoteCase(input.caseId).catch(() => undefined)
-      }
+      await completeReady(settled)
       return { actionId: settled.id, state: settled.state, refs: settled.remoteRefs, deduped: false }
     } catch (error) {
       const name = error instanceof Error ? error.name : ""
       const aborted = signal?.aborted === true
-      const transient = aborted || name === "GitHubApiError" || name === "AbortError" || name === "TimeoutError"
+      const transient =
+        input.operation === "mark_ready" ||
+        aborted ||
+        name === "GitHubApiError" ||
+        name === "AbortError" ||
+        name === "TimeoutError"
       if (name === "PublishNonFastForwardError") {
         // Deterministic divergence: the branch moved without Oryn. Never
         // force; park the receipt as rejected and fail the action.
@@ -381,7 +447,11 @@ export namespace OrynPublish {
   export async function reconcileAmbiguous(caseId: string, actionId: string, maxAttempts = 3): Promise<ActionReceipt> {
     const action = await OrynStore.getAction(actionId)
     if (!action) throw storeError("NOT_AUTHORIZED", `action ${actionId} not found`)
-    if (action.state !== "ambiguous") return action
+    if (action.caseId !== caseId) throw storeError("NOT_AUTHORIZED", "action belongs to another Case")
+    if (action.state !== "ambiguous") {
+      await completeReady(action)
+      return action
+    }
     const record = await OrynStore.getCase(caseId)
     if (!record) throw storeError("NOT_AUTHORIZED", `case ${caseId} not found`)
     if (record.epoch !== action.epoch) {
@@ -434,9 +504,49 @@ export namespace OrynPublish {
             return cancelled
           }
         }
+      } else if (action.operation === "mark_ready") {
+        const target = action.readyTarget
+        if (!target || !sameReadyConfig(target, repoCfg) || target.attemptId !== record.activeAttemptId) break
+        const pull = facts.pull
+        if (
+          pull &&
+          pull.number === action.remoteRefs?.pullNumber &&
+          record.pullNumbers.includes(pull.number) &&
+          pull.state === "open" &&
+          pull.draft === false &&
+          pull.headSha === action.expectedHead &&
+          pull.headBranch === orynBranch(caseId) &&
+          pull.baseRef === (repoCfg.baseBranch ?? "dev") &&
+          pull.markerPresent &&
+          pull.authorIsApp &&
+          (!target.deliveryCheck || facts.delivery?.headSha === action.expectedHead)
+        ) {
+          const active = record.activeAttemptId ? await OrynStore.getAttempt(caseId, record.activeAttemptId) : undefined
+          if (!active || active.candidateSha !== action.expectedHead || record.control !== "active") break
+          const gate =
+            active.disposition === "ready"
+              ? { ready: true }
+              : await OrynService.evaluateDelivery({
+                  callerSessionID: record.engineeringSessionId!,
+                  caseId,
+                  payload: `Verified candidate ${action.expectedHead}`,
+                  ciStatus:
+                    facts.ci.state === "success" ? "passed" : facts.ci.state === "failure" ? "failed" : undefined,
+                })
+          if (!gate.ready) break
+          const settled = await OrynStore.mutateAction(actionId, (value) => ({
+            ...value,
+            state: "acknowledged",
+            remoteRefs: {
+              ...value.remoteRefs,
+              pullNumber: pull.number,
+              ...(facts.delivery ? { checkRunId: facts.delivery.checkRunId } : {}),
+            },
+          }))
+          await completeReady(settled)
+          return settled
+        }
       } else {
-        // publish_review / mark_ready have no independently verifiable
-        // marker contract; uncertainty cannot be resolved remotely.
         break
       }
     }
@@ -453,6 +563,10 @@ export namespace OrynPublish {
     const actions = await OrynStore.listActions()
     let settled = 0
     for (const action of actions) {
+      if (action.state === "acknowledged" && action.operation === "mark_ready") {
+        await completeReady(action).catch(() => undefined)
+        continue
+      }
       if (action.state !== "ambiguous") continue
       const before = action.state
       const after = await reconcileAmbiguous(action.caseId, action.id).catch(() => undefined)

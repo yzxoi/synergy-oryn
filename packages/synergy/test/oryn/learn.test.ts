@@ -3,7 +3,7 @@ import { Scope } from "../../src/scope"
 import { ScopeContext } from "../../src/scope/context"
 import { OrynService } from "../../src/oryn/service"
 import { OrynStore } from "../../src/oryn/store"
-import { OrynPublish, orynBranch, setTransport } from "../../src/oryn/publish"
+import { OrynPublish, setTransport } from "../../src/oryn/publish"
 import { OrynLearning, setMemoryPromoter } from "../../src/oryn/learn"
 import type { PublishExecuteInput, PublishExecuteResult, PublishTransport } from "../../src/oryn/publish"
 import { tmpdir, runCheck } from "./fixture"
@@ -156,7 +156,8 @@ function noopTransport(candidateSha: string): PublishTransport {
           number: query.pullNumber,
           title: "fix",
           headSha: candidateSha,
-          headBranch: orynBranch("any"),
+          headBranch: `codex/oryn/${query.marker?.slice("<!-- oryn:".length, -" -->".length)}`,
+          draft: true,
           baseRef: "dev",
           state: "open",
           markerPresent: true,
@@ -227,6 +228,7 @@ describe("OrynLearning", () => {
         evidenceRefs: [seeded.baselineRunId],
       })
       // Attempt not delivered yet → promotion refused even with a promoter.
+      await OrynStore.attachRemoteRefs(seeded.caseId, { pullNumber: 55 })
       setTransport(noopTransport(seeded.candidateSha))
       try {
         await OrynPublish.publish({
@@ -324,6 +326,7 @@ describe("OrynPublish.readFacts", () => {
   test("linked QA sources read bounded facts; unlinked sessions are rejected", async () => {
     await withLearnScope({}, async (root) => {
       const seeded = await seedFrozen(root)
+      await OrynStore.attachRemoteRefs(seeded.caseId, { pullNumber: 55 })
       setTransport(noopTransport(seeded.candidateSha))
       // QA source linked to the case can read.
       await OrynPublish.readFacts({ callerSessionID: "ses_qa_learn", caseId: seeded.caseId })

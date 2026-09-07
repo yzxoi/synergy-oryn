@@ -25,6 +25,8 @@ The `github` provider (`packages/synergy/src/channel/provider/github/`) connects
 
 Preserve these invariants when changing the provider: deterministic per-thread directory resolution, `@synergy-agent` mention gating, comment→chatId reaction registry, and the env-only credential boundary.
 
+For Oryn publication changes, verify actual remote state transitions through a fake HTTP boundary around the production transport, alongside real Host ledger tests. A check-run response does not prove a PR left draft; GraphQL HTTP 200 can contain errors. Include pending/paginated CI, exact App identity, changed head, response loss and replay without duplicate notifications. Keep independent CI separate from the delivery check itself.
+
 ## Preserve Ownership
 
 1. Keep Scope and Session creation in Channel core. A project/task-capable provider reports remote facts through `ChannelHost`; it does not call Scope, Session, or model execution directly.

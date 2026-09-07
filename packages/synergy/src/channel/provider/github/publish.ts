@@ -1,5 +1,5 @@
 import { Log } from "@/util/log"
-import { GitHubChannelAuth, buildCredentialCommand } from "./api"
+import { GitHubApiError, GitHubChannelAuth, buildCredentialCommand } from "./api"
 import { record } from "./record"
 import type { PublishExecuteInput, PublishExecuteResult, PublishFacts, PublishTransport } from "../../../oryn/publish"
 
@@ -162,21 +162,83 @@ export namespace OrynGithubPublish {
             return { refs: { pullNumber: input.pullNumber } }
           }
           case "mark_ready": {
-            // The delivery check run is config-gated: never registered as a
-            // required check until the deployment has verified it live.
-            if (!input.deliveryCheckEnabled || !input.candidateSha) return { refs: {} }
-            const run = await send<unknown>(
-              GitHubChannelAuth.GitHubClient.createCheckRun({
+            if (!input.pullNumber || !input.candidateSha || !input.branch || !input.baseBranch || !input.marker) {
+              throw new Error("mark_ready requires a bound pull request and frozen candidate")
+            }
+            const pull = await send<unknown>(
+              GitHubChannelAuth.GitHubClient.getPullRequest({
                 owner,
                 repo,
-                headSha: input.candidateSha,
-                name: "oryn/delivery",
-                conclusion: "success",
-                summary: input.body ?? "Oryn delivery gate passed",
+                pullNumber: input.pullNumber,
                 installationToken: token,
               }),
             )
-            return { refs: { checkRunId: numberField(run, "id") } }
+            const slug = await GitHubChannelAuth.getAppSlug(signal)
+            const nodeId = stringField(pull, "node_id")
+            if (
+              !nodeId ||
+              numberField(pull, "number") !== input.pullNumber ||
+              stringField(pull, "state") !== "open" ||
+              typeof record(pull).draft !== "boolean" ||
+              stringField(record(pull).head, "sha") !== input.candidateSha ||
+              stringField(record(pull).head, "ref") !== input.branch ||
+              stringField(record(pull).base, "ref") !== input.baseBranch ||
+              stringField(record(record(pull).head).repo, "full_name") !== input.repository ||
+              stringField(record(record(pull).base).repo, "full_name") !== input.repository ||
+              stringField(record(pull).user, "login") !== `${slug}[bot]` ||
+              !(stringField(pull, "body") ?? "").includes(input.marker)
+            ) {
+              throw new Error("pull request no longer matches the authorized Oryn candidate")
+            }
+            let url = stringField(pull, "html_url")
+            try {
+              if (record(pull).draft === true) {
+                const response = await send<unknown>(
+                  GitHubChannelAuth.GitHubClient.markPullRequestReadyForReview({
+                    pullRequestId: nodeId,
+                    installationToken: token,
+                  }),
+                )
+                const changed = record(record(record(response).data).markPullRequestReadyForReview).pullRequest
+                if (
+                  record(response).errors !== undefined ||
+                  stringField(changed, "id") !== nodeId ||
+                  numberField(changed, "number") !== input.pullNumber ||
+                  record(changed).isDraft !== false ||
+                  stringField(changed, "state") !== "OPEN" ||
+                  stringField(changed, "headRefOid") !== input.candidateSha ||
+                  stringField(changed, "headRefName") !== input.branch ||
+                  stringField(changed, "baseRefName") !== input.baseBranch
+                ) {
+                  throw new Error("ready mutation did not confirm the authorized candidate")
+                }
+                url = stringField(changed, "url")
+              }
+              const refs: PublishExecuteResult["refs"] = { pullNumber: input.pullNumber, url }
+              if (input.deliveryCheckEnabled) {
+                const run = await send<unknown>(
+                  GitHubChannelAuth.GitHubClient.createCheckRun({
+                    owner,
+                    repo,
+                    headSha: input.candidateSha,
+                    name: "oryn/delivery",
+                    conclusion: "success",
+                    summary: input.body ?? "Oryn delivery gate passed",
+                    installationToken: token,
+                  }),
+                )
+                const checkRunId = numberField(run, "id")
+                if (!checkRunId || !Number.isInteger(checkRunId) || checkRunId < 1) {
+                  throw new Error("delivery check response has no valid ID")
+                }
+                refs.checkRunId = checkRunId
+              }
+              return { refs }
+            } catch (error) {
+              if (error instanceof GitHubApiError) throw error
+              // Once a write starts, a transport or response-validation failure may follow a remote commit.
+              throw new GitHubApiError(0, "POST", "/graphql", "Oryn readiness outcome requires reconciliation")
+            }
           }
           case "notify_feishu": {
             // Feishu results flow through the oryn outbox, never GitHub.
@@ -191,6 +253,7 @@ export namespace OrynGithubPublish {
         const send = <T>(descriptor: Parameters<typeof GitHubChannelAuth.GitHubClient.send>[0]) =>
           GitHubChannelAuth.GitHubClient.send<T>(descriptor, signal)
         const facts: PublishFacts = { ci: { state: "none" } }
+        const slug = await GitHubChannelAuth.getAppSlug(signal)
 
         if (input.issueNumber) {
           const issue = await send<unknown>(
@@ -208,7 +271,7 @@ export namespace OrynGithubPublish {
             title: stringField(issue, "title") ?? "",
             state: stringField(issue, "state") ?? "unknown",
             markerPresent: input.marker ? body.includes(input.marker) : false,
-            authorIsApp: login.endsWith("[bot]"),
+            authorIsApp: login === `${slug}[bot]`,
           }
         }
         if (input.pullNumber) {
@@ -225,16 +288,17 @@ export namespace OrynGithubPublish {
           facts.pull = {
             number: input.pullNumber,
             title: stringField(pull, "title") ?? "",
+            draft: typeof record(pull).draft === "boolean" ? (record(pull).draft as boolean) : undefined,
             headSha: stringField(record(pull).head, "sha") ?? "",
             headBranch: stringField(record(pull).head, "ref") ?? "",
             baseRef: stringField(record(pull).base, "ref") ?? "",
             state: stringField(pull, "state") ?? "unknown",
             markerPresent: input.marker ? body.includes(input.marker) : false,
-            authorIsApp: login.endsWith("[bot]"),
+            authorIsApp: login === `${slug}[bot]`,
           }
         }
         if (input.ref) {
-          const [status, checks] = await Promise.all([
+          const [status, runs] = await Promise.all([
             send<unknown>(
               GitHubChannelAuth.GitHubClient.getCombinedStatus({
                 owner,
@@ -243,35 +307,68 @@ export namespace OrynGithubPublish {
                 installationToken: token,
               }),
             ),
-            send<unknown>(
-              GitHubChannelAuth.GitHubClient.listCheckRunsForRef({
-                owner,
-                repo,
-                ref: input.ref,
-                installationToken: token,
-              }),
-            ),
+            (async () => {
+              const runs: unknown[] = []
+              for (let page = 1; page <= 100; page++) {
+                const response = await GitHubChannelAuth.GitHubClient.sendPage<unknown>(
+                  GitHubChannelAuth.GitHubClient.listCheckRunsForRef({
+                    owner,
+                    repo,
+                    ref: input.ref!,
+                    page,
+                    installationToken: token,
+                  }),
+                  signal,
+                )
+                const batch = record(response.data).check_runs
+                if (!Array.isArray(batch)) throw new Error("GitHub check list is malformed")
+                runs.push(...batch)
+                if (!(response.headers.get("link") ?? "").includes('rel="next"')) {
+                  const total = numberField(response.data, "total_count")
+                  if (total !== undefined && total > runs.length) throw new Error("GitHub check list is incomplete")
+                  return runs
+                }
+              }
+              throw new Error("GitHub check pagination limit exceeded")
+            })(),
           ])
           let signals = 0
           let failing = false
           let allSuccess = true
           const statusState = stringField(status, "state")
-          if (statusState) {
+          const statusCount =
+            numberField(status, "total_count") ??
+            (Array.isArray(record(status).statuses) ? (record(status).statuses as unknown[]).length : undefined)
+          if (statusCount === undefined) throw new Error("GitHub combined status is malformed")
+          if (statusCount > 0) {
             signals++
             if (statusState === "success") {
               // success contributes no failure
-            } else if (statusState === "failure") {
+            } else if (statusState === "failure" || statusState === "error") {
               failing = true
               allSuccess = false
             } else {
               allSuccess = false
             }
           }
-          for (const run of Array.isArray(record(checks).check_runs) ? (record(checks).check_runs as unknown[]) : []) {
+          for (const run of runs) {
             const conclusion = stringField(run, "conclusion")
-            if (!conclusion) continue
+            if (stringField(run, "name") === "oryn/delivery" && stringField(record(run).app, "slug") === slug) {
+              const checkRunId = numberField(run, "id")
+              if (
+                checkRunId &&
+                record(run).status === "completed" &&
+                conclusion === "success" &&
+                stringField(run, "head_sha") === input.ref
+              ) {
+                facts.delivery = { checkRunId, headSha: input.ref }
+              }
+              continue
+            }
             signals++
-            if (FAILING_CONCLUSIONS.has(conclusion)) {
+            if (record(run).status !== "completed" || !conclusion) {
+              allSuccess = false
+            } else if (FAILING_CONCLUSIONS.has(conclusion)) {
               failing = true
               allSuccess = false
             } else if (conclusion !== "success") {

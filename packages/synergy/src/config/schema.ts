@@ -581,7 +581,7 @@ export const OrynRepository = z
       .boolean()
       .optional()
       .describe(
-        "Allow the controlled App identity to write oryn/delivery check runs on this repository (default: false). Only enable after the deployment has verified the check live; never register it as a required check before that",
+        "Allow the controlled App identity to write oryn/delivery check runs on this repository (default: false). Enable first on an authorized test repository to verify the check live; only then register it as a required check",
       ),
   })
   .strict()

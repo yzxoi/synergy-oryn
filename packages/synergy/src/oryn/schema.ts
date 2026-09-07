@@ -286,12 +286,22 @@ export type ReviewReport = z.infer<typeof ReviewReport>
 
 export const ActionReceipt = z
   .object({
-    schemaVersion: z.literal(1),
+    schemaVersion: z.literal(2),
     id: z.string().min(1),
     caseId: z.string().min(1),
     operation: PublishOperation,
     payloadDigest: z.string().min(1),
     expectedHead: z.string().optional(),
+    readyTarget: z
+      .object({
+        attemptId: z.string().min(1),
+        repository: z.string().min(1),
+        branch: z.string().min(1),
+        baseBranch: z.string().min(1),
+        deliveryCheck: z.boolean(),
+      })
+      .strict()
+      .optional(),
     expectedRevision: z.number().int().nonnegative(),
     epoch: z.number().int().nonnegative(),
     requestKey: z.string().min(1),

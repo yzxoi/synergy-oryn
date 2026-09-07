@@ -95,10 +95,14 @@ Worker completion does not imply verified behavior. Reproduction and verificatio
 The `oryn/delivery` check run is written only when `oryn.repositories[alias].deliveryCheck` is `true` (default `false`). Follow this sequence when turning it on:
 
 1. On an explicitly authorized test repository, enable `deliveryCheck: true` while leaving the check out of branch protection. With the flag false, no check is written and a canary cannot verify it.
-2. Exercise the gated publication path and verify the check appears on the candidate SHA under the expected App identity. Independently verify Draft-to-ready behavior; the current transport only writes the check and does not yet perform that transition.
+2. Exercise the gated publication path and verify the check appears on the candidate SHA under the expected App identity. Verify the same PR becomes ready for review. The transport performs the GraphQL Draft-to-ready transition independently of the optional check flag, validates the returned candidate, and only then writes the enabled check.
 3. After complete pipeline acceptance, enable the check for the target repository and register it as required with the expected App identity if branch protection requires it.
 
 Never register `oryn/delivery` as a required check before the deployment has observed it run for real; a required check that the App cannot write blocks every PR on the branch.
+
+Readiness is tied to a Case-owned PR, frozen candidate SHA, branch/base and the configured App identity. The publisher records the PR target before dispatch. A lost response is reconciled from the remote non-draft PR and, when enabled, its App-owned delivery check; unresolved or changed candidates pause instead of replaying writes. Successful settlement restores the attempt outcome and deduplicated per-source notifications after interruption. CI observation includes pending checks and paginated check results; the App's own delivery check is excluded from independent CI.
+
+GitHub's ready mutation has no expected-head parameter. The transport checks the head before and in the mutation result, but it cannot make the remote transition atomic with concurrent pushes. Required checks and human review must remain tied to the current head. Publication receipts pin the Attempt and repository/base/check settings; changes leave unresolved actions for reconciliation. Full review-policy changes during unresolved publication still need operator reconciliation; this is not a claim that the remaining pipeline acceptance work is complete.
 
 ## Backup and Recovery
 

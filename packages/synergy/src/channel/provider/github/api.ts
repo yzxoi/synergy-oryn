@@ -379,6 +379,24 @@ export namespace GitHubChannelAuth {
       })
     }
 
+    // GitHub exposes the draft transition through GraphQL, without expectedHeadOid.
+    // https://docs.github.com/en/graphql/reference/pulls#markpullrequestreadyforreview
+    export function markPullRequestReadyForReview(input: { pullRequestId: string; installationToken: string }) {
+      return request({
+        path: "/graphql",
+        method: "POST",
+        installationToken: input.installationToken,
+        body: {
+          query: `mutation OrynReady($input: MarkPullRequestReadyForReviewInput!) {
+            markPullRequestReadyForReview(input: $input) {
+              pullRequest { id number isDraft state headRefOid headRefName baseRefName url }
+            }
+          }`,
+          variables: { input: { pullRequestId: requireNonEmpty(input.pullRequestId, "pull request node ID") } },
+        },
+      })
+    }
+
     export function createPullRequestReview(input: {
       owner: string
       repo: string
@@ -434,10 +452,11 @@ export namespace GitHubChannelAuth {
       owner: string
       repo: string
       ref: string
+      page?: number
       installationToken: string
     }) {
       return request({
-        path: `/repos/${input.owner}/${input.repo}/commits/${input.ref}/check-runs`,
+        path: `/repos/${input.owner}/${input.repo}/commits/${input.ref}/check-runs${input.page ? `?per_page=100&filter=latest&page=${input.page}` : ""}`,
         installationToken: input.installationToken,
       })
     }

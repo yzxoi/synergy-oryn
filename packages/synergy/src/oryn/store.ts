@@ -490,7 +490,7 @@ export namespace OrynStore {
   ): Promise<ActionReceipt> {
     const ts = now()
     const record: ActionReceipt = {
-      schemaVersion: 1,
+      schemaVersion: 2,
       id: Identifier.ascending("oryn_action"),
       attempts: 0,
       ...input,

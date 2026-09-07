@@ -4,7 +4,7 @@ import { OrynPath } from "./path"
 import type { Migration } from "../migration"
 import { MigrationRegistry } from "../migration/registry"
 import { z } from "zod"
-import { OutboxEntry } from "./schema"
+import { ActionReceipt, OutboxEntry } from "./schema"
 
 const log = Log.create({ service: "oryn.migration" })
 
@@ -12,6 +12,8 @@ const LegacyOutboxEntry = OutboxEntry.extend({
   schemaVersion: z.literal(1),
   state: z.enum(["pending", "delivered", "suppressed"]),
 }).omit({ attemptedAt: true })
+
+const LegacyActionReceipt = ActionReceipt.extend({ schemaVersion: z.literal(1) }).omit({ readyTarget: true })
 
 export const migrations: Migration[] = [
   {
@@ -44,6 +46,24 @@ export const migrations: Migration[] = [
               state: legacy.state === "pending" ? "ambiguous" : legacy.state,
             }),
           )
+        }
+        progress(index + 1, ids.length)
+      }
+    },
+  },
+  {
+    id: "20260908-oryn-ready-target",
+    description: "Version publication receipts without inventing targets for legacy readiness actions",
+    version: "1.0.0",
+    domain: "oryn",
+    dependsOn: ["20260908-oryn-outbox-dispatch"],
+    async up(progress) {
+      const ids = await Storage.scan(OrynPath.actionsRoot())
+      for (const [index, id] of ids.entries()) {
+        const value = await Storage.read<unknown>(OrynPath.action(id))
+        if (!ActionReceipt.safeParse(value).success) {
+          const legacy = LegacyActionReceipt.parse(value)
+          await Storage.write(OrynPath.action(id), ActionReceipt.parse({ ...legacy, schemaVersion: 2 }))
         }
         progress(index + 1, ids.length)
       }

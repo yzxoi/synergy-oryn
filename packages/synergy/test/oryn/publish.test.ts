@@ -131,6 +131,64 @@ async function seedFrozen(root: string): Promise<Frozen> {
   return { caseId, engineeringSessionId: opened.sessionID, attemptId, candidateSha }
 }
 
+async function verifyFrozen(seeded: Frozen): Promise<void> {
+  const { caseId, attemptId } = seeded
+  const verify = await OrynService.dispatch({
+    callerSessionID: seeded.engineeringSessionId,
+    caseId,
+    stage: "verify",
+    requestKey: "ready-verify",
+  })
+  const plan = await OrynService.proposeCheck({
+    callerSessionID: verify.workerSessionId,
+    caseId,
+    attemptId,
+    assignmentId: verify.assignmentId,
+    scenario: "delivery fixture",
+    profileId: "quick",
+    argv: [["echo", "candidate-ok"]],
+    checks: ["fixture exits successfully"],
+  })
+  const run = await runCheck({
+    callerSessionID: verify.workerSessionId,
+    caseId,
+    attemptId,
+    assignmentId: verify.assignmentId,
+    planId: plan.planId,
+    lane: "candidate",
+    abort: new AbortController().signal,
+  })
+  await OrynService.submitResult({
+    callerSessionID: verify.workerSessionId,
+    caseId,
+    attemptId,
+    assignmentId: verify.assignmentId,
+    requestKey: "ready-verification",
+    kind: "verification",
+    outcome: "verified",
+    summary: "Independent publication fixture check",
+    runIds: [run.runId],
+  })
+  const review = await OrynService.dispatch({
+    callerSessionID: seeded.engineeringSessionId,
+    caseId,
+    stage: "review",
+    requestKey: "ready-review",
+  })
+  await OrynService.submitReview({
+    callerSessionID: review.workerSessionId,
+    caseId,
+    attemptId,
+    assignmentId: review.assignmentId,
+    requestKey: "ready-reviewed",
+    headSha: seeded.candidateSha,
+    baseSha: seeded.candidateSha,
+    findings: [],
+    evidenceAssessment: "Fixture meets publication criteria",
+    recommendation: "ready_for_human",
+  })
+}
+
 /**
  * Deterministic transport: records execute calls and answers observe with
  * configurable remote facts so reconciliation paths are exercisable without
@@ -141,6 +199,8 @@ function fakeTransport(input: {
   marker: string
   /** Head SHA reported for the recorded pull request; undefined = no PR remotely. */
   pullHeadSha?: string
+  draft?: boolean
+  ci?: "none" | "success"
   /** Remote issue author/marker facts; undefined = no issue facts. */
   issue?: { markerPresent: boolean; authorIsApp: boolean }
   onExecute?: (call: PublishExecuteInput) => Promise<PublishExecuteResult>
@@ -161,13 +221,13 @@ function fakeTransport(input: {
         case "publish_review":
           return { refs: { pullNumber: call.pullNumber } }
         case "mark_ready":
-          return { refs: { checkRunId: 9001 } }
+          return { refs: { pullNumber: call.pullNumber, checkRunId: 9001 } }
         default:
           return { refs: {} }
       }
     },
     async observe(query) {
-      const facts: Awaited<ReturnType<PublishTransport["observe"]>> = { ci: { state: "none" } }
+      const facts: Awaited<ReturnType<PublishTransport["observe"]>> = { ci: { state: input.ci ?? "none" } }
       if (query.issueNumber) {
         facts.issue = {
           number: query.issueNumber,
@@ -183,7 +243,8 @@ function fakeTransport(input: {
           number: query.pullNumber,
           title: "fix: forwarded message",
           headSha: head,
-          headBranch: orynBranch("any"),
+          headBranch: `codex/oryn/${input.marker.slice("<!-- oryn:".length, -" -->".length)}`,
+          draft: input.draft ?? true,
           baseRef: "dev",
           state: "open",
           markerPresent: true,
@@ -298,6 +359,7 @@ describe("OrynPublish ledger", () => {
   test("mark_ready fails closed before any action when the delivery gate is unsatisfied", async () => {
     await withPubScope(async (root) => {
       const seeded = await seedFrozen(root)
+      await OrynStore.attachRemoteRefs(seeded.caseId, { pullNumber: 55 })
       const transport = fakeTransport({
         candidateSha: seeded.candidateSha,
         marker: caseMarker(seeded.caseId),
@@ -538,5 +600,183 @@ describe("OrynPublish ledger", () => {
         expect(errorCode(error)).toBe("INVALID_STAGE")
       }
     })
+  })
+})
+
+describe("Oryn ready publication and recovery", () => {
+  test("persists the bound PR before dispatch and delivers one ready result", async () => {
+    await withPubScope(async (root) => {
+      const seeded = await seedFrozen(root)
+      await verifyFrozen(seeded)
+      await OrynStore.attachRemoteRefs(seeded.caseId, { pullNumber: 55 })
+      let executions = 0
+      setTransport(
+        fakeTransport({
+          candidateSha: seeded.candidateSha,
+          marker: caseMarker(seeded.caseId),
+          ci: "success",
+          async onExecute(call) {
+            executions++
+            expect(call.pullNumber).toBe(55)
+            const actions = await OrynStore.listActions({ caseId: seeded.caseId })
+            expect(actions[0]).toMatchObject({
+              operation: "mark_ready",
+              state: "in_flight",
+              remoteRefs: { pullNumber: 55 },
+            })
+            return { refs: { pullNumber: 55 } }
+          },
+        }),
+      )
+      const request = {
+        callerSessionID: seeded.engineeringSessionId,
+        caseId: seeded.caseId,
+        operation: "mark_ready" as const,
+        requestKey: "ready",
+        payload: `Verified fixture ${seeded.candidateSha}; ready for review`,
+      }
+      expect((await OrynPublish.publish(request)).state).toBe("acknowledged")
+      expect((await OrynPublish.publish(request)).deduped).toBe(true)
+      expect(executions).toBe(1)
+      expect((await OrynStore.getAttempt(seeded.caseId, seeded.attemptId))?.disposition).toBe("ready")
+      const outbox = (await OrynStore.listPendingOutbox()).filter(
+        (entry) => entry.caseId === seeded.caseId && entry.kind === "ready",
+      )
+      expect(outbox).toHaveLength(1)
+    })
+  })
+
+  test("a lost ready response reconciles without another mutation or notification", async () => {
+    await withPubScope(async (root) => {
+      const seeded = await seedFrozen(root)
+      await verifyFrozen(seeded)
+      await OrynStore.attachRemoteRefs(seeded.caseId, { pullNumber: 55 })
+      setTransport(
+        fakeTransport({
+          candidateSha: seeded.candidateSha,
+          marker: caseMarker(seeded.caseId),
+          ci: "success",
+          async onExecute() {
+            const error = new Error("lost response")
+            error.name = "GitHubApiError"
+            throw error
+          },
+        }),
+      )
+      await expect(
+        OrynPublish.publish({
+          callerSessionID: seeded.engineeringSessionId,
+          caseId: seeded.caseId,
+          operation: "mark_ready",
+          requestKey: "lost-ready",
+          payload: `Verified fixture ${seeded.candidateSha}`,
+        }),
+      ).rejects.toThrow()
+      const action = (await OrynStore.listActions({ caseId: seeded.caseId }))[0]!
+      const transport = fakeTransport({
+        candidateSha: seeded.candidateSha,
+        marker: caseMarker(seeded.caseId),
+        draft: false,
+        ci: "success",
+      })
+      setTransport(transport)
+      expect((await OrynPublish.reconcileAmbiguous(seeded.caseId, action.id)).state).toBe("acknowledged")
+      expect((await OrynPublish.reconcileAmbiguous(seeded.caseId, action.id)).state).toBe("acknowledged")
+      expect(transport.calls).toHaveLength(0)
+      expect((await OrynStore.getAttempt(seeded.caseId, seeded.attemptId))?.disposition).toBe("ready")
+      expect(
+        (await OrynStore.listPendingOutbox()).filter(
+          (entry) => entry.caseId === seeded.caseId && entry.kind === "ready",
+        ),
+      ).toHaveLength(1)
+    })
+  })
+
+  test("refuses a model-selected PR outside the Case before calling the transport", async () => {
+    await withPubScope(async (root) => {
+      const seeded = await seedFrozen(root)
+      await OrynStore.attachRemoteRefs(seeded.caseId, { pullNumber: 55 })
+      const transport = fakeTransport({ candidateSha: seeded.candidateSha, marker: caseMarker(seeded.caseId) })
+      setTransport(transport)
+      try {
+        await OrynPublish.publish({
+          callerSessionID: seeded.engineeringSessionId,
+          caseId: seeded.caseId,
+          operation: "mark_ready",
+          pullNumber: 99,
+          requestKey: "foreign-ready",
+        })
+        expect.unreachable()
+      } catch (error) {
+        expect(errorCode(error)).toBe("NOT_AUTHORIZED")
+      }
+      expect(transport.calls).toHaveLength(0)
+    })
+  })
+})
+
+test("ready acknowledgement recovery finishes local effects without another remote action", async () => {
+  await withPubScope(async (root) => {
+    const seeded = await seedFrozen(root)
+    await verifyFrozen(seeded)
+    await OrynStore.attachRemoteRefs(seeded.caseId, { pullNumber: 55 })
+    const record = (await OrynStore.getCase(seeded.caseId))!
+    await OrynStore.writeAction({
+      caseId: seeded.caseId,
+      operation: "mark_ready",
+      payloadDigest: "fixture",
+      expectedHead: seeded.candidateSha,
+      expectedRevision: record.revision,
+      epoch: record.epoch,
+      readyTarget: {
+        attemptId: seeded.attemptId,
+        repository: "acme/widget",
+        branch: orynBranch(seeded.caseId),
+        baseBranch: "dev",
+        deliveryCheck: false,
+      },
+      requestKey: "ack-before-effects",
+      state: "acknowledged",
+      remoteRefs: { pullNumber: 55 },
+    })
+    const transport = fakeTransport({ candidateSha: seeded.candidateSha, marker: caseMarker(seeded.caseId) })
+    setTransport(transport)
+    await OrynPublish.reconcileAllAmbiguous()
+    await OrynPublish.reconcileAllAmbiguous()
+    expect(transport.calls).toHaveLength(0)
+    expect((await OrynStore.getAttempt(seeded.caseId, seeded.attemptId))?.disposition).toBe("ready")
+    expect(
+      (await OrynStore.listPendingOutbox()).filter((entry) => entry.caseId === seeded.caseId && entry.kind === "ready"),
+    ).toHaveLength(1)
+  })
+})
+
+test("an acknowledged publication cannot ready a later attempt with the same SHA", async () => {
+  await withPubScope(async (root) => {
+    const seeded = await seedFrozen(root)
+    await verifyFrozen(seeded)
+    await OrynStore.attachRemoteRefs(seeded.caseId, { pullNumber: 55 })
+    setTransport(fakeTransport({ candidateSha: seeded.candidateSha, marker: caseMarker(seeded.caseId), ci: "success" }))
+    await OrynPublish.publish({
+      callerSessionID: seeded.engineeringSessionId,
+      caseId: seeded.caseId,
+      operation: "mark_ready",
+      requestKey: "old-attempt-ready",
+      payload: `Verified ${seeded.candidateSha}`,
+    })
+    const rotated = await OrynStore.rotateAttempt({
+      caseId: seeded.caseId,
+      fromAttemptId: seeded.attemptId,
+      invalidationReason: "new review required",
+      nextBaselineSha: seeded.candidateSha,
+      countRepair: true,
+      countNoProgress: true,
+    })
+    await OrynStore.mutateAttempt(seeded.caseId, rotated.next.id, (attempt) => ({
+      ...attempt,
+      candidateSha: seeded.candidateSha,
+    }))
+    await OrynPublish.reconcileAllAmbiguous()
+    expect((await OrynStore.getAttempt(seeded.caseId, rotated.next.id))?.disposition).toBe("open")
   })
 })
