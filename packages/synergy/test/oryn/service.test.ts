@@ -337,10 +337,10 @@ describe("OrynService worker results", () => {
         kind: "candidate",
         outcome: "candidate_ready",
         summary: "fix applied with regression test",
-        candidateSha: "cand1e2e3",
+        candidateSha: await headSha(root),
       })
       const attempt = await OrynStore.getAttempt(submitted.caseId, attemptId)
-      expect(attempt?.candidateSha).toBe("cand1e2e3")
+      expect(attempt?.candidateSha).toBe(await headSha(root))
       expect(attempt?.disposition).toBe("candidate_frozen")
 
       const verifyDispatch = await OrynService.dispatch({

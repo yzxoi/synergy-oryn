@@ -3,6 +3,7 @@ import { externalIdentityHash } from "../util/identity"
 import { Session } from "../session"
 import { BossService } from "../boss/boss"
 import { OrynStore, sourceKey, storeError } from "./store"
+import { OrynCandidate } from "./candidate"
 import { OrynConfig } from "./config"
 import { OrynEngineering } from "./engineering"
 import { OrynReports } from "./reports"
@@ -55,25 +56,45 @@ async function requireActiveCase(caseId: string) {
   return record
 }
 async function assertStageAdmission(caseId: string, attemptId: string, stage: Stage): Promise<void> {
-  const reports = await OrynStore.listWorkerReports(caseId)
+  const [record, attempt, assignments, reports] = await Promise.all([
+    OrynStore.getCase(caseId),
+    OrynStore.getAttempt(caseId, attemptId),
+    OrynStore.listAssignments(caseId),
+    OrynStore.listWorkerReports(caseId),
+  ])
+  if (!record || !attempt) throw storeError("INVALID_STAGE", "stage requires an existing case and Attempt")
+  const accepted = reports.filter((report) =>
+    assignments.some(
+      (assignment) =>
+        assignment.id === report.assignmentId &&
+        assignment.acceptedReportId === report.id &&
+        assignment.attemptId === report.attemptId &&
+        assignment.epoch === record.epoch &&
+        report.epoch === record.epoch &&
+        assignment.stage ===
+          { repro: "repro", candidate: "code", verification: "verify", review_note: "review" }[report.kind],
+    ),
+  )
   if (stage === "code") {
-    // Reproduction is per-case evidence: after a rework rotation the new
-    // attempt inherits the confirmed bug, so any accepted reproduction on
-    // the case admits coding.
-    const reproduced = reports.some(
-      (r) => r.kind === "repro" && (r.outcome === "reproduced" || r.outcome === "already_fixed"),
-    )
-    if (!reproduced) {
+    const reproduced = accepted.some((report) => report.kind === "repro" && report.outcome === "reproduced")
+    if (!reproduced)
       throw storeError("INVALID_STAGE", "code requires an accepted reproduction on this case", { caseId })
-    }
     return
   }
   if (stage === "verify" || stage === "review") {
-    const attemptReports = reports.filter((r) => r.attemptId === attemptId)
-    const frozen = attemptReports.some((r) => r.kind === "candidate" && r.candidateSha)
-    if (!frozen) {
-      throw storeError("INVALID_STAGE", `${stage} requires a frozen candidate on this attempt`, { caseId })
-    }
+    const candidate = accepted.find(
+      (report) =>
+        report.kind === "candidate" && report.attemptId === attemptId && report.candidateSha === attempt.candidateSha,
+    )
+    if (!candidate || !attempt.candidateSha || attempt.disposition !== "candidate_frozen")
+      throw storeError("INVALID_STAGE", `${stage} requires an accepted frozen candidate on this attempt`, { caseId })
+    const assignment = assignments.find((item) => item.id === candidate.assignmentId)!
+    await OrynCandidate.verify({
+      assignment,
+      attempt,
+      candidateSha: candidate.candidateSha,
+      localBranch: candidate.localBranch,
+    })
   }
 }
 
@@ -213,6 +234,14 @@ export namespace OrynService {
       throw storeError("INVALID_STAGE", "dispatch request key belongs to a different assignment")
     }
 
+    if (input.stage === "code") {
+      const writers = (await OrynStore.listAssignments(input.caseId)).filter(
+        (item) => item.attemptId === attemptId && item.stage === "code",
+      )
+      if (writers.some((item) => item.id !== existing?.id))
+        throw storeError("INVALID_STAGE", "Attempt already has a code writer; replay its request or start rework")
+    }
+
     const frozenInputsDigest = externalIdentityHash(
       attempt.baselineSha,
       attempt.candidateSha ?? "",
@@ -302,7 +331,8 @@ export namespace OrynService {
   }): Promise<{ reportId: string; accepted: boolean; stale: boolean }> {
     await requireEnabled()
     using _lock = await Lock.write(`oryn-case:${input.caseId}`)
-    await requireBinding(input.callerSessionID, ["worker"])
+    const binding = await requireBinding(input.callerSessionID, ["worker"])
+    if (binding.caseId !== input.caseId) throw storeError("NOT_AUTHORIZED", "case does not belong to this worker")
     const assignment = await OrynStore.getAssignment(input.caseId, input.assignmentId)
     if (!assignment) throw storeError("NOT_AUTHORIZED", `assignment ${input.assignmentId} not found`)
     if (assignment.sessionId !== input.callerSessionID) {
@@ -350,16 +380,27 @@ export namespace OrynService {
       return { reportId: report.id, accepted: false, stale: true }
     }
 
-    await OrynStore.acceptAssignmentReport(input.caseId, input.assignmentId, report.id)
-    if (input.kind === "candidate" && input.candidateSha) {
-      await OrynStore.mutateAttempt(input.caseId, input.attemptId, (draft) => ({
-        ...draft,
-        candidateSha: input.candidateSha!,
-        disposition: "candidate_frozen",
-      }))
+    if (input.kind === "candidate") {
+      await OrynCandidate.verify({
+        assignment,
+        attempt,
+        candidateSha: input.candidateSha,
+        localBranch: input.localBranch,
+      })
+      if (assignment.acceptedReportId && assignment.acceptedReportId !== report.id)
+        throw storeError("INVALID_STAGE", "assignment already accepted a different report")
+      if (!attempt.candidateSha) {
+        await OrynStore.mutateAttempt(input.caseId, input.attemptId, (draft) => ({
+          ...draft,
+          candidateSha: input.candidateSha!,
+          disposition: "candidate_frozen",
+        }))
+      }
     }
-    for (const runId of input.runIds ?? []) {
-      await OrynStore.attachRunEvidence(input.caseId, input.attemptId, runId)
+    await OrynStore.acceptAssignmentReport(input.caseId, input.assignmentId, report.id)
+    for (const runId of new Set(input.runIds ?? [])) {
+      if (!attempt.evidenceRunIds.includes(runId))
+        await OrynStore.attachRunEvidence(input.caseId, input.attemptId, runId)
     }
     await OrynReports.deliverAccepted(input.caseId, assignment.id)
     return { reportId: report.id, accepted: true, stale: false }
@@ -598,6 +639,35 @@ export namespace OrynService {
       }
 
       const assignments = await OrynStore.listAssignments(input.caseId)
+      try {
+        const reports = await OrynStore.listWorkerReports(input.caseId)
+        const candidate = reports.find(
+          (report) =>
+            report.kind === "candidate" &&
+            report.attemptId === attempt.id &&
+            report.candidateSha === attempt.candidateSha &&
+            assignments.some(
+              (assignment) =>
+                assignment.id === report.assignmentId &&
+                assignment.attemptId === attempt.id &&
+                assignment.epoch === record.epoch &&
+                assignment.stage === "code" &&
+                assignment.acceptedReportId === report.id,
+            ),
+        )
+        if (!candidate) throw storeError("INVALID_STAGE", "no accepted candidate report")
+        await OrynCandidate.verify({
+          assignment: assignments.find((assignment) => assignment.id === candidate.assignmentId)!,
+          attempt,
+          candidateSha: candidate.candidateSha,
+          localBranch: candidate.localBranch,
+        })
+      } catch {
+        failures.push({
+          code: "STALE_HEAD",
+          message: "candidate verification: accepted worktree or commit is no longer valid",
+        })
+      }
       const requiredDomains = new Set<ReviewDomain>([
         "general",
         ...assignments.filter((item) => item.stage === "review").map((item) => item.reviewDomain ?? "general"),

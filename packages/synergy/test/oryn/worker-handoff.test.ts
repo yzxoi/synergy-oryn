@@ -93,6 +93,66 @@ function result(input: { caseId: string; attemptId: string; assignmentId: string
 }
 
 describe("Oryn worker handoff", () => {
+  test("an archived reproduction cannot admit coding", async () => {
+    await fixture(async (input) => {
+      const record = (await OrynStore.getCase(input.caseId))!
+      await OrynStore.mutateCase(input.caseId, record.revision, (value) => ({ ...value, control: "paused" }))
+      expect((await OrynService.submitResult({ ...result(input), outcome: "reproduced" })).accepted).toBe(false)
+      const paused = (await OrynStore.getCase(input.caseId))!
+      await OrynStore.mutateCase(input.caseId, paused.revision, (value) => ({ ...value, control: "active" }))
+      await expect(
+        OrynService.dispatch({
+          callerSessionID: input.rootId,
+          caseId: input.caseId,
+          stage: "code",
+          requestKey: "archived",
+        }),
+      ).rejects.toThrow()
+    })
+  })
+
+  test("already-fixed observations do not admit another coding task", async () => {
+    await fixture(async (input) => {
+      expect((await OrynService.submitResult({ ...result(input), outcome: "already_fixed" })).accepted).toBe(true)
+      await expect(
+        OrynService.dispatch({
+          callerSessionID: input.rootId,
+          caseId: input.caseId,
+          stage: "code",
+          requestKey: "already-fixed",
+        }),
+      ).rejects.toThrow()
+    })
+  })
+
+  test("one Attempt cannot dispatch two independent code writers", async () => {
+    await fixture(async (input) => {
+      await OrynService.submitResult({ ...result(input), outcome: "reproduced" })
+      const first = await OrynService.dispatch({
+        callerSessionID: input.rootId,
+        caseId: input.caseId,
+        stage: "code",
+        requestKey: "first-writer",
+      })
+      await expect(
+        OrynService.dispatch({
+          callerSessionID: input.rootId,
+          caseId: input.caseId,
+          stage: "code",
+          requestKey: "second-writer",
+        }),
+      ).rejects.toThrow()
+      expect(
+        await OrynService.dispatch({
+          callerSessionID: input.rootId,
+          caseId: input.caseId,
+          stage: "code",
+          requestKey: "first-writer",
+        }),
+      ).toMatchObject({ assignmentId: first.assignmentId, workerSessionId: first.workerSessionId, deduped: true })
+    })
+  })
+
   test("ready attempts cannot receive another dispatch", async () => {
     await fixture(async (input) => {
       await OrynStore.mutateAttempt(input.caseId, input.attemptId, (attempt) => ({ ...attempt, disposition: "ready" }))
