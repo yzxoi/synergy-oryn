@@ -1,3 +1,4 @@
+import { RolloutMigration } from "./rollout/migration"
 import { $ } from "bun"
 import path from "path"
 import fs from "fs/promises"
@@ -2148,6 +2149,8 @@ export const migrations: Migration[] = [
       "Restructure snapshots from per-scope shared to per-session isolated repos with git alternates for backward hash resolution",
     async up(progress) {
       const { Global } = await import("../global")
+      const { SnapshotLease } = await import("./snapshot-lease")
+      await using snapshots = await SnapshotLease.acquireHome(Global.Path.data)
       const snapshotRoot = Global.Path.snapshot
       const scopeIDs = await Storage.scan(["sessions"])
       if (scopeIDs.length === 0) return
@@ -2496,6 +2499,17 @@ export const migrations: Migration[] = [
     description: "Rebuild session nav indexes to backfill created/updated/archived timestamps",
     async up(progress) {
       await SessionNav.rebuildAllNavIndexes(progress)
+    },
+  },
+  RolloutMigration.migration,
+
+  {
+    id: "20260907-snapshot-shared-store",
+    dependsOn: ["20260619-snapshot-per-session"],
+    description: "Register legacy snapshot owners before enabling Scope-shared storage",
+    async up(progress) {
+      const { SnapshotMaintenance } = await import("./snapshot-maintenance")
+      await SnapshotMaintenance.registerLegacy(progress)
     },
   },
 ]

@@ -24,6 +24,8 @@ description: Implement or review Synergy Web and shared UI changes across packag
 8. Read session-shaped store fields through the session data view only: ui components use `useData().view` (`partsFor`/`messagesFor`/`permissionsFor`/`statusFor`/`inboxFor`/`hasInboxBucket`/`todosFor`/`dagNodesFor`/`questionsFor`/`cortexTasks`/`sessions`/`sessionFor`), app components use `useSessionDataView()`. Do not read `data.store.part/permission/...` or `sync.data.<field>[sessionID]` directly in render code — session switches race store intermediate states (missing buckets, released scope stores) and `createMemo` defaults stop applying after first compute, so a direct read can surface `undefined` and crash with a rotating set of TypeErrors. The view accessors apply their empty fallback inside the function body. Missing array buckets must resolve to the shared constants in `packages/ui/src/context/session-data-view.ts` (`EMPTY_PARTS`, `EMPTY_MESSAGES`, …) — never a fresh array literal, because the render chain's `same()` equality guards short-circuit on reference identity and a fresh literal would invalidate every downstream memo on each store tick. `hasInboxBucket` is the only accessor that reports bucket presence: use it to preserve an "not loaded yet" gate when `undefined` semantics matter (e.g. inbox loading state).
 9. Callback parameters are accessors or raw values depending on the control: non-keyed `<Show>` and `<Index>` pass an accessor — call it (`param()`) before rendering or passing it into i18n values, formatters, or attributes — while `<Show keyed>` and `<For>` pass the raw value itself. Passing an accessor uncalled renders its minified source (the crash-page footer once displayed `Version: () => { if (!untrack(condition)) … }`), and calling a keyed `<Show>` or `For` parameter fails typechecking. Prefer the non-callback form reading the source signal directly when no narrowing is needed.
 
+10. Publish page-owned entries in global reactive registries from `onMount`, after transition commit; synchronous setup writes can stage old entries and overwrite their cleanup during commit. Register all cleanup before returning, and use leases for state shared by overlapping owners. Test nested navigation and a suspended transition, asserting that old registry entries disappear, the visible page keeps its commands until commit, disposed loaders abort, and stale replies cannot mutate reopened state. See the [transition lifecycle decision](../../../docs/decisions/implemented/bug-fix/2026-09-07-transition-lifecycle-retention.md).
+
 ## Preserve Browser Capability Boundaries
 
 1. Route ordinary App/UI identifiers through `generateUUID()` or `generateRandomBytes()` from the shared utility package. Do not call `crypto.randomUUID()` or `crypto.getRandomValues()` directly from browser source.
@@ -72,8 +74,9 @@ Run `bun test test/semantic-icon.test.ts` from `packages/ui`. It rejects duplica
 
 1. Register optional built-in workbench panels with `WorkbenchPanelEntry.loader`; do not statically import Notes, Files, Browser, Terminal, or Review implementations into the route shell.
 2. Keep heavyweight feature engines behind the interaction that needs them: Tiptap and Mermaid behind Notes, Monaco behind file Source view, and Ghostty behind Terminal.
-3. Import only fonts used by the active product typography contract. A dormant family must not be emitted by the default App build.
-4. Preserve `packages/app/test/app-build-css-contract.test.ts` as the production build regression gate for initial module preloads, emitted product fonts, and core compiled CSS.
+3. Do not evaluate JSX child getters to detect detail presence: use an explicit availability value or property presence, then instantiate children only inside the mounted disclosure. Test closed → open → closed imperative-renderer counts. Bound tool previews and retained expanded-render caches by capacity; use resource identity to open full content on demand. See [bounded tool rendering](../../../docs/decisions/implemented/bug-fix/2026-09-07-bound-tool-rendering-memory.md).
+4. Import only fonts used by the active product typography contract. A dormant family must not be emitted by the default App build.
+5. Preserve `packages/app/test/app-build-css-contract.test.ts` as the production build regression gate for initial module preloads, emitted product fonts, and core compiled CSS.
 
 ## Change Themes and Color Tokens
 
@@ -126,3 +129,9 @@ bun run localization:check
 ## Handoff
 
 Report state ownership, API path, semantic icon token, shared primitives, accessibility states, tests, visual checks, and any durable `PRODUCT.md` or Skill update.
+
+## Replaceable plugin presentation
+
+Read [frontend plugin ownership](../../../docs/architecture/frontend-plugin-platform.md) before changing Shell, conversation, composer, resource or overlay composition. Keep domain owners above replaceable presentation and test their public services with native and external views. Capture draft identity before asynchronous work and restore only at an unchanged owning revision. Dispose DOM references, pending UI work and portals by surface identity; accepted server work keeps its domain lifetime.
+
+For UI API 5 changes, build the production App and run bun run plugin-ui:test. Its public preview helper installs extracted archives into an isolated real host. Also run the owning App/UI tests, private HTTP smoke, typecheck, localization and package gates. Browser fixtures must pre-discover their actual module entry so dependency optimization cannot reload the page during interaction assertions. Verify styles on ordinary inherited text and protected portals, not only elements that explicitly restate font variables.

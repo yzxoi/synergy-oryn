@@ -10,6 +10,24 @@ export namespace StoragePath {
   const endpointSessionStorageKey = (endpointKey: string) => encodeURIComponent(endpointKey)
 
   export const metaVersion = () => ["meta", "version"]
+  export const snapshotRepository = (scopeID: string) => ["snapshot-v2", scopeID, "repository"]
+  export const snapshotFormat = () => ["snapshot-v2", "format"]
+  export const snapshotOwner = (scopeID: string, sessionID: string) => ["snapshot-v2", scopeID, "owners", sessionID]
+  export const snapshotOwners = (scopeID: string) => ["snapshot-v2", scopeID, "owners"]
+  export const snapshotHomeLeases = () => ["snapshot-v2", "leases"]
+  export const snapshotLeases = (scopeID: string) => ["snapshot-v2", scopeID, "leases"]
+  export const snapshotMigration = (scopeID: string, sessionID: string) => [
+    "snapshot-v2",
+    scopeID,
+    "migrations",
+    sessionID,
+  ]
+  export const snapshotDeletion = (scopeID: string, sessionID: string) => [
+    "snapshot-v2",
+    scopeID,
+    "deletions",
+    sessionID,
+  ]
   export const metaMigrationLog = () => ["meta", "migration", "log"]
   export const metaMigrationLogDomain = (domain: string) => ["meta", "migration", `log-${domain}`]
 
@@ -75,6 +93,16 @@ export namespace StoragePath {
     sessionID as string,
   ]
   export const sessionInfo = (scopeID: ScopeID, sessionID: SessionID) => [...sessionRoot(scopeID, sessionID), "info"]
+  export const sessionRolloutRoot = (scopeID: ScopeID, sessionID: SessionID) => [
+    ...sessionRoot(scopeID, sessionID),
+    "rollout",
+  ]
+  export const operationRolloutRoot = (scopeID: ScopeID, operationID: string) => [
+    "operations",
+    scopeID as string,
+    operationID,
+    "rollout",
+  ]
   export const sessionSummary = (scopeID: ScopeID, sessionID: SessionID) => [
     ...sessionRoot(scopeID, sessionID),
     "summary",
@@ -320,6 +348,8 @@ export namespace StoragePath {
   ]
 
   // Stats
+  export const statsOperations = () => ["stats", "operations"]
+  export const statsOperation = (scopeID: string, operationID: string) => [...statsOperations(), scopeID, operationID]
   export const statsRoot = () => ["stats"]
   export const statsWatermark = () => ["stats", "watermark"]
   export const statsSnapshot = () => ["stats", "snapshot"]

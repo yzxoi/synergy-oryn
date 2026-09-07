@@ -44,6 +44,7 @@ import { registerAgendaTools } from "./agenda/tools"
 import { registerNoteTools } from "./note/tools"
 import { registerEmailTools } from "./email/tools"
 import { registerChannelTools } from "./channel/tools"
+import { registerComputerTools } from "./computer/tools"
 import { registerBrowserTools } from "./browser/tools"
 import { registerCortexTools } from "./cortex/tools"
 import { registerProjectTools } from "./project/tools"
@@ -104,6 +105,7 @@ registerNoteTools()
 registerEmailTools()
 registerChannelTools()
 registerBrowserTools()
+registerComputerTools()
 registerCortexTools()
 registerProjectTools()
 registerQuestionTools()

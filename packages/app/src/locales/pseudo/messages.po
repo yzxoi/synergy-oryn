@@ -1470,19 +1470,7 @@ msgstr ""
 msgid "app.command.title"
 msgstr ""
 
-#. * Bridge Plugin API 4 host.confirm(Promise<boolean>) onto the App ConfirmDialog.
- *
- * title and message pass through from the plugin — they are plugin author content.
- * confirmLabel and cancelLabel are host chrome; the plugin may override confirmLabel
- * with its own content.
-msgid "app.common.cancel"
-msgstr ""
-
-#. * Bridge Plugin API 4 host.confirm(Promise<boolean>) onto the App ConfirmDialog.
- *
- * title and message pass through from the plugin — they are plugin author content.
- * confirmLabel and cancelLabel are host chrome; the plugin may override confirmLabel
- * with its own content.
+#. js-lingui-explicit-id
 msgid "app.common.confirm"
 msgstr ""
 
@@ -6698,6 +6686,42 @@ msgid "app.plugin.settings.stateOn"
 msgstr ""
 
 #. js-lingui-explicit-id
+msgid "app.plugin.shell.preference.description"
+msgstr ""
+
+#. js-lingui-explicit-id
+msgid "app.plugin.shell.preference.recovery"
+msgstr ""
+
+#. js-lingui-explicit-id
+msgid "app.plugin.shell.preference.restart"
+msgstr ""
+
+#. js-lingui-explicit-id
+msgid "app.plugin.shell.preference.title"
+msgstr ""
+
+#. js-lingui-explicit-id
+msgid "app.plugin.shell.preference.unavailable"
+msgstr ""
+
+#. js-lingui-explicit-id
+msgid "app.plugin.skin.preference.default"
+msgstr ""
+
+#. js-lingui-explicit-id
+msgid "app.plugin.skin.preference.description"
+msgstr ""
+
+#. js-lingui-explicit-id
+msgid "app.plugin.skin.preference.title"
+msgstr ""
+
+#. js-lingui-explicit-id
+msgid "app.plugin.skin.preference.unavailable"
+msgstr ""
+
+#. js-lingui-explicit-id
 msgid "app.plugin.surface.noBuiltinNav"
 msgstr ""
 
@@ -6715,6 +6739,34 @@ msgstr ""
 
 #. js-lingui-explicit-id
 msgid "app.plugin.surface.pluginPageUnavailable"
+msgstr ""
+
+#. js-lingui-explicit-id
+msgid "app.plugin.ui.available"
+msgstr ""
+
+#. js-lingui-explicit-id
+msgid "app.plugin.ui.diagnostics"
+msgstr ""
+
+#. js-lingui-explicit-id
+msgid "app.plugin.ui.failed"
+msgstr ""
+
+#. js-lingui-explicit-id
+msgid "app.plugin.ui.incompatible"
+msgstr ""
+
+#. js-lingui-explicit-id
+msgid "app.plugin.ui.loading"
+msgstr ""
+
+#. js-lingui-explicit-id
+msgid "app.plugin.ui.outletMissing"
+msgstr ""
+
+#. js-lingui-explicit-id
+msgid "app.plugin.ui.registered"
 msgstr ""
 
 #. js-lingui-explicit-id
@@ -7015,6 +7067,10 @@ msgstr ""
 
 #. js-lingui-explicit-id
 msgid "app.rawMessages.title"
+msgstr ""
+
+#. js-lingui-explicit-id
+msgid "app.review.toolUnavailable"
 msgstr ""
 
 #. ── components/scopes/active-zone.tsx ────────────────────────────────
@@ -7673,6 +7729,16 @@ msgstr ""
 
 #. Runtime Lingui descriptors for stats host labels, UI text, and tooltips.
  *  Translate at use time via `useLocale().i18n._(descriptor)`.
+msgid "app.stats.accounting.detail"
+msgstr ""
+
+#. Runtime Lingui descriptors for stats host labels, UI text, and tooltips.
+ *  Translate at use time via `useLocale().i18n._(descriptor)`.
+msgid "app.stats.accounting.unknown"
+msgstr ""
+
+#. Runtime Lingui descriptors for stats host labels, UI text, and tooltips.
+ *  Translate at use time via `useLocale().i18n._(descriptor)`.
 msgid "app.stats.agent.delegatedRuns"
 msgstr ""
 
@@ -8294,6 +8360,11 @@ msgstr ""
 #. Runtime Lingui descriptors for stats host labels, UI text, and tooltips.
  *  Translate at use time via `useLocale().i18n._(descriptor)`.
 msgid "app.stats.token.note.cacheWrite"
+msgstr ""
+
+#. Runtime Lingui descriptors for stats host labels, UI text, and tooltips.
+ *  Translate at use time via `useLocale().i18n._(descriptor)`.
+msgid "app.stats.token.note.output"
 msgstr ""
 
 #. Runtime Lingui descriptors for stats host labels, UI text, and tooltips.
@@ -9155,6 +9226,18 @@ msgstr ""
 
 #. ── Classifier category labels ──────────────────────────────────────
 msgid "classifier.label.web"
+msgstr ""
+
+#. ── Tool trigger titles ────────────────────────────────────────────
+msgid "computer.title.action"
+msgstr ""
+
+#. ── Tool trigger titles ────────────────────────────────────────────
+msgid "computer.title.apps"
+msgstr ""
+
+#. ── Tool trigger titles ────────────────────────────────────────────
+msgid "computer.title.observe"
 msgstr ""
 
 #. js-lingui-explicit-id
@@ -12646,6 +12729,10 @@ msgstr ""
 #. Runtime Lingui descriptors for session component strings.
  *  Translate at use time via `useLocale().i18n._(descriptor)`.
 msgid "session.conversation.withdraw"
+msgstr ""
+
+#. js-lingui-explicit-id
+msgid "session.decisions.label"
 msgstr ""
 
 #. Runtime Lingui descriptors for session component strings.
@@ -20386,6 +20473,18 @@ msgid "ui.toast.copyLabel"
 msgstr ""
 
 #. js-lingui-explicit-id
+msgid "ui.toolContent.openFile"
+msgstr ""
+
+#. js-lingui-explicit-id
+msgid "ui.toolContent.openReview"
+msgstr ""
+
+#. js-lingui-explicit-id
+msgid "ui.toolContent.truncated"
+msgstr ""
+
+#. js-lingui-explicit-id
 msgid "ui.turnChangeSummary.hideFiles"
 msgstr ""
 
@@ -20419,4 +20518,16 @@ msgstr ""
 
 #. js-lingui-explicit-id
 msgid "window.restore"
+msgstr ""
+
+#. js-lingui-explicit-id
+msgid "workbench.discard.action"
+msgstr ""
+
+#. js-lingui-explicit-id
+msgid "workbench.discard.description"
+msgstr ""
+
+#. js-lingui-explicit-id
+msgid "workbench.discard.title"
 msgstr ""

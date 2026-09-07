@@ -36,10 +36,20 @@ describe("catalog determinism", () => {
     const first = await generateTools()
     const second = await generateTools()
     expect(second).toBe(first)
+    const skill = first.split("## skill\n")[1]?.split("\n## ")[0]
+    expect(skill).toContain("| `name` | string | yes |")
+    expect(skill).toContain("| `reference` | string |  |")
+    expect(skill).not.toContain("| `sha256`")
   })
 })
 
 describe("generated catalog completeness", () => {
+  test("observe documentation lists its imported schema instead of the execution command", async () => {
+    const body = (await generateTools()).split("## computer_observe\n")[1]!.split("\n## ")[0]!
+    expect(body).toContain("| `pid` | number | yes |")
+    expect(body).toContain("| `windowId` | number | yes |")
+    expect(body).not.toContain("| `type` |")
+  })
   test("cli catalog lists top-level commands with option tables", async () => {
     const body = await generateCli()
     expect(body).toContain("## Commands")
@@ -86,6 +96,13 @@ describe("generated catalog completeness", () => {
 })
 
 describe("parser behavior", () => {
+  test("CLI catalog includes grouped data imports without replacing the migrate alias with its nested command", async () => {
+    const output = await generateCli()
+    expect(output).toContain("| `data` | manage synergy data location and storage |")
+    expect(output).toContain("| `migrate` | move synergy data to a new location (alias for 'data move') |")
+    expect(output).toContain("## snapshots")
+  })
+
   test("parseCommandBlocks extracts describe and options from cmd blocks", () => {
     const source = `export const FooCommand = cmd({
   command: "foo",

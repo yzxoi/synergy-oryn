@@ -88,6 +88,12 @@ The session index, paged-session index, child-session index, navigation index, m
 
 Lattice stores every v2 run by immutable run ID. A session's `lattice/current` record selects the run shown as current without overwriting older terminal runs; it is a repairable index over canonical Run records. Per-run event files are idempotent, best-effort audit records, not an event-sourced reconstruction of the Run. Run, Step, Blueprint binding, and BlueprintLoop records remain the recovery facts.
 
+## Rollout Artifacts
+
+The rollout artifact store uses `rollout/` beneath its owning session, or `data/operations/<scope>/<operation>/rollout/` for sessionless operations. `artifacts/<id>/info.json` commits the readable byte/chunk count and completeness state; individually addressed chunk descriptors reference owner-local, SHA-256-addressed binary blobs. Payloads are streamed in bounded chunks and verified on read. Interrupted streams retain their committed prefix. Under the same rollout owner, `runs/<run>/info.json` stores run state, `runs/<run>/calls/<call>.json` stores logical calls, and `runs/<run>/attempts/<call>/<attempt>.json` stores actual provider attempts with ordered indices and body references. Private records use owner-only permissions and durable atomic writes; they are separate from public product assets and telemetry retention.
+
+Externalized files in `data/tool-output/` have no age-based expiration. Creating a new tool-output file does not delete older observations.
+
 ## Library Database
 
 Library uses:
@@ -117,18 +123,19 @@ Plugin-scoped credentials live separately at `data/plugin/<plugin-id>/auth.json`
 
 ## Browser, Worktrees, and Artifacts
 
-| Path                      | Content                                                    |
-| ------------------------- | ---------------------------------------------------------- |
-| `data/browser/sessions/`  | canonical Browser session/page metadata                    |
-| `data/browser/profiles/`  | persistent browser profiles and storage state              |
-| `data/browser/uploads/`   | owner-scoped upload staging                                |
-| `data/browser/downloads/` | browser downloads grouped by Scope                         |
-| `data/browser/chromium/`  | managed Chromium assets                                    |
-| `data/worktree/`          | Synergy-managed worktree metadata/resources                |
-| `data/snapshot/`          | file snapshots used by history/file restoration            |
-| `data/tool-output/`       | large tool outputs externalized from message records       |
-| `data/assets/`            | product/plugin assets                                      |
-| `data/media/`             | generated or captured media, including Browser screenshots |
+| Path                      | Content                                                                 |
+| ------------------------- | ----------------------------------------------------------------------- |
+| `data/browser/sessions/`  | canonical Browser session/page metadata                                 |
+| `data/browser/profiles/`  | persistent browser profiles and storage state                           |
+| `data/browser/uploads/`   | owner-scoped upload staging                                             |
+| `data/browser/downloads/` | browser downloads grouped by Scope                                      |
+| `data/browser/chromium/`  | managed Chromium assets                                                 |
+| `data/worktree/`          | Synergy-managed worktree metadata/resources                             |
+| `data/snapshot/`          | registered legacy file snapshot repositories pending migration          |
+| `data/snapshot-v2/`       | Scope object stores, historical roots, owners, and maintenance journals |
+| `data/tool-output/`       | large tool outputs externalized from message records                    |
+| `data/assets/`            | product/plugin assets                                                   |
+| `data/media/`             | generated or captured media, including Browser screenshots              |
 
 Archiving or deleting a session disposes its live Browser runtime, but persisted Browser state follows its own lifecycle and migration rules.
 
@@ -174,3 +181,13 @@ Project worktrees may also be managed beneath a project-local Synergy area. Perm
 Stop the server before raw filesystem backup or relocation. For supported selective movement, use `synergy data pack`, `merge`, `move`, and `set-home`. Use session export/import for portable session artifacts.
 
 Never include `data/auth/` in a public diagnostics bundle, issue attachment, or repository commit.
+
+Rollout runs also own `tools/<executionID>` and `processes/<processID>` metadata through `RolloutLedger`. Tool inputs, original results, returned observations, and channel-framed process streams use the same private artifact store as model evidence. A process record can remain active after an explicitly backgrounded tool returns; exports must preserve its partial stream boundary rather than infer completion from the tool result.
+
+## File snapshot persistence
+
+`data/snapshot-v2/<scope>/store.git` holds self-contained Git objects and all historical retention refs. `repository.json` records object format; `owners/<session>.json` selects `legacy`, `shared`, or the permanent deletion tombstone. `migrations/<session>.json` and `deletions/<session>.json` are durable recovery state. Scope `leases.json`, the root `leases.json`, and `.locks/` coordinate processes and are regenerated rather than merged into archives. `format.json` marks the installed layout version.
+
+`cache/snapshot-index/<scope>/<session>/<workspace-hash>/index` is rebuildable working state. It can be removed independently of historical objects. The workspace hash uses its canonical filesystem path. Legacy owners resolve only to `data/snapshot/<scope>/<session>` until explicit migration switches their ownership; unknown and reclaimed repositories remain intact and are reported separately.
+
+JSON session export does not contain file objects. Complete `data pack`, `move`, and `merge` preserve file history through the snapshot domain's object/ref transfer. Owner-backend or maintenance-record conflicts abort that data transfer so the source remains available for resolution. These commands acquire offline ownership and never stop a running server. Migration changes are not backward-readable by an older runtime after shared snapshots have been captured.
