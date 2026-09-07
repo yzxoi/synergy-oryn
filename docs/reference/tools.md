@@ -90,7 +90,7 @@ Generated from the builtin tool registry in `packages/synergy/src/tool/registry.
 | `oryn_github_read` | `code.read` | Read bounded remote facts for one of your linked cases: the linked issue and pull request (title, state, author class), and CI status on the candidate. The host resolves the repository and refs from t |
 | `oryn_learn` | `knowledge.memory` | Propose a reusable lesson from this case for host promotion into shared memory. Every claim must cite case records as evidence; raw chat text, private logs, and credentials are rejected. Promotion onl |
 | `oryn_publish` | `communication.publish` | Publish host-verified artifacts for your case: the tracking issue, a draft PR from the frozen candidate, PR updates, the review comment, or the final ready delivery. The host records every action in t |
-| `oryn_reply` | `communication.deliver` | Deliver a bounded result to the reporter of your bound source. The host resolves the chat from your session binding — you never name an account or chat id. Repeated ready/needs_human replies for the s |
+| `oryn_reply` | `communication.deliver` | Queue a bounded QA reply to your bound reporter source. The host supplies recipient and root turn identity; no account or chat id is accepted. Answers deduplicate within the current turn, and lifecycl |
 | `oryn_result` | `orchestration.session` | Submit your structured worker outcome for an assignment, or read a previously submitted report. The host validates the assignment belongs to your session; stale-epoch reports are archived but not acce |
 | `parse_code` | `code.analyze` | Search code with AST-aware patterns and return anchored file blocks. Use this instead of `ast_grep` in the anchored coding harness. Matched files are returned with real `[path#TAG]` headers and only t |
 | `pathway_read` | `orchestration.dag` | Read the current Lattice Run and ordered Pathway. The result separates pathway.history and pathway.current, which are read-only, from pathway.editableFuture, which is the complete list accepted by pat |
@@ -1214,49 +1214,7 @@ Oryn case operations: submit engineering feedback (routed by host config), get/l
 
 | Parameter | Type | Required | Description |
 | --- | --- | --- | --- |
-| `callerSessionID` | ctx.sessionID | yes |  |
-| `requestKey` | params.requestKey | yes |  |
-| `kind` | params.kind | yes |  |
-| `summary` | params.summary | yes |  |
-| `observed` | params.observed | yes |  |
-| `expected` | params.expected | yes |  |
-| `title` | result.created | yes |  |
-| `output` | - | yes |  |
-| `metadata` | - | yes |  |
-| `title` | - | yes |  |
-| `output` | JSON.stringify | yes |  |
-| `caseId` | record.id | yes |  |
-| `revision` | record.revision | yes |  |
-| `kind` | record.kind | yes |  |
-| `summary` | record.summary | yes |  |
-| `observed` | record.observed | yes |  |
-| `expected` | record.expected | yes |  |
-| `repoAlias` | record.repoAlias | yes |  |
-| `control` | record.control | yes |  |
-| `activeAttemptId` | record.activeAttemptId | yes |  |
-| `acceptanceRevision` | record.acceptanceRevision | yes |  |
-| `repairRounds` | record.repairRounds | yes |  |
-| `noProgressRounds` | record.noProgressRounds | yes |  |
-| `issueNumber` | record.issueNumber | yes |  |
-| `pullNumbers` | record.pullNumbers | yes |  |
-| `metadata` | - | yes |  |
-| `title` | - | yes |  |
-| `output` | JSON.stringify | yes |  |
-| `caseId` | r.id | yes |  |
-| `kind` | r.kind | yes |  |
-| `summary` | r.summary | yes |  |
-| `control` | r.control | yes |  |
-| `revision` | r.revision | yes |  |
-| `issueNumber` | r.issueNumber | yes |  |
-| `metadata` | - | yes |  |
-| `observed` | params.observed | yes |  |
-| `expected` | params.expected | yes |  |
-| `title` | - | yes |  |
-| `output` | - | yes |  |
-| `metadata` | - | yes |  |
-| `title` | - | yes |  |
-| `output` | - | yes |  |
-| `metadata` | - | yes |  |
+| `input` | CaseAction | yes |  |
 
 ## oryn_check
 
@@ -1266,41 +1224,7 @@ Verification runs: propose a check plan (scenario, profile, commands, assertions
 
 | Parameter | Type | Required | Description |
 | --- | --- | --- | --- |
-| `callerSessionID` | ctx.sessionID | yes |  |
-| `caseId` | params.caseId | yes |  |
-| `attemptId` | params.attemptId | yes |  |
-| `assignmentId` | params.assignmentId | yes |  |
-| `scenario` | params.scenario | yes |  |
-| `profileId` | params.profileId | yes |  |
-| `argv` | params.argv | yes |  |
-| `checks` | params.checks | yes |  |
-| `overlay` | params.overlay | yes |  |
-| `title` | - | yes |  |
-| `output` | - | yes |  |
-| `metadata` | - | yes |  |
-| `callerSessionID` | ctx.sessionID | yes |  |
-| `caseId` | params.caseId | yes |  |
-| `attemptId` | params.attemptId | yes |  |
-| `assignmentId` | params.assignmentId | yes |  |
-| `planId` | params.planId | yes |  |
-| `lane` | params.lane | yes |  |
-| `abort` | ctx.abort | yes |  |
-| `title` | - | yes |  |
-| `output` | - | yes |  |
-| `metadata` | - | yes |  |
-| `callerSessionID` | ctx.sessionID | yes |  |
-| `caseId` | params.caseId | yes |  |
-| `planId` | params.planId | yes |  |
-| `title` | - | yes |  |
-| `output` | JSON.stringify | yes |  |
-| `planId` | plan.id | yes |  |
-| `status` | plan.status | yes |  |
-| `scenario` | plan.scenario | yes |  |
-| `profileId` | plan.profileId | yes |  |
-| `argv` | plan.argv | yes |  |
-| `checks` | plan.checks | yes |  |
-| `overlay` | plan.overlay | yes |  |
-| `metadata` | - | yes |  |
+| `input` | CheckParameters | yes |  |
 
 ## oryn_dispatch
 
@@ -1310,21 +1234,7 @@ Request the next engineering stage for your case (dispatch), or open a bounded r
 
 | Parameter | Type | Required | Description |
 | --- | --- | --- | --- |
-| `callerSessionID` | ctx.sessionID | yes |  |
-| `caseId` | params.caseId | yes |  |
-| `reason` | params.reason | yes |  |
-| `title` | result.handedOff | yes |  |
-| `output` | - | yes |  |
-| `metadata` | - | yes |  |
-| `callerSessionID` | ctx.sessionID | yes |  |
-| `caseId` | params.caseId | yes |  |
-| `attemptId` | params.attemptId | yes |  |
-| `stage` | params.stage | yes |  |
-| `requestKey` | params.requestKey | yes |  |
-| `reviewDomain` | params.reviewDomain | yes |  |
-| `title` | result.deduped | yes |  |
-| `output` | - | yes |  |
-| `metadata` | - | yes |  |
+| `input` | DispatchParameters | yes |  |
 
 ## oryn_github_read
 
@@ -1381,7 +1291,7 @@ Publish host-verified artifacts for your case: the tracking issue, a draft PR fr
 
 Kind: `communication.deliver`
 
-Deliver a bounded result to the reporter of your bound source. The host resolves the chat from your session binding — you never name an account or chat id. Repeated ready/needs_human replies for the same case dedupe to one delivery.
+Queue a bounded QA reply to your bound reporter source. The host supplies recipient and root turn identity; no account or chat id is accepted. Answers deduplicate within the current turn, and lifecycle notifications within the case attempt. Returns the durable entry id and whether it was newly queued; this does not claim remote delivery.
 
 | Parameter | Type | Required | Description |
 | --- | --- | --- | --- |
@@ -1401,42 +1311,7 @@ Submit your structured worker outcome for an assignment, or read a previously su
 
 | Parameter | Type | Required | Description |
 | --- | --- | --- | --- |
-| `title` | - | yes |  |
-| `output` | JSON.stringify | yes |  |
-| `metadata` | - | yes |  |
-| `callerSessionID` | ctx.sessionID | yes |  |
-| `caseId` | params.caseId | yes |  |
-| `attemptId` | params.attemptId | yes |  |
-| `assignmentId` | params.assignmentId | yes |  |
-| `requestKey` | params.requestKey | yes |  |
-| `headSha` | params.headSha | yes |  |
-| `baseSha` | params.baseSha | yes |  |
-| `domain` | params.domain | yes |  |
-| `findings` | params.findings | yes |  |
-| `questions` | params.questions | yes |  |
-| `evidenceAssessment` | params.evidenceAssessment | yes |  |
-| `designDecisions` | params.designDecisions | yes |  |
-| `recommendation` | params.recommendation | yes |  |
-| `limitedScope` | params.limitedScope | yes |  |
-| `title` | result.stale | yes |  |
-| `output` | - | yes |  |
-| `metadata` | - | yes |  |
-| `callerSessionID` | ctx.sessionID | yes |  |
-| `caseId` | params.caseId | yes |  |
-| `attemptId` | params.attemptId | yes |  |
-| `assignmentId` | params.assignmentId | yes |  |
-| `requestKey` | params.requestKey | yes |  |
-| `kind` | params.kind | yes |  |
-| `outcome` | params.outcome | yes |  |
-| `summary` | params.summary | yes |  |
-| `localBranch` | - | yes |  |
-| `candidateSha` | - | yes |  |
-| `runIds` | - | yes |  |
-| `knownRisks` | - | yes |  |
-| `limitations` | - | yes |  |
-| `title` | result.stale | yes |  |
-| `output` | - | yes |  |
-| `metadata` | - | yes |  |
+| `input` | ResultParameters | yes |  |
 
 ## parse_code
 

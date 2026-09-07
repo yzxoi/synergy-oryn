@@ -6,6 +6,7 @@ import { OrynPublish } from "./publish"
 import { OrynLearning } from "./learn"
 import { OrynService } from "./service"
 import { OrynStore, OrynStoreError } from "./store"
+import { OrynConfig } from "./config"
 
 function toolError(code: string, message: string): Error {
   return Object.assign(new Error(message), { code })
@@ -21,6 +22,7 @@ function toToolError(error: unknown): Error {
 
 async function execute(fn: () => Promise<Tool.ExecutionResult>): Promise<Tool.ExecutionResult> {
   try {
+    if (!(await OrynConfig.enabled())) throw toolError("NOT_AUTHORIZED", "oryn runtime is disabled")
     return await fn()
   } catch (error) {
     throw toToolError(error)
@@ -67,9 +69,16 @@ const CaseAction = z.discriminatedUnion("action", [
     .describe("Hand the case to a human operator"),
 ])
 
-async function requireBinding(sessionID: string) {
+async function requireBinding(sessionID: string, caseId?: string) {
   const binding = await OrynStore.sessionSourceBinding(sessionID)
   if (!binding) throw toolError("NOT_AUTHORIZED", "session has no Oryn source binding")
+  if (!["qa", "engineering", "worker"].includes(binding.role)) {
+    throw toolError("NOT_AUTHORIZED", "session has no recognized Oryn role")
+  }
+  if (binding.role !== "qa" && (!binding.caseId || (caseId && caseId !== binding.caseId))) {
+    throw toolError("NOT_AUTHORIZED", "case does not belong to this session")
+  }
+  if (caseId) await OrynStore.getCaseForSource(caseId, binding.sourceKey)
   return binding
 }
 
@@ -78,8 +87,8 @@ export const OrynCaseTool = Tool.define(
   {
     description:
       "Oryn case operations: submit engineering feedback (routed by host config), get/list your linked cases, amend acceptance details, or request human handoff. Identity and routing come from your session binding, never from parameters.",
-    parameters: CaseAction,
-    async execute(params, ctx): Promise<Tool.ExecutionResult> {
+    parameters: z.object({ input: CaseAction }),
+    async execute({ input: params }, ctx): Promise<Tool.ExecutionResult> {
       return execute(async () => {
         if (params.action === "submit") {
           const result = await OrynService.submitCase({
@@ -97,7 +106,7 @@ export const OrynCaseTool = Tool.define(
           }
         }
         if (params.action === "get") {
-          const binding = await requireBinding(ctx.sessionID)
+          const binding = await requireBinding(ctx.sessionID, params.caseId)
           const record = await OrynStore.getCaseForSource(params.caseId, binding.sourceKey)
           return {
             title: `Case ${record.id}`,
@@ -126,7 +135,10 @@ export const OrynCaseTool = Tool.define(
         }
         if (params.action === "list") {
           const binding = await requireBinding(ctx.sessionID)
-          const records = await OrynStore.listCasesForSource(binding.sourceKey)
+          const records =
+            binding.role === "qa"
+              ? await OrynStore.listCasesForSource(binding.sourceKey)
+              : [await OrynStore.getCaseForSource(binding.caseId!, binding.sourceKey)]
           return {
             title: `${records.length} case(s)`,
             output: JSON.stringify(
@@ -145,8 +157,8 @@ export const OrynCaseTool = Tool.define(
           }
         }
         if (params.action === "amend") {
-          const binding = await requireBinding(ctx.sessionID)
-          await OrynStore.getCaseForSource(params.caseId, binding.sourceKey)
+          const binding = await requireBinding(ctx.sessionID, params.caseId)
+          if (binding.role !== "qa") throw toolError("NOT_AUTHORIZED", "only QA may amend reporter acceptance")
           const record = await OrynStore.amendAcceptance(params.caseId, params.expectedRevision, {
             observed: params.observed,
             expected: params.expected,
@@ -157,8 +169,8 @@ export const OrynCaseTool = Tool.define(
             metadata: { caseId: record.id, revision: record.revision, acceptanceRevision: record.acceptanceRevision },
           }
         }
-        const binding = await requireBinding(ctx.sessionID)
-        await OrynStore.getCaseForSource(params.caseId, binding.sourceKey)
+        const binding = await requireBinding(ctx.sessionID, params.caseId)
+        if (binding.role === "worker") throw toolError("NOT_AUTHORIZED", "report the blocker to the engineering root")
         const record = await OrynStore.requestHandoff(params.caseId, params.reason)
         return {
           title: "Handed off to human",
@@ -198,8 +210,8 @@ export const OrynDispatchTool = Tool.define(
   {
     description:
       "Request the next engineering stage for your case (dispatch), or open a bounded rework round on the frozen candidate when review demands changes (rework). The host picks the agent, workspace, and frozen inputs. Repeated dispatch requestKeys dedupe to the existing worker.",
-    parameters: DispatchParameters,
-    async execute(params, ctx): Promise<Tool.ExecutionResult> {
+    parameters: z.object({ input: DispatchParameters }),
+    async execute({ input: params }, ctx): Promise<Tool.ExecutionResult> {
       return execute(async () => {
         if (params.action === "rework") {
           const result = await OrynService.rework({
@@ -312,10 +324,11 @@ export const OrynResultTool = Tool.define(
   {
     description:
       "Submit your structured worker outcome for an assignment, or read a previously submitted report. The host validates the assignment belongs to your session; stale-epoch reports are archived but not accepted.",
-    parameters: ResultParameters,
-    async execute(params, ctx): Promise<Tool.ExecutionResult> {
+    parameters: z.object({ input: ResultParameters }),
+    async execute({ input: params }, ctx): Promise<Tool.ExecutionResult> {
       return execute(async () => {
         if (params.kind === "get") {
+          await requireBinding(ctx.sessionID, params.caseId)
           const report = await OrynStore.getWorkerReport(params.caseId, params.reportId)
           if (!report) throw toolError("NOT_AUTHORIZED", `report ${params.reportId} not found`)
           return {
@@ -385,7 +398,7 @@ export const OrynReplyTool = Tool.define(
   "oryn_reply",
   {
     description:
-      "Deliver a bounded result to the reporter of your bound source. The host resolves the chat from your session binding — you never name an account or chat id. Repeated ready/needs_human replies for the same case dedupe to one delivery.",
+      "Queue a bounded QA reply to your bound reporter source. The host supplies recipient and root turn identity; no account or chat id is accepted. Answers deduplicate within the current turn, and lifecycle notifications within the case attempt. Returns the durable entry id and whether it was newly queued; this does not claim remote delivery.",
     parameters: ReplyParameters,
     async execute(params, ctx): Promise<Tool.ExecutionResult> {
       return execute(async () => {
@@ -453,8 +466,8 @@ export const OrynCheckTool = Tool.define(
   {
     description:
       "Verification runs: propose a check plan (scenario, profile, commands, assertions), execute it through the trusted executor in your assigned workspace, or read a plan. Local runs you did with bash are development aid — only receipts from this executor count as evidence.",
-    parameters: CheckParameters,
-    async execute(params, ctx): Promise<Tool.ExecutionResult> {
+    parameters: z.object({ input: CheckParameters }),
+    async execute({ input: params }, ctx): Promise<Tool.ExecutionResult> {
       return execute(async () => {
         if (params.action === "propose") {
           const result = await OrynService.proposeCheck({
