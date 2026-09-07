@@ -12,7 +12,7 @@ import { ScopeContext } from "../../src/scope/context"
 import { Session } from "../../src/session"
 import { SessionInbox } from "../../src/session/inbox"
 import { SessionManager } from "../../src/session/manager"
-import { tmpdir } from "../fixture/fixture"
+import { tmpdir } from "./fixture"
 
 async function fixture(
   fn: (input: { qaId: string; directory: string; baseline: string; roots: string[] }) => Promise<void>,
@@ -23,7 +23,7 @@ async function fixture(
       oryn: {
         enabled: true,
         routes: [{ feishuAccount: "engineering-test", repoAlias: "fixture" }],
-        repositories: { fixture: { owner: "test", repo: "fixture" } },
+        repositories: { fixture: { owner: "test", repo: "fixture", directory: repo.path } },
       },
     },
   })
@@ -33,7 +33,6 @@ async function fixture(
   const roots: string[] = []
   const leases: NonNullable<ReturnType<typeof SessionManager.acquire>>[] = []
   const create = Session.create
-  const current = Config.current
   try {
     Session.create = async (input) => {
       const session = await create(input)
@@ -48,15 +47,6 @@ async function fixture(
     await ScopeContext.provide({
       scope: await qa.scope(),
       fn: async () => {
-        const config = await current()
-        Config.current = async () =>
-          Config.Info.parse({
-            ...config,
-            oryn: {
-              ...config.oryn,
-              repositories: { fixture: { owner: "test", repo: "fixture", directory: repo.path } },
-            },
-          })
         const session = await Session.create({ agentOverride: "oryn" })
         await OrynStore.bindSessionSource({
           sessionID: session.id,
@@ -69,7 +59,6 @@ async function fixture(
     })
   } finally {
     Session.create = create
-    Config.current = current
     for (const id of roots) await SessionInbox.removeByMode(id, ["task", "steer", "context"])
     for (const lease of leases) await SessionManager.release(lease, { requestNextWork: false })
     for (const id of roots) await Session.remove(id)

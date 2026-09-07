@@ -25,7 +25,8 @@ description: Add or change a built-in Synergy primary agent, subagent, host-sele
 5. Set `visibleTo`, `delegationGroups`, and `hidden` deliberately. Primary agents may target only agents exposed through their catalog. BlueprintLoop and Light Loop reviewers remain host-selected rather than direct primary targets, while their Cortex tasks are visible in the execution session's Subagent Dock.
 6. Register a new max-subagent factory in `FACTORIES`; register other new catalogs through `Agent.create()` only if a genuinely new catalog is required.
 7. Update generated agent-table behavior or tests if the new agent changes routing-visible metadata. Do not maintain a second hand-written agent list in prompts or docs.
-8. Keep agent registration separate from invocation. A hidden model-only agent does not by itself justify a new local `LLM.stream()` wrapper or a manually created child session.
+8. Host-owned identities used for workflow authorization must be reserved before config aliases, plugin and external-agent discovery can merge them. Test identity/prompt/profile replacement as well as tool permissions; a final permission clamp cannot repair a renamed identity.
+9. Keep agent registration separate from invocation. A hidden model-only agent does not by itself justify a new local `LLM.stream()` wrapper or a manually created child session.
 
 ## Prompt Quality
 

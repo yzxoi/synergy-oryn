@@ -171,6 +171,10 @@ const CEILING: Record<string, ReadonlySet<string>> = {
   "oryn-review": new Set([...READ_TOOLS, ...REVIEW_TOOLS]),
 }
 
+export function isOrynAgent(name: string): boolean {
+  return Object.hasOwn(CEILING, name)
+}
+
 /**
  * Re-enforce the Oryn capability ceiling after per-agent user config and the
  * generic patch loops in Agent.list append rules beyond the clamp. Rules

@@ -4,7 +4,7 @@ import { ScopeContext } from "../../src/scope/context"
 import { OrynService } from "../../src/oryn/service"
 import { OrynStore } from "../../src/oryn/store"
 import { OrynCheckTool } from "../../src/oryn/tools"
-import { tmpdir } from "../fixture/fixture"
+import { tmpdir } from "./fixture"
 
 function errorCode(error: unknown): string | undefined {
   return (error as { data?: { code?: string } })?.data?.code
@@ -38,7 +38,7 @@ async function withRevScope<T>(
     },
   })
   const scope = (await Scope.fromDirectory(tmp.path)).scope
-  return ScopeContext.provide({ scope, fn: () => fn(tmp.path) })
+  return await ScopeContext.provide({ scope, fn: () => fn(tmp.path) })
 }
 
 async function headSha(root: string): Promise<string> {

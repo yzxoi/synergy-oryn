@@ -9,7 +9,7 @@ import { ScopeContext } from "../../src/scope/context"
 import { Session } from "../../src/session"
 import { SessionInbox } from "../../src/session/inbox"
 import { SessionManager } from "../../src/session/manager"
-import { tmpdir } from "../fixture/fixture"
+import { tmpdir } from "./fixture"
 
 async function fixture(
   fn: (input: {

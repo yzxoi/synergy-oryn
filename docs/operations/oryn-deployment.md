@@ -4,6 +4,8 @@ This runbook covers deploying the Oryn feedback-to-PR runtime on a single Linux 
 
 Oryn is dormant unless `oryn.enabled` is `true`. Every preflight step below assumes a stock Synergy deployment already runs successfully; if the baseline runtime is unhealthy, fix that first — Oryn does not debug the host it runs on.
 
+Oryn authorization must be configured in the installation-owned `120-runtime.jsonc` domain. Project-local configuration and scoped overrides do not authorize Oryn repositories, execution profiles, publication or budgets. Do not copy a candidate repository's configuration into the installation. Configure model roles through installation model settings; Oryn agent IDs, prompts and role definitions are reserved. See [installation policy](../decisions/implemented/architecture/2026-09-08-oryn-installation-policy.md) for the enforced scope and remaining execution checks.
+
 ## Engineering Checkout and Startup
 
 Automatic Feishu Case startup requires `oryn.repositories[alias].directory` to name an absolute, trusted, pre-fetched local checkout. Its canonical directory must be the Git root, its `origin` must match the configured GitHub owner/repository, and `refs/remotes/origin/<baseBranch>` must resolve to a commit. Prepare or fetch that checkout through the authorized deployment workflow before enabling intake. `workRoot` is a container for worker directories and does not replace this checkout.

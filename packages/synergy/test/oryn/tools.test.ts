@@ -9,7 +9,7 @@ import { OrynStore, sourceKey } from "../../src/oryn/store"
 import { OrynPath } from "../../src/oryn/path"
 import { Storage } from "../../src/storage/storage"
 import type { Tool } from "../../src/tool/tool"
-import { tmpdir } from "../fixture/fixture"
+import { tmpdir } from "./fixture"
 
 test("every Oryn tool survives the production provider schema transformation", async () => {
   await using tmp = await tmpdir({ git: true })

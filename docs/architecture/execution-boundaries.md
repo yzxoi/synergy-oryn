@@ -215,3 +215,7 @@ These restrictions are evaluated before the tool implementation. A permissive co
 ## Native Computer eligibility
 
 `computer_observe` and `computer_interact` require the `full_access` profile, including window discovery and screenshots. Ordinary permission rules and session approvals cannot enable these capabilities in another profile. Native OS permissions and app-specific background support remain runtime prerequisites. See [Native Computer Use](computer-use.md).
+
+## Oryn installation authorization
+
+Oryn business policy reads the installation-owned global domain configuration. Candidate project configuration cannot enable Oryn or widen its repository, execution-profile, publication or budget choices. Oryn built-in identities are reserved before config, plugin and external-agent registration; their model roles use installation choices. See [Oryn installation policy](../decisions/implemented/architecture/2026-09-08-oryn-installation-policy.md) for test evidence and the distinction from OS containment and provider execution.

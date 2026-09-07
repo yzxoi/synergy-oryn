@@ -2,13 +2,12 @@ import { Config } from "../config/config"
 
 export namespace OrynConfig {
   export async function info() {
-    const cfg = await Config.current()
+    const cfg = await Config.globalRaw()
     return cfg.oryn
   }
 
   export async function enabled(): Promise<boolean> {
-    const cfg = await Config.current()
-    return cfg.oryn?.enabled === true
+    return (await info())?.enabled === true
   }
 
   /**

@@ -5,7 +5,7 @@ import { OrynService } from "../../src/oryn/service"
 import { OrynStore, sourceKey } from "../../src/oryn/store"
 import { OrynPath } from "../../src/oryn/path"
 import { Storage } from "../../src/storage/storage"
-import { tmpdir } from "../fixture/fixture"
+import { tmpdir } from "./fixture"
 import { migrations } from "../../src/oryn/migration"
 import { MigrationRegistry } from "../../src/migration/registry"
 

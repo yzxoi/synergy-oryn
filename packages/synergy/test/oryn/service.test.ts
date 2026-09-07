@@ -4,7 +4,7 @@ import { ScopeContext } from "../../src/scope/context"
 import { OrynService } from "../../src/oryn/service"
 import { OrynExecutor } from "../../src/oryn/executor"
 import { OrynStore } from "../../src/oryn/store"
-import { tmpdir } from "../fixture/fixture"
+import { tmpdir } from "./fixture"
 
 const orynEnabledConfig = {
   oryn: {
@@ -26,7 +26,7 @@ const feishuIdentity = (chatId: string) =>
 async function withScope<T>(fn: (scope: Scope, root: string) => Promise<T>): Promise<T> {
   await using tmp = await tmpdir({ git: true, config: orynEnabledConfig })
   const scope = (await Scope.fromDirectory(tmp.path)).scope
-  return ScopeContext.provide({ scope, fn: () => fn(scope, tmp.path) })
+  return await ScopeContext.provide({ scope, fn: () => fn(scope, tmp.path) })
 }
 
 async function headSha(root: string): Promise<string> {
@@ -371,7 +371,7 @@ describe("OrynService checks and executor", () => {
   async function withExecutorScope<T>(fn: (root: string) => Promise<T>): Promise<T> {
     await using tmp = await tmpdir({ git: true, config: executorConfig })
     const scope = (await Scope.fromDirectory(tmp.path)).scope
-    return ScopeContext.provide({ scope, fn: () => fn(tmp.path) })
+    return await ScopeContext.provide({ scope, fn: () => fn(tmp.path) })
   }
 
   async function seededWorker(root: string) {

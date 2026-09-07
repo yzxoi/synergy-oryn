@@ -8,7 +8,7 @@ import { createBuiltinInternalAgents } from "./builtin-internal"
 import { createBuiltinLegacySubagents } from "./builtin-legacy-subagents"
 import { createBuiltinPrimaryAgents } from "./builtin-primary"
 import { createBuiltinMaxSubagents } from "./builtin-max-subagents"
-import { createBuiltinOrynAgents, enforceOrynCeiling } from "./builtin-oryn"
+import { createBuiltinOrynAgents, enforceOrynCeiling, isOrynAgent } from "./builtin-oryn"
 import { AgentCall } from "./call"
 import { buildSynergyPrompt } from "./prompt/synergy/builder"
 import { buildSynergyMaxPrompt } from "./prompt/synergy-max/builder"
@@ -224,18 +224,25 @@ export namespace Agent {
     const user = PermissionNext.fromConfig(cfg.permission ?? {})
 
     const builtinContext = { defaults, user, role, evolutionActive }
+    const installation = await Config.globalRaw()
+    const orynContext = {
+      ...builtinContext,
+      user: PermissionNext.fromConfig(installation.permission ?? {}),
+      role: (r: ModelRoleType) => Provider.resolveRoleModelSync(installation, r),
+    }
     const result: Record<string, Info> = {
       ...createBuiltinPrimaryAgents(builtinContext),
       ...createBuiltinLegacySubagents(builtinContext),
       ...createBuiltinMaxSubagents(builtinContext),
       ...createBuiltinInternalAgents(builtinContext),
-      ...(cfg.oryn?.enabled ? createBuiltinOrynAgents(builtinContext) : {}),
+      ...(installation.oryn?.enabled ? createBuiltinOrynAgents(orynContext) : {}),
     }
     for (const item of Object.values(result)) {
       item.source ??= "builtin"
     }
 
     for (const [key, value] of Object.entries(cfg.agent ?? {})) {
+      if (isOrynAgent(key) || (value.name && isOrynAgent(value.name))) continue
       if (value.disable) {
         delete result[key]
         continue
@@ -280,6 +287,7 @@ export namespace Agent {
     // Merge plugin-contributed agents (lower priority than config agents)
     const pluginAgents = (await AgentPluginSource.get()?.agentEntries()) ?? []
     for (const agent of pluginAgents) {
+      if (isOrynAgent(agent.name)) continue
       if (result[agent.name]) {
         log.info("plugin agent skipped, name already exists", {
           name: agent.name,
@@ -373,6 +381,7 @@ export namespace Agent {
       discovered: [...discovered.keys()],
     })
     for (const [name, info] of discovered) {
+      if (isOrynAgent(name)) continue
       const overrides = externalConfig[name]
       if (overrides?.disabled) {
         log.info("external agent disabled by config", { name })

@@ -3,7 +3,7 @@ import { Scope } from "../../src/scope"
 import { ScopeContext } from "../../src/scope/context"
 import { Server } from "../../src/server/server"
 import { OrynStore, sourceKey } from "../../src/oryn/store"
-import { tmpdir } from "../fixture/fixture"
+import { tmpdir } from "./fixture"
 
 const orynEnabledConfig = {
   oryn: {
@@ -16,7 +16,7 @@ const orynEnabledConfig = {
 async function withScope<T>(config: Record<string, unknown> | undefined, fn: (scope: Scope) => Promise<T>): Promise<T> {
   await using tmp = await tmpdir({ git: true, ...(config ? { config } : {}) })
   const scope = (await Scope.fromDirectory(tmp.path)).scope
-  return ScopeContext.provide({ scope, fn: () => fn(scope) })
+  return await ScopeContext.provide({ scope, fn: () => fn(scope) })
 }
 
 async function seedCase(scope: Scope) {

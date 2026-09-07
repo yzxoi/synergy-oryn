@@ -6,7 +6,7 @@ import { OrynStore } from "../../src/oryn/store"
 import { OrynPublish, orynBranch, setTransport } from "../../src/oryn/publish"
 import { OrynLearning, setMemoryPromoter } from "../../src/oryn/learn"
 import type { PublishExecuteInput, PublishExecuteResult, PublishTransport } from "../../src/oryn/publish"
-import { tmpdir } from "../fixture/fixture"
+import { tmpdir } from "./fixture"
 
 function errorCode(error: unknown): string | undefined {
   return (error as { data?: { code?: string } })?.data?.code
@@ -37,7 +37,7 @@ async function withLearnScope<T>(learning: { verifiedMemory?: boolean }, fn: (ro
     },
   })
   const scope = (await Scope.fromDirectory(tmp.path)).scope
-  return ScopeContext.provide({ scope, fn: () => fn(tmp.path) })
+  return await ScopeContext.provide({ scope, fn: () => fn(tmp.path) })
 }
 
 async function headSha(root: string): Promise<string> {

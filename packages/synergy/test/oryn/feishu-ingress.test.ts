@@ -1,5 +1,6 @@
-import { expect, test } from "bun:test"
 import { Config } from "../../src/config/config"
+import { expect, test } from "bun:test"
+import { globalConfig } from "./fixture"
 import { Scope } from "../../src/scope"
 import { ScopeContext } from "../../src/scope/context"
 import { Session } from "../../src/session"
@@ -60,11 +61,10 @@ async function answer(sessionID: string, rootID: string, text: string) {
 
 test("real Feishu ingress binds separate Oryn topics and persists each source before queue acceptance", async () => {
   await using tmp = await tmpdir({ git: true })
-  const originalConfig = Config.current
   const originalProvider = Channel.getProvider("feishu")
   const mock = mockFeishu()
   const accountId = `mock_${crypto.randomUUID()}`
-  Config.current = async () =>
+  await using config = await globalConfig(
     Config.Info.parse({
       channel: {
         feishu: {
@@ -84,7 +84,8 @@ test("real Feishu ingress binds separate Oryn topics and persists each source be
         routes: [{ feishuAccount: accountId, chats: ["qa"], repoAlias: "widget" }],
         repositories: { widget: { owner: "acme", repo: "widget", baseBranch: "dev" } },
       },
-    })
+    }),
+  )
   const sessions: string[] = []
   try {
     await ScopeContext.provide({
@@ -202,7 +203,6 @@ test("real Feishu ingress binds separate Oryn topics and persists each source be
         }
       },
     })
-    Config.current = originalConfig
     OrynService.setOutboxDeliverer(undefined)
     if (originalProvider) Channel.registerProvider(originalProvider)
   }
