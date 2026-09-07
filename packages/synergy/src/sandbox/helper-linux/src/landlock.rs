@@ -469,6 +469,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(target_os = "linux"))]
     fn apply_landlock_ruleset_noop_on_non_linux_for_eligible_plan() {
         // Even with a plan that would apply on Linux, this is a no-op on macOS.
         let plan = LandlockPlan {

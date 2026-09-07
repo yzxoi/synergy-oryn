@@ -8,7 +8,7 @@ Oryn's check quota and process lifecycle code used an unwrapped command and inhe
 
 ## Decision
 
-Oryn checks use the shared sandbox executor with an explicit Host permission profile: read-only pinned source, system runtime files and the approved executable, a disposable writable HOME/temp directory, and restricted networking. No credentials, SSH agents, provider variables or language startup variables are inherited. Cleanup remains inside the scheduler's physical execution lifetime. Sandbox denial becomes inconclusive infrastructure evidence; it cannot become a reproduced bug or passing verification.
+Oryn checks use the shared sandbox executor with an explicit Host permission profile: read-only pinned source, system runtime files and the approved executable, a disposable writable HOME/temp directory, and restricted networking. No credentials, SSH agents, provider variables or language startup variables are inherited. Cleanup remains inside the scheduler's physical execution lifetime. Sandbox denial, including Linux EROFS/read-only-filesystem errors, becomes inconclusive infrastructure evidence; it cannot become a reproduced bug or passing verification.
 
 `SandboxBackend.prepareWrapper` forwards the complete profile to Linux and the default macOS compiler. The latter omits interactive platform/user allowances for explicit profiles, retains OS process bootstrap requirements, and prevents imported OS rules from widening writes or restricted networking. Legacy, disabled and unsupported explicit-profile backends return unavailability. Linux mounts the helper and its immutable policy at private read-only bootstrap paths after other mounts, without exposing their host parent directories.
 
