@@ -1111,6 +1111,108 @@ export type PerfBrowserMetricBatch = {
   }>
 }
 
+export type StorageSnapshotOwnerCounts = {
+  legacy: number
+  shared: number
+  deleted: number
+}
+
+export type StorageSnapshotRetainedLegacy = {
+  unowned: number
+  reclaimed: number
+  sharedBaselines: number
+  unregistered: number
+}
+
+export type StorageSnapshotStatistics = {
+  bytes: number
+  allocatedBytes: number
+  files: number
+}
+
+export type StorageSnapshotUsage = {
+  scopeID: string
+  owners: StorageSnapshotOwnerCounts
+  retainedLegacy: StorageSnapshotRetainedLegacy
+  legacy: StorageSnapshotStatistics
+  shared: StorageSnapshotStatistics
+  indexes: StorageSnapshotStatistics
+}
+
+export type StorageSnapshotCleanCandidate = {
+  sessionID: string
+  bytes: number
+  reason: "reclaimed" | "unowned"
+}
+
+export type StorageSnapshotCleanResult = {
+  scopeID: string
+  applied: boolean
+  candidates: Array<StorageSnapshotCleanCandidate>
+  removed: number
+  bytes: number
+  skippedProtected: number
+  errors: Array<string>
+}
+
+export type StorageSnapshotScopeFailure = {
+  scopeID: string
+  message: string
+}
+
+export type StorageSnapshotCleanBatch = {
+  results: Array<StorageSnapshotCleanResult>
+  failures: Array<StorageSnapshotScopeFailure>
+}
+
+export type StorageSnapshotCleanInput = {
+  scopeID?: string
+  apply?: boolean
+}
+
+export type StorageSnapshotMigrationResult = {
+  sessionID: string
+  status: "pending" | "migrated" | "skipped" | "failed"
+  reason?: string
+  objectsAdded?: number
+}
+
+export type StorageSnapshotMigrateResult = {
+  scopeID: string
+  applied: boolean
+  results: Array<StorageSnapshotMigrationResult>
+}
+
+export type StorageSnapshotMigrateBatch = {
+  results: Array<StorageSnapshotMigrateResult>
+  failures: Array<StorageSnapshotScopeFailure>
+}
+
+export type StorageSnapshotMigrateInput = {
+  scopeID?: string
+  apply?: boolean
+}
+
+export type StorageSnapshotCompactResult = {
+  scopeID: string
+  applied: boolean
+  prune: boolean
+  before: StorageSnapshotStatistics
+  after?: StorageSnapshotStatistics
+  recoveredObjects?: number
+}
+
+export type StorageSnapshotCompactBatch = {
+  results: Array<StorageSnapshotCompactResult>
+  failures: Array<StorageSnapshotScopeFailure>
+}
+
+export type StorageSnapshotCompactInput = {
+  scopeID?: string
+  apply?: boolean
+  prune?: boolean
+}
+
 export type HolosLoginResponse = {
   url: string
 }
@@ -11492,6 +11594,124 @@ export type PerformanceEventsStreamResponses = {
    */
   200: unknown
 }
+
+export type StorageSnapshotUsageData = {
+  body?: never
+  path?: never
+  query?: never
+  url: "/global/storage/snapshot"
+}
+
+export type StorageSnapshotUsageErrors = {
+  /**
+   * Runtime shutting down
+   */
+  503: RuntimeShuttingDownError
+}
+
+export type StorageSnapshotUsageError = StorageSnapshotUsageErrors[keyof StorageSnapshotUsageErrors]
+
+export type StorageSnapshotUsageResponses = {
+  /**
+   * Snapshot storage usage per scope
+   */
+  200: Array<StorageSnapshotUsage>
+}
+
+export type StorageSnapshotUsageResponse = StorageSnapshotUsageResponses[keyof StorageSnapshotUsageResponses]
+
+export type StorageSnapshotCleanData = {
+  body: StorageSnapshotCleanInput
+  path?: never
+  query?: never
+  url: "/global/storage/snapshot/clean"
+}
+
+export type StorageSnapshotCleanErrors = {
+  /**
+   * A scope-targeted request found storage busy or its integrity check failed; nothing was reclaimed
+   */
+  409: {
+    message: string
+  }
+  /**
+   * Runtime shutting down
+   */
+  503: RuntimeShuttingDownError
+}
+
+export type StorageSnapshotCleanError = StorageSnapshotCleanErrors[keyof StorageSnapshotCleanErrors]
+
+export type StorageSnapshotCleanResponses = {
+  /**
+   * Per-scope clean reports plus failures for scopes that could not run (batch requests without scopeID keep completed work when a later scope fails)
+   */
+  200: StorageSnapshotCleanBatch
+}
+
+export type StorageSnapshotCleanResponse = StorageSnapshotCleanResponses[keyof StorageSnapshotCleanResponses]
+
+export type StorageSnapshotMigrateData = {
+  body: StorageSnapshotMigrateInput
+  path?: never
+  query?: never
+  url: "/global/storage/snapshot/migrate"
+}
+
+export type StorageSnapshotMigrateErrors = {
+  /**
+   * Snapshot storage is busy; nothing was migrated
+   */
+  409: {
+    message: string
+  }
+  /**
+   * Runtime shutting down
+   */
+  503: RuntimeShuttingDownError
+}
+
+export type StorageSnapshotMigrateError = StorageSnapshotMigrateErrors[keyof StorageSnapshotMigrateErrors]
+
+export type StorageSnapshotMigrateResponses = {
+  /**
+   * Per-scope migration report (pending repositories for dry runs, outcomes otherwise)
+   */
+  200: StorageSnapshotMigrateBatch
+}
+
+export type StorageSnapshotMigrateResponse = StorageSnapshotMigrateResponses[keyof StorageSnapshotMigrateResponses]
+
+export type StorageSnapshotCompactData = {
+  body: StorageSnapshotCompactInput
+  path?: never
+  query?: never
+  url: "/global/storage/snapshot/compact"
+}
+
+export type StorageSnapshotCompactErrors = {
+  /**
+   * Snapshot storage is busy or failed its integrity check; nothing was compacted
+   */
+  409: {
+    message: string
+  }
+  /**
+   * Runtime shutting down
+   */
+  503: RuntimeShuttingDownError
+}
+
+export type StorageSnapshotCompactError = StorageSnapshotCompactErrors[keyof StorageSnapshotCompactErrors]
+
+export type StorageSnapshotCompactResponses = {
+  /**
+   * Per-scope compaction report (statistics for dry runs, before/after otherwise)
+   */
+  200: StorageSnapshotCompactBatch
+}
+
+export type StorageSnapshotCompactResponse = StorageSnapshotCompactResponses[keyof StorageSnapshotCompactResponses]
 
 export type GlobalDisposeData = {
   body?: never
