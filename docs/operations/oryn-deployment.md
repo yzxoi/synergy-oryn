@@ -90,6 +90,8 @@ Enable Oryn only after all of the following hold:
 
 ## Delivery Check Gating
 
+Worker completion does not imply verified behavior. Reproduction and verification claims must reference the reporting assignment’s actual runs, with matching source and approved plan; delivery requires an independent verifier report. Environment failures remain inconclusive. See [report evidence validation](../decisions/implemented/bug-fix/2026-09-08-oryn-report-execution-evidence.md) for the guarantees and remaining authenticity limits.
+
 The `oryn/delivery` check run is written only when `oryn.repositories[alias].deliveryCheck` is `true` (default `false`). Follow this sequence when turning it on:
 
 1. Deploy with the check disabled and let at least one real case complete `mark_ready` end to end.

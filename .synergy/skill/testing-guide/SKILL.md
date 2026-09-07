@@ -25,6 +25,8 @@ For non-blocking and ordering contracts, hold the downstream operation behind an
 
 Inspect two nearby tests and `packages/synergy/test/preload.ts` before introducing a new harness pattern.
 
+When a workflow advances on execution evidence, success fixtures must produce that evidence through the real executor and resource admission. Do not seed a model's success string or an accepted report to bypass the prerequisite being tested. Keep deliberate forged receipts in adversarial tests, and distinguish those tests from fixtures that demonstrate successful workflow progress.
+
 Place every test under the owning package's `test/` directory, mirroring the relevant source domain when that helps navigation. Place repository-level script and policy tests under the root `test/` directory. Never cascade `*.test.*` or `*.spec.*` files beside implementation files in `src/`, `script/`, or another source directory. Run `bun run test-layout:check` when adding or moving tests.
 
 For localized UI behavior, use a real Lingui `I18nProvider` with minimal English and Simplified Chinese messages. Assert visible text and accessibility labels after a reactive locale change; do not mock translation calls to return IDs because that hides missing catalogs and stale module-load translations. Keep plugin-author, user, LLM, path, identifier, and raw-error pass-through in the same boundary test as translated host chrome.

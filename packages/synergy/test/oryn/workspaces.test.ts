@@ -5,7 +5,7 @@ import { ScopeContext } from "../../src/scope/context"
 import { Session } from "../../src/session"
 import { SessionInbox } from "../../src/session/inbox"
 import { SessionManager } from "../../src/session/manager"
-import { tmpdir, runCheck } from "./fixture"
+import { tmpdir, runCheck, runBaseline } from "./fixture"
 
 async function commit(directory: string, value: string) {
   await Bun.write(`${directory}/behavior.txt`, value)
@@ -306,6 +306,15 @@ describe("Oryn per-assignment workspaces", () => {
         kind: "repro",
         outcome: "reproduced",
         summary: "fixture stage admission",
+        runIds: [
+          await runBaseline({
+            callerSessionID: repro.workerSessionId,
+            caseId: input.caseId,
+            attemptId: input.attemptId,
+            assignmentId: repro.assignmentId,
+            profileId: "fixture",
+          }),
+        ],
       })
       const code = await OrynService.dispatch({
         callerSessionID: input.rootId,

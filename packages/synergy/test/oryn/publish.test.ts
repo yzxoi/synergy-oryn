@@ -89,7 +89,7 @@ async function seedFrozen(root: string): Promise<Frozen> {
     argv: [["bun", "--print", "process.exit(1)"]],
     checks: ["baseline assertion"],
   })
-  await runCheck({
+  const baselineRun = await runCheck({
     callerSessionID: repro.workerSessionId,
     caseId,
     attemptId,
@@ -107,6 +107,7 @@ async function seedFrozen(root: string): Promise<Frozen> {
     kind: "repro",
     outcome: "reproduced",
     summary: "baseline assertion failed",
+    runIds: [baselineRun.runId],
   })
 
   const code = await OrynService.dispatch({

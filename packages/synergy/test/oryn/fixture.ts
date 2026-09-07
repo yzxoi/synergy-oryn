@@ -56,6 +56,34 @@ export async function tmpdir<T>(options?: Parameters<typeof projectTmpdir<T>>[0]
 
 const checkScheduler = new ToolTaskScheduler({ maxConcurrent: 4, maxQueued: 16 })
 
+export async function runBaseline(input: {
+  callerSessionID: string
+  caseId: string
+  attemptId: string
+  assignmentId: string
+  profileId?: string
+  exitCode?: number
+}) {
+  const { profileId = "quick", exitCode = 1, ...worker } = input
+  const plan = await OrynService.proposeCheck({
+    ...worker,
+    scenario: "fixture process outcome for report ownership tests",
+    profileId,
+    argv: [["bun", "--print", `process.exit(${exitCode})`]],
+    checks: ["fixture process exits with the selected code"],
+  })
+  const run = await runCheck({
+    ...worker,
+    planId: plan.planId,
+    lane: "baseline",
+    abort: new AbortController().signal,
+  })
+  if (run.outcome !== (exitCode ? "failed" : "passed")) {
+    throw new Error(`fixture baseline did not execute: ${run.outcome}`)
+  }
+  return run.runId
+}
+
 export async function runCheck(request: Parameters<typeof OrynService.runCheck>[0]) {
   registerOrynDomain()
   const { callerSessionID, abort, ...params } = request

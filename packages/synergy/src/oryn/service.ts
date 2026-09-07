@@ -7,6 +7,7 @@ import { OrynCandidate } from "./candidate"
 import { OrynConfig } from "./config"
 import { OrynEngineering } from "./engineering"
 import { OrynReports } from "./reports"
+import { OrynEvidence } from "./evidence"
 import { Finding as FindingSchema } from "./schema"
 import type { Finding, ReviewDomain, RunReceipt, SourceIdentity, Stage } from "./schema"
 import { OrynExecutor } from "./executor"
@@ -76,10 +77,19 @@ async function assertStageAdmission(caseId: string, attemptId: string, stage: St
     ),
   )
   if (stage === "code") {
-    const reproduced = accepted.some((report) => report.kind === "repro" && report.outcome === "reproduced")
-    if (!reproduced)
-      throw storeError("INVALID_STAGE", "code requires an accepted reproduction on this case", { caseId })
-    return
+    for (const report of accepted.filter((report) => report.kind === "repro" && report.outcome === "reproduced")) {
+      const sourceAttempt = await OrynStore.getAttempt(caseId, report.attemptId)
+      if (!sourceAttempt) continue
+      const assignment = assignments.find((item) => item.id === report.assignmentId)!
+      if (
+        await OrynEvidence.reportRuns({ assignment, attempt: sourceAttempt, report }).then(
+          () => true,
+          () => false,
+        )
+      )
+        return
+    }
+    throw storeError("INVALID_STAGE", "code requires an accepted reproduction with valid run evidence", { caseId })
   }
   if (stage === "verify" || stage === "review") {
     const candidate = accepted.find(
@@ -379,6 +389,8 @@ export namespace OrynService {
       return { reportId: report.id, accepted: false, stale: true }
     }
 
+    await OrynEvidence.reportRuns({ assignment, attempt, report })
+
     if (input.kind === "candidate") {
       await OrynCandidate.verify({
         assignment,
@@ -614,12 +626,38 @@ export namespace OrynService {
         failures.push({ code: "INVALID_STAGE", message: `attempt disposition is ${attempt.disposition}` })
       }
 
+      const assignments = await OrynStore.listAssignments(input.caseId)
+      const reports = await OrynStore.listWorkerReports(input.caseId)
+      let baselineFailed = false
+      let cleanCandidatePass = false
+      for (const report of reports) {
+        if (report.kind !== "repro" && report.kind !== "verification") continue
+        const assignment = assignments.find(
+          (item) =>
+            item.id === report.assignmentId &&
+            item.acceptedReportId === report.id &&
+            item.attemptId === report.attemptId &&
+            item.epoch === record.epoch &&
+            report.epoch === record.epoch &&
+            item.stage === (report.kind === "repro" ? "repro" : "verify"),
+        )
+        if (!assignment) continue
+        const sourceAttempt = await OrynStore.getAttempt(input.caseId, report.attemptId)
+        if (!sourceAttempt) continue
+        try {
+          await OrynEvidence.reportRuns({ assignment, attempt: sourceAttempt, report })
+          if (report.kind === "repro" && report.outcome === "reproduced") baselineFailed = true
+          if (
+            report.kind === "verification" &&
+            report.attemptId === attempt.id &&
+            ["verified", "passed"].includes(report.outcome)
+          )
+            cleanCandidatePass = true
+        } catch {
+          failures.push({ code: "EVIDENCE_INSUFFICIENT", message: "accepted report has invalid execution evidence" })
+        }
+      }
       const runs = (await OrynStore.listRuns(input.caseId)).filter((r) => r.attemptId === attempt.id)
-      const baselineFailed = runs.some((r) => r.lane === "baseline" && r.outcome === "failed")
-      const cleanCandidatePass = runs.some(
-        (r) =>
-          r.lane === "candidate" && r.outcome === "passed" && !r.overlayApplied && r.actualSha === attempt.candidateSha,
-      )
       const unresolved = runs.filter((r) => r.outcome === "inconclusive" || r.outcome === "cancelled")
       if (record.kind === "bug" && !baselineFailed) {
         failures.push({ code: "EVIDENCE_INSUFFICIENT", message: "bug cases require a failing baseline run" })
@@ -627,7 +665,7 @@ export namespace OrynService {
       if (!cleanCandidatePass) {
         failures.push({
           code: "EVIDENCE_INSUFFICIENT",
-          message: "no clean passing candidate run on the frozen candidate",
+          message: "no independent verification report with a clean passing candidate run",
         })
       }
       if (unresolved.length > 0) {
@@ -637,9 +675,7 @@ export namespace OrynService {
         })
       }
 
-      const assignments = await OrynStore.listAssignments(input.caseId)
       try {
-        const reports = await OrynStore.listWorkerReports(input.caseId)
         const candidate = reports.find(
           (report) =>
             report.kind === "candidate" &&

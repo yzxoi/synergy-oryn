@@ -9,7 +9,7 @@ import { ScopeContext } from "../../src/scope/context"
 import { Session } from "../../src/session"
 import { SessionInbox } from "../../src/session/inbox"
 import { SessionManager } from "../../src/session/manager"
-import { tmpdir } from "./fixture"
+import { tmpdir, runBaseline } from "./fixture"
 
 async function fixture(
   fn: (input: {
@@ -27,6 +27,7 @@ async function fixture(
         enabled: true,
         routes: [{ feishuAccount: "test", repoAlias: "test/repo" }],
         repositories: { "test/repo": { owner: "test", repo: "repo" } },
+        executionProfiles: { quick: { commandAllowlist: ["bun"] } },
       },
     },
   })
@@ -65,6 +66,11 @@ async function fixture(
         sessionId: worker.id,
         requestKey: "dispatch",
       })
+      await OrynStore.setAssignmentWorkspace(
+        claim.caseId,
+        assignment.id,
+        (await Session.get(worker.id)).workspace!.path,
+      )
       const leases = [SessionManager.acquire(root.sessionID), SessionManager.acquire(worker.id)]
       if (leases.some((lease) => !lease)) throw new Error("fixture session already running")
       try {
@@ -98,6 +104,70 @@ function result(input: { caseId: string; attemptId: string; assignmentId: string
 }
 
 describe("Oryn worker handoff", () => {
+  test("reproduced claims require execution evidence before accepting or waking engineering", async () => {
+    await fixture(async (input) => {
+      await expect(OrynService.submitResult({ ...result(input), outcome: "reproduced" })).rejects.toMatchObject({
+        data: { code: "EVIDENCE_INSUFFICIENT" },
+      })
+      expect((await OrynStore.getAssignment(input.caseId, input.assignmentId))?.acceptedReportId).toBeUndefined()
+      expect(await SessionInbox.list(input.rootId)).toHaveLength(0)
+    })
+  })
+
+  test("unknown run references cannot be attached as report evidence", async () => {
+    await fixture(async (input) => {
+      await expect(OrynService.submitResult({ ...result(input), runIds: ["missing-run"] })).rejects.toMatchObject({
+        data: { code: "EVIDENCE_INSUFFICIENT" },
+      })
+      expect((await OrynStore.getAttempt(input.caseId, input.attemptId))?.evidenceRunIds).toEqual([])
+      expect((await OrynStore.getAssignment(input.caseId, input.assignmentId))?.acceptedReportId).toBeUndefined()
+    })
+  })
+
+  test("foreign and infrastructure receipts cannot prove reproduction", async () => {
+    await fixture(async (input) => {
+      const runId = await runBaseline(result(input))
+      const original = (await OrynStore.getRun(input.caseId, runId))!
+      const { id: _id, schemaVersion: _version, ...receipt } = original
+      for (const change of [
+        { assignmentId: "other-assignment" },
+        { attemptId: "other-attempt" },
+        { actualSha: "different-source" },
+        { infrastructureFailure: true },
+        { lane: "experiment" as const },
+      ]) {
+        const foreign = await OrynStore.writeRunReceipt({ ...receipt, ...change })
+        await expect(
+          OrynService.submitResult({
+            ...result(input),
+            requestKey: foreign.id,
+            outcome: "reproduced",
+            runIds: [foreign.id],
+          }),
+        ).rejects.toMatchObject({ data: { code: "EVIDENCE_INSUFFICIENT" } })
+      }
+      expect((await OrynStore.getAssignment(input.caseId, input.assignmentId))?.acceptedReportId).toBeUndefined()
+      expect(await SessionInbox.list(input.rootId)).toHaveLength(0)
+    })
+  })
+
+  test("changing an approved plan invalidates an accepted reproduction before coding", async () => {
+    await fixture(async (input) => {
+      const runId = await runBaseline(result(input))
+      await OrynService.submitResult({ ...result(input), outcome: "reproduced", runIds: [runId] })
+      const plan = (await OrynStore.listCheckPlans(input.caseId))[0]
+      await OrynStore.mutateCheckPlan(input.caseId, plan.id, (value) => ({ ...value, checks: ["changed assertion"] }))
+      await expect(
+        OrynService.dispatch({
+          callerSessionID: input.rootId,
+          caseId: input.caseId,
+          stage: "code",
+          requestKey: "stale-plan",
+        }),
+      ).rejects.toMatchObject({ data: { code: "INVALID_STAGE" } })
+    })
+  })
+
   test("an archived reproduction cannot admit coding", async () => {
     await fixture(async (input) => {
       const record = (await OrynStore.getCase(input.caseId))!
@@ -118,7 +188,10 @@ describe("Oryn worker handoff", () => {
 
   test("already-fixed observations do not admit another coding task", async () => {
     await fixture(async (input) => {
-      expect((await OrynService.submitResult({ ...result(input), outcome: "already_fixed" })).accepted).toBe(true)
+      const runId = await runBaseline({ ...result(input), exitCode: 0 })
+      expect(
+        (await OrynService.submitResult({ ...result(input), outcome: "already_fixed", runIds: [runId] })).accepted,
+      ).toBe(true)
       await expect(
         OrynService.dispatch({
           callerSessionID: input.rootId,
@@ -132,7 +205,8 @@ describe("Oryn worker handoff", () => {
 
   test("one Attempt cannot dispatch two independent code writers", async () => {
     await fixture(async (input) => {
-      await OrynService.submitResult({ ...result(input), outcome: "reproduced" })
+      const runId = await runBaseline(result(input))
+      await OrynService.submitResult({ ...result(input), outcome: "reproduced", runIds: [runId] })
       const first = await OrynService.dispatch({
         callerSessionID: input.rootId,
         caseId: input.caseId,

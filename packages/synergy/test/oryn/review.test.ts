@@ -520,6 +520,25 @@ describe("OrynService delivery gate", () => {
       // Resumed with everything green → ready.
       const pausedRecord = await OrynStore.getCase(caseId)
       await OrynStore.control(caseId, pausedRecord!.revision, "resume")
+      const unverified = await OrynService.evaluateDelivery({
+        callerSessionID: seeded.engineeringSessionId,
+        caseId,
+        ciStatus: "passed",
+        payload,
+      })
+      expect(unverified.ready).toBe(false)
+      expect(unverified.failures.some((failure) => failure.message.includes("independent verification"))).toBe(true)
+      await OrynService.submitResult({
+        callerSessionID: verify.workerSessionId,
+        caseId,
+        attemptId: seeded.attemptId,
+        assignmentId: verify.assignmentId,
+        requestKey: "verify-result",
+        kind: "verification",
+        outcome: "verified",
+        summary: "Independent fixture verification",
+        runIds: [candRun.runId],
+      })
       const ready = await OrynService.evaluateDelivery({
         callerSessionID: seeded.engineeringSessionId,
         caseId,

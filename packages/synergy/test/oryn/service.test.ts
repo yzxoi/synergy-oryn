@@ -4,13 +4,14 @@ import { ScopeContext } from "../../src/scope/context"
 import { OrynService } from "../../src/oryn/service"
 import { OrynExecutor } from "../../src/oryn/executor"
 import { OrynStore } from "../../src/oryn/store"
-import { tmpdir, runCheck } from "./fixture"
+import { tmpdir, runCheck, runBaseline } from "./fixture"
 
 const orynEnabledConfig = {
   oryn: {
     enabled: true,
     routes: [{ feishuAccount: "acc_test", repoAlias: "acme/widget" }],
     repositories: { "acme/widget": { owner: "acme", repo: "widget", baseBranch: "dev" } },
+    executionProfiles: { quick: { commandAllowlist: ["bun"] } },
   },
 }
 
@@ -263,6 +264,14 @@ describe("OrynService worker results", () => {
         kind: "repro",
         outcome: "reproduced",
         summary: "baseline assertion failed as reported",
+        runIds: [
+          await runBaseline({
+            callerSessionID: dispatch.workerSessionId,
+            caseId: submitted.caseId,
+            attemptId,
+            assignmentId: dispatch.assignmentId,
+          }),
+        ],
       })
       expect(result.accepted).toBe(true)
       expect(result.stale).toBe(false)
@@ -321,6 +330,14 @@ describe("OrynService worker results", () => {
         kind: "repro",
         outcome: "reproduced",
         summary: "reproduced on baseline",
+        runIds: [
+          await runBaseline({
+            callerSessionID: dispatch.workerSessionId,
+            caseId: submitted.caseId,
+            attemptId,
+            assignmentId: dispatch.assignmentId,
+          }),
+        ],
       })
       const codeDispatch = await OrynService.dispatch({
         callerSessionID: opened.sessionID,

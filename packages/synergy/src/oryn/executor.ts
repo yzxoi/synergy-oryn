@@ -5,26 +5,16 @@ import { OrynSandbox } from "./sandbox"
 import { EnforcementError } from "../enforcement/errors"
 import type { OrynExecutionProfile } from "../config/schema"
 import { OrynGit } from "./git"
-import { externalIdentityHash } from "../util/identity"
+import { OrynEvidence } from "./evidence"
 import { OrynStore, storeError } from "./store"
 import { OrynConfig } from "./config"
-import type { CheckPlan, RunReceipt } from "./schema"
+import type { RunReceipt } from "./schema"
 
 /**
  * Host-side check runner with assignment, profile and version validation.
- * Receipts describe observed execution; inherited environment filtering and
- * Git snapshots do not provide process containment or prove behavior coverage.
+ * Receipts describe observed execution. Containment and Git snapshots do not
+ * prove that a command exercised the reported user behavior.
  */
-
-function digestPlan(plan: CheckPlan): string {
-  return externalIdentityHash(
-    plan.id,
-    plan.scenario,
-    plan.profileId,
-    JSON.stringify(plan.argv),
-    JSON.stringify(plan.checks),
-  )
-}
 
 type RunOneResult = {
   argv: string[]
@@ -252,7 +242,7 @@ export namespace OrynExecutor {
       assignmentId: input.assignmentId,
       caseId: input.caseId,
       attemptId: input.attemptId,
-      planDigest: digestPlan(plan),
+      planDigest: OrynEvidence.planDigest(plan),
       lane: input.lane,
       actualSha: before.sha,
       treeDigest: before.tree,
