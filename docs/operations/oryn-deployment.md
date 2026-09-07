@@ -33,6 +33,12 @@ Run `bun test test/oryn/sandbox.test.ts test/oryn/workspaces.test.ts test/sandbo
 
 The ordinary coder Bash path has separate credential injection and process permissions. This runbook does not yet establish its credential isolation; the check runner's exact environment must not be generalized to every worker shell. If the required execution capability is unavailable, preserve the Case for human intervention rather than changing to `full_access`.
 
+### Ubuntu namespace policy
+
+On Ubuntu hosts that restrict unprivileged user namespaces, install the distribution's current Bubblewrap and AppArmor packages and have the administrator verify that the packaged `bwrap-userns-restrict` profile is loaded. That profile permits Bubblewrap setup while restricting child capabilities; use the distribution profile rather than disabling AppArmor or its system-wide namespace restriction. See [Ubuntu's explanation and profile guidance](https://discourse.ubuntu.com/t/understanding-apparmor-user-namespace-restriction/58007). If host policy forbids namespaces, retain the environment failure and route the task to an authorized environment or a human.
+
+Before starting candidate work, verify the actual helper through the native Oryn tests. `bwrap: loopback: Failed RTM_NEWADDR: Operation not permitted` is a sandbox startup failure, not a reproduced application bug. The CI-only `script/prepare-linux-test-sandbox.sh` provisions disposable GitHub-hosted VMs, loads the distribution profile when namespace restrictions are enabled, and probes network namespace startup. It refuses ordinary deployment hosts; production setup remains an administrator operation.
+
 ## Network and Ports
 
 - Run the Synergy server on its own port behind the deployment's reverse proxy; Oryn adds no new listening port.
