@@ -1,5 +1,6 @@
 import { realpath } from "node:fs/promises"
 import { Session } from "../session"
+import { ToolScheduler } from "../session/tool-scheduler"
 import { SandboxBackend } from "../sandbox/backend"
 import { OrynGit } from "./git"
 import { externalIdentityHash } from "../util/identity"
@@ -22,29 +23,6 @@ function childEnv(): Record<string, string> {
     if (value !== undefined) env[key] = value
   }
   return env
-}
-
-/** Process-level lanes: model pool admission stays with the runtime scheduler. */
-const lanes = new Map<string, number>()
-const waiters: Array<() => void> = []
-
-async function acquire(key: string, max: number): Promise<void> {
-  for (;;) {
-    const running = lanes.get(key) ?? 0
-    if (running < max) {
-      lanes.set(key, running + 1)
-      return
-    }
-    await new Promise<void>((resolve) => waiters.push(resolve))
-  }
-}
-
-function release(key: string): void {
-  const running = (lanes.get(key) ?? 1) - 1
-  if (running <= 0) lanes.delete(key)
-  else lanes.set(key, running)
-  const next = waiters.shift()
-  if (next) next()
 }
 
 function digestPlan(plan: CheckPlan): string {
@@ -70,17 +48,19 @@ type RunOneResult = {
 
 async function runOne(argv: string[], cwd: string, timeoutSeconds: number, abort: AbortSignal): Promise<RunOneResult> {
   const startedAt = Date.now()
-  const result = await SandboxBackend.executeAsync(
-    { command: argv[0], args: argv.slice(1), sandboxed: false },
-    {
-      cwd,
-      env: childEnv(),
-      inheritEnv: false,
-      fallbackPolicy: "allow",
-      signal: abort,
-      timeoutMs: timeoutSeconds * 1000,
-      maxOutputBytes: 64 * 1024,
-    },
+  const result = await ToolScheduler.trackPhysicalExecution(() =>
+    SandboxBackend.executeAsync(
+      { command: argv[0], args: argv.slice(1), sandboxed: false },
+      {
+        cwd,
+        env: childEnv(),
+        inheritEnv: false,
+        fallbackPolicy: "allow",
+        signal: abort,
+        timeoutMs: timeoutSeconds * 1000,
+        maxOutputBytes: 64 * 1024,
+      },
+    ),
   )
   return {
     argv,
@@ -99,6 +79,42 @@ async function runOne(argv: string[], cwd: string, timeoutSeconds: number, abort
 }
 
 export namespace OrynExecutor {
+  export async function admission(input: {
+    callerSessionID: string
+    caseId: string
+    assignmentId: string
+    attemptId: string
+    planId: string
+    abort: AbortSignal
+  }) {
+    input.abort.throwIfAborted()
+    const binding = await OrynStore.sessionSourceBinding(input.callerSessionID)
+    if (binding?.role !== "worker" || binding.caseId !== input.caseId)
+      throw storeError("NOT_AUTHORIZED", "only the bound worker can request check resources")
+    const [assignment, plan, oryn] = await Promise.all([
+      OrynStore.getAssignment(input.caseId, input.assignmentId),
+      OrynStore.getCheckPlan(input.caseId, input.planId),
+      OrynConfig.info(),
+    ])
+    if (!oryn?.enabled) throw storeError("NOT_AUTHORIZED", "Oryn is disabled")
+    if (
+      !assignment ||
+      assignment.sessionId !== input.callerSessionID ||
+      assignment.attemptId !== input.attemptId ||
+      plan?.attemptId !== input.attemptId
+    )
+      throw storeError("NOT_AUTHORIZED", "check admission requires matching worker and plan")
+    const profile = oryn.executionProfiles?.[plan.profileId]
+    if (!profile) throw storeError("ENVIRONMENT_UNAVAILABLE", "check profile is unavailable")
+    return {
+      executor: "local_process" as const,
+      resources: [
+        { key: "oryn:heavy", limit: oryn.limits?.heavyConcurrency ?? 2 },
+        { key: `oryn:profile:${plan.profileId}`, limit: profile.maxConcurrent ?? 1 },
+      ],
+    }
+  }
+
   /**
    * Run an approved check plan. Admission: caller is a bound worker whose
    * assignment matches, profile exists with every argv[0] allowlisted, and
@@ -189,82 +205,76 @@ export namespace OrynExecutor {
       throw storeError("BUDGET_EXHAUSTED", `case exceeded ${maxMinutes} minutes`)
     }
 
-    await OrynStore.mutateCheckPlan(input.caseId, input.planId, (draft) => ({ ...draft, status: "approved" }))
-
-    const concurrencyKey = `oryn-profile:${plan.profileId}`
-    const globalHeavyKey = "oryn-heavy"
-    const heavyMax = Math.max(1, limits?.heavyConcurrency ?? 2)
-    const profileMax = Math.max(1, profile.maxConcurrent ?? 1)
-    // Global heavy lane is acquired before the profile lane everywhere, so
-    // the nested wait cannot deadlock; both wake FIFO.
-    await acquire(globalHeavyKey, heavyMax)
-    let acquired = false
-    try {
-      await acquire(concurrencyKey, profileMax)
-      acquired = true
-
-      const expectedSha = await currentInputs()
-      const before = await OrynGit.snapshot(cwd)
-      if (before.sha !== expectedSha || before.dirty)
-        throw storeError("INVALID_STAGE", "check workspace does not match its clean fixed commit")
-      const timeoutSeconds = profile.timeoutSeconds ?? 1800
-      const results: RunOneResult[] = []
-      for (const command of plan.argv) {
-        await currentInputs()
-        const result = await runOne(command, cwd, timeoutSeconds, input.abort)
-        results.push(result)
-        if (result.timedOut || result.aborted || result.truncated) break
-      }
-
-      const after = await OrynGit.snapshot(cwd).catch(() => undefined)
-      const changed = !after || after.sha !== before.sha || after.tree !== before.tree || after.dirty
-      const active = await currentInputs().then(
-        (sha) => sha === expectedSha,
-        () => false,
+    const admission = await OrynExecutor.admission(input)
+    const lease = ToolScheduler.currentExecution()
+    if (
+      lease?.sessionID !== input.callerSessionID ||
+      lease.executor !== admission.executor ||
+      admission.resources.some(
+        (resource) => !lease.resources.some((held) => held.key === resource.key && held.limit === resource.limit),
       )
-      const timedOut = results.some((r) => r.timedOut)
-      const aborted = results.some((r) => r.aborted)
-      const truncated = results.some((r) => r.truncated)
-      const failed = results.some((r) => r.exitCode !== 0)
-      const outcome: RunReceipt["outcome"] = aborted
-        ? "cancelled"
-        : timedOut || truncated || changed || !active
-          ? "inconclusive"
-          : failed
-            ? "failed"
-            : "passed"
+    )
+      throw storeError("NOT_AUTHORIZED", "check requires current scheduler admission for its configured resources")
 
-      const receipt = await OrynStore.writeRunReceipt({
-        assignmentId: input.assignmentId,
-        caseId: input.caseId,
-        attemptId: input.attemptId,
-        planDigest: digestPlan(plan),
-        lane: input.lane,
-        actualSha: before.sha,
-        treeDigest: before.tree,
-        profile: plan.profileId,
-        argvSummary: plan.argv
-          .map((command) => command.join(" "))
-          .join(" && ")
-          .slice(0, 2000),
-        startedAt: results[0].startedAt,
-        endedAt: results[results.length - 1].endedAt,
-        exitCode: results[results.length - 1].exitCode,
-        observations: [
-          ...(changed ? ["source changed during execution; evidence is inconclusive"] : []),
-          ...(!active ? ["assignment inputs or control changed during execution; evidence is inconclusive"] : []),
-          ...results.flatMap((r) => r.observations),
-        ].slice(0, 64),
-        authenticity: "built_runtime",
-        outcome,
-        overlayApplied: plan.overlay,
-        infrastructureFailure: timedOut || truncated || changed || !active,
-      })
-      await OrynStore.attachRunEvidence(input.caseId, input.attemptId, receipt.id)
-      return { runId: receipt.id, outcome, overlayApplied: plan.overlay }
-    } finally {
-      if (acquired) release(concurrencyKey)
-      release(globalHeavyKey)
+    const expectedSha = await currentInputs()
+    await OrynStore.mutateCheckPlan(input.caseId, input.planId, (draft) => ({ ...draft, status: "approved" }))
+    const before = await OrynGit.snapshot(cwd)
+    if (before.sha !== expectedSha || before.dirty)
+      throw storeError("INVALID_STAGE", "check workspace does not match its clean fixed commit")
+    const timeoutSeconds = profile.timeoutSeconds ?? 1800
+    const results: RunOneResult[] = []
+    for (const command of plan.argv) {
+      await currentInputs()
+      const result = await runOne(command, cwd, timeoutSeconds, input.abort)
+      results.push(result)
+      if (result.timedOut || result.aborted || result.truncated) break
     }
+
+    const after = await OrynGit.snapshot(cwd).catch(() => undefined)
+    const changed = !after || after.sha !== before.sha || after.tree !== before.tree || after.dirty
+    const active = await currentInputs().then(
+      (sha) => sha === expectedSha,
+      () => false,
+    )
+    const timedOut = results.some((r) => r.timedOut)
+    const aborted = results.some((r) => r.aborted)
+    const truncated = results.some((r) => r.truncated)
+    const failed = results.some((r) => r.exitCode !== 0)
+    const outcome: RunReceipt["outcome"] = aborted
+      ? "cancelled"
+      : timedOut || truncated || changed || !active
+        ? "inconclusive"
+        : failed
+          ? "failed"
+          : "passed"
+
+    const receipt = await OrynStore.writeRunReceipt({
+      assignmentId: input.assignmentId,
+      caseId: input.caseId,
+      attemptId: input.attemptId,
+      planDigest: digestPlan(plan),
+      lane: input.lane,
+      actualSha: before.sha,
+      treeDigest: before.tree,
+      profile: plan.profileId,
+      argvSummary: plan.argv
+        .map((command) => command.join(" "))
+        .join(" && ")
+        .slice(0, 2000),
+      startedAt: results[0].startedAt,
+      endedAt: results[results.length - 1].endedAt,
+      exitCode: results[results.length - 1].exitCode,
+      observations: [
+        ...(changed ? ["source changed during execution; evidence is inconclusive"] : []),
+        ...(!active ? ["assignment inputs or control changed during execution; evidence is inconclusive"] : []),
+        ...results.flatMap((r) => r.observations),
+      ].slice(0, 64),
+      authenticity: "built_runtime",
+      outcome,
+      overlayApplied: plan.overlay,
+      infrastructureFailure: timedOut || truncated || changed || !active,
+    })
+    await OrynStore.attachRunEvidence(input.caseId, input.attemptId, receipt.id)
+    return { runId: receipt.id, outcome, overlayApplied: plan.overlay }
   }
 }

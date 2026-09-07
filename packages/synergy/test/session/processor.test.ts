@@ -7,6 +7,8 @@ import { Plugin } from "../../src/plugin"
 import { Session } from "../../src/session"
 import { MessageV2 } from "../../src/session/message-v2"
 import { SessionProcessor } from "../../src/session/processor"
+import { ToolExecutor } from "../../src/session/tool-executor"
+import { ToolScheduler } from "../../src/session/tool-scheduler"
 import { ContextUsage } from "../../src/session/context-usage"
 import { AgentTurn } from "../../src/session/agent-turn"
 import { fixture as rolloutFixture, complete as completeRollout } from "../fixture/rollout"
@@ -326,6 +328,117 @@ describe("SessionProcessor terminal assistant persistence", () => {
 })
 
 describe("SessionProcessor execution layering", () => {
+  test("applies Host admission after provider disposal and before executing a model call", async () => {
+    let disposed = false
+    let admissionAfterDispose = false
+    let lease: ReturnType<typeof ToolScheduler.currentExecution>
+    const unregister = ToolExecutor.registerAdmissionProvider("layered_probe", async () => {
+      admissionAfterDispose = disposed
+      return { executor: "local_process", resources: [{ key: "processor-fixture", limit: 1 }] }
+    })
+    try {
+      const parts = await runSettlementScenario({
+        messageID: "msg_admission_tool",
+        async *stream() {
+          yield { type: "tool-call", toolCallId: "call_admission", toolName: "layered_probe", input: {} }
+        },
+        residualStream: {
+          async cancel() {
+            disposed = true
+          },
+        },
+        executionTools: (processor) => ({
+          layered_probe: {
+            async execute(input: unknown) {
+              lease = ToolScheduler.currentExecution()
+              processor
+                .beginExecution("call_admission")
+                .complete(input, { title: "admitted", output: "done", metadata: {} })
+            },
+          },
+        }),
+      })
+      expect(admissionAfterDispose).toBe(true)
+      expect(lease).toMatchObject({
+        sessionID: "ses_test",
+        executor: "local_process",
+        resources: [{ key: "processor-fixture", limit: 1 }],
+      })
+      expect(parts.find((part) => part.type === "tool" && part.callID === "call_admission")).toMatchObject({
+        state: { status: "completed", output: "done" },
+      })
+    } finally {
+      unregister()
+    }
+  })
+
+  test("settles rejected admission without invoking the model-requested tool", async () => {
+    let executed = false
+    const unregister = ToolExecutor.registerAdmissionProvider("layered_probe", async () => {
+      throw new Error("fixture admission rejected")
+    })
+    try {
+      const parts = await runSettlementScenario({
+        messageID: "msg_admission_rejected",
+        async *stream() {
+          yield { type: "tool-call", toolCallId: "call_rejected", toolName: "layered_probe", input: {} }
+        },
+        executionTools: () => ({
+          layered_probe: {
+            async execute() {
+              executed = true
+            },
+          },
+        }),
+      })
+      expect(executed).toBe(false)
+      expect(parts.find((part) => part.type === "tool" && part.callID === "call_rejected")).toMatchObject({
+        state: { status: "error", error: "fixture admission rejected" },
+      })
+    } finally {
+      unregister()
+    }
+  })
+
+  test("malformed Host quotas fail one call while another tool still completes", async () => {
+    const unregister = ToolExecutor.registerAdmissionProvider("layered_probe", async () => ({
+      executor: "local_process",
+      resources: [{ key: "bad-limit", limit: 0 }],
+    }))
+    try {
+      const parts = await runSettlementScenario({
+        messageID: "msg_invalid_quota",
+        async *stream() {
+          yield { type: "tool-call", toolCallId: "call_bad_quota", toolName: "layered_probe", input: {} }
+          yield { type: "tool-call", toolCallId: "call_other", toolName: "other_probe", input: {} }
+        },
+        executionTools: (processor) => ({
+          layered_probe: {
+            async execute() {
+              throw new Error("must not execute")
+            },
+          },
+          other_probe: {
+            async execute(input: unknown) {
+              processor.beginExecution("call_other").complete(input, { title: "other", output: "done", metadata: {} })
+            },
+          },
+        }),
+      })
+      expect(parts.find((part) => part.type === "tool" && part.callID === "call_bad_quota")).toMatchObject({
+        state: {
+          status: "error",
+          error: "Tool task resource quotas must have unique bounded keys and positive integer limits",
+        },
+      })
+      expect(parts.find((part) => part.type === "tool" && part.callID === "call_other")).toMatchObject({
+        state: { status: "completed", output: "done" },
+      })
+    } finally {
+      unregister()
+    }
+  })
+
   test("releases the Agent stream before starting a proposed tool", async () => {
     let streamDisposed = false
     let executedAfterDispose = false

@@ -5,7 +5,7 @@ import { ScopeContext } from "../../src/scope/context"
 import { Session } from "../../src/session"
 import { SessionInbox } from "../../src/session/inbox"
 import { SessionManager } from "../../src/session/manager"
-import { tmpdir } from "./fixture"
+import { tmpdir, runCheck } from "./fixture"
 
 async function commit(directory: string, value: string) {
   await Bun.write(`${directory}/behavior.txt`, value)
@@ -92,7 +92,7 @@ async function run(
     argv: [["bun", "-e", "console.log(await Bun.file('behavior.txt').text())"]],
     checks: ["assigned source version"],
   })
-  const result = await OrynService.runCheck({
+  const result = await runCheck({
     callerSessionID: worker.workerSessionId,
     caseId: input.caseId,
     attemptId: input.attemptId,
@@ -105,6 +105,40 @@ async function run(
 }
 
 describe("Oryn per-assignment workspaces", () => {
+  test("direct check execution without scheduler admission is rejected", async () => {
+    await fixture(async (input) => {
+      const worker = await OrynService.dispatch({
+        callerSessionID: input.rootId,
+        caseId: input.caseId,
+        attemptId: input.attemptId,
+        stage: "repro",
+        requestKey: "unscheduled",
+      })
+      const plan = await OrynService.proposeCheck({
+        callerSessionID: worker.workerSessionId,
+        caseId: input.caseId,
+        attemptId: input.attemptId,
+        assignmentId: worker.assignmentId,
+        scenario: "unscheduled run",
+        profileId: "fixture",
+        argv: [["bun", "-e", "console.log('must not run')"]],
+        checks: ["not executed"],
+      })
+      await expect(
+        OrynService.runCheck({
+          callerSessionID: worker.workerSessionId,
+          caseId: input.caseId,
+          attemptId: input.attemptId,
+          assignmentId: worker.assignmentId,
+          planId: plan.planId,
+          lane: "baseline",
+          abort: new AbortController().signal,
+        }),
+      ).rejects.toThrow("scheduler admission")
+      expect((await OrynStore.getCheckPlan(input.caseId, plan.planId))?.status).toBe("proposed")
+    })
+  })
+
   test("oversized process output cannot become successful delivery evidence", async () => {
     await fixture(async (input) => {
       const worker = await OrynService.dispatch({
@@ -130,7 +164,7 @@ describe("Oryn per-assignment workspaces", () => {
         ],
         checks: ["output remains bounded"],
       })
-      const result = await OrynService.runCheck({
+      const result = await runCheck({
         callerSessionID: worker.workerSessionId,
         caseId: input.caseId,
         attemptId: input.attemptId,
@@ -201,7 +235,7 @@ describe("Oryn per-assignment workspaces", () => {
         argv: [["bun", "-e", "await Bun.write('behavior.txt', 'changed')"]],
         checks: ["source mutation must invalidate evidence"],
       })
-      const result = await OrynService.runCheck({
+      const result = await runCheck({
         callerSessionID: repro.workerSessionId,
         caseId: input.caseId,
         attemptId: input.attemptId,
@@ -244,10 +278,10 @@ describe("Oryn per-assignment workspaces", () => {
         planId: plan.planId,
         lane: "baseline" as const,
       }
-      await expect(OrynService.runCheck({ ...request, abort: AbortSignal.abort() })).rejects.toThrow()
+      await expect(runCheck({ ...request, abort: AbortSignal.abort() })).rejects.toThrow()
       const record = (await OrynStore.getCase(input.caseId))!
       await OrynStore.mutateCase(input.caseId, record.revision, (value) => ({ ...value, control: "paused" }))
-      await expect(OrynService.runCheck({ ...request, abort: new AbortController().signal })).rejects.toThrow()
+      await expect(runCheck({ ...request, abort: new AbortController().signal })).rejects.toThrow()
       expect(await Bun.file(`${worker.workspace!.path}/started.txt`).exists()).toBe(false)
     })
   })

@@ -6,7 +6,7 @@ import { OrynStore } from "../../src/oryn/store"
 import { OrynPublish, caseMarker, orynBranch, setTransport } from "../../src/oryn/publish"
 import type { PublishExecuteInput, PublishExecuteResult, PublishTransport } from "../../src/oryn/publish"
 import { PublishNonFastForwardError } from "../../src/channel/provider/github/publish"
-import { tmpdir } from "./fixture"
+import { tmpdir, runCheck } from "./fixture"
 
 function errorCode(error: unknown): string | undefined {
   return (error as { data?: { code?: string } })?.data?.code
@@ -89,7 +89,7 @@ async function seedFrozen(root: string): Promise<Frozen> {
     argv: [["bun", "--print", "process.exit(1)"]],
     checks: ["baseline assertion"],
   })
-  await OrynService.runCheck({
+  await runCheck({
     callerSessionID: repro.workerSessionId,
     caseId,
     attemptId,

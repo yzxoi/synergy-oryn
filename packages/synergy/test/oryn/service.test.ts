@@ -4,7 +4,7 @@ import { ScopeContext } from "../../src/scope/context"
 import { OrynService } from "../../src/oryn/service"
 import { OrynExecutor } from "../../src/oryn/executor"
 import { OrynStore } from "../../src/oryn/store"
-import { tmpdir } from "./fixture"
+import { tmpdir, runCheck } from "./fixture"
 
 const orynEnabledConfig = {
   oryn: {
@@ -411,7 +411,7 @@ describe("OrynService checks and executor", () => {
         argv: [["echo", "receipt-probe"]],
         checks: ["probe command exits zero"],
       })
-      const run = await OrynService.runCheck({
+      const run = await runCheck({
         callerSessionID: dispatch.workerSessionId,
         caseId: submitted.caseId,
         attemptId,
@@ -447,7 +447,7 @@ describe("OrynService checks and executor", () => {
         checks: ["never allowed"],
       })
       try {
-        await OrynService.runCheck({
+        await runCheck({
           callerSessionID: dispatch.workerSessionId,
           caseId: submitted.caseId,
           attemptId,
@@ -496,7 +496,7 @@ describe("OrynService checks and executor", () => {
         ...draft,
         argv: [["bun", "--print", "process.exit(3)"]],
       }))
-      const failed = await OrynService.runCheck({
+      const failed = await runCheck({
         callerSessionID: dispatch.workerSessionId,
         caseId: submitted.caseId,
         attemptId,

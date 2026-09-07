@@ -4,7 +4,7 @@ import { ScopeContext } from "../../src/scope/context"
 import { OrynService } from "../../src/oryn/service"
 import { OrynStore } from "../../src/oryn/store"
 import { OrynCheckTool } from "../../src/oryn/tools"
-import { tmpdir } from "./fixture"
+import { tmpdir, runCheck } from "./fixture"
 
 function errorCode(error: unknown): string | undefined {
   return (error as { data?: { code?: string } })?.data?.code
@@ -108,7 +108,7 @@ async function seedFrozen(root: string): Promise<Frozen> {
     argv: [["bun", "--print", "process.exit(1)"]],
     checks: ["baseline assertion"],
   })
-  const baselineRun = await OrynService.runCheck({
+  const baselineRun = await runCheck({
     callerSessionID: repro.workerSessionId,
     caseId,
     attemptId,
@@ -387,7 +387,7 @@ describe("OrynService delivery gate", () => {
         argv: [["echo", "candidate-ok"]],
         checks: ["acceptance scenario passes"],
       })
-      const candRun = await OrynService.runCheck({
+      const candRun = await runCheck({
         callerSessionID: verify.workerSessionId,
         caseId,
         attemptId: seeded.attemptId,

@@ -453,7 +453,7 @@ export const OrynReplyTool = Tool.define(
   },
 )
 
-const CheckParameters = z.discriminatedUnion("action", [
+export const CheckParameters = z.discriminatedUnion("action", [
   z
     .object({
       action: z.literal("propose"),

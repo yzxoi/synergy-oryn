@@ -24,6 +24,7 @@ import { Observability } from "@/observability"
 import { ToolDiagnostic } from "@/tool/diagnostic"
 import type { ToolDisplay } from "@ericsanchezok/synergy-plugin/tool"
 import { SessionToolInput } from "./tool-input"
+import { ToolExecutor } from "./tool-executor"
 import { ObservabilityMetrics } from "@/observability/metrics"
 import { ObservabilityToolFailures } from "@/observability/tool-failures"
 import { ObservabilitySpans } from "@/observability/spans"
@@ -1626,21 +1627,42 @@ export namespace SessionProcessor {
                       return
                     }
                   }
-                  const task = await ToolScheduler.dispatch({
-                    sessionID: input.sessionID,
-                    generation: input.generation ?? 0,
-                    messageID: input.assistantMessage.id,
-                    callID: call.callID,
-                    toolName: call.toolName,
-                    input: call.input,
-                    tool: streamInput.executionTools[call.toolName],
-                    executor: streamInput.executorKinds[call.toolName],
-                    processor: result,
-                    signal: input.abort,
-                    onState(state) {
-                      if (state === "running") SessionManager.setExecutionPhase(input.sessionID, "running_tools")
-                    },
-                  })
+                  let task: Awaited<ReturnType<typeof ToolScheduler.dispatch>>
+                  try {
+                    const admission = await ToolExecutor.admission({
+                      toolName: call.toolName,
+                      executor: streamInput.executorKinds[call.toolName] ?? "control_plane",
+                      sessionID: input.sessionID,
+                      input: call.input,
+                      signal: input.abort,
+                    })
+                    task = await ToolScheduler.dispatch({
+                      sessionID: input.sessionID,
+                      generation: input.generation ?? 0,
+                      messageID: input.assistantMessage.id,
+                      callID: call.callID,
+                      toolName: call.toolName,
+                      input: call.input,
+                      tool: streamInput.executionTools[call.toolName],
+                      executor: admission.executor,
+                      resources: admission.resources,
+                      processor: result,
+                      signal: input.abort,
+                      onState(state) {
+                        if (state === "running") SessionManager.setExecutionPhase(input.sessionID, "running_tools")
+                      },
+                    })
+                  } catch (error) {
+                    if (RolloutRecordingError.isInstance(error)) throw error
+                    const message = input.abort.aborted
+                      ? "Tool execution aborted"
+                      : error instanceof Error
+                        ? error.message
+                        : String(error)
+                    result.beginExecution(call.callID).fail(call.input, message)
+                    await settleTrackedExecution(call.callID)
+                    return
+                  }
                   await settleTrackedExecution(call.callID)
                   if (
                     shouldBreak &&

@@ -34,6 +34,8 @@ description: Add, modify, or review Synergy capability classification, control p
 6. Use `develop-synergy` for platform or end-to-end shell verification. Never experiment against the runtime carrying the current task.
 7. For packaged Linux or Windows sandboxes, build helpers per supported OS, architecture, and ABI before compiling the runtime. Embed the matching helper digest, fail a Stable build when an asset is missing, preserve the helper through every installer/package layout, and validate the installed artifact rather than only the source build.
 
+For per-workload quotas, supply Host-owned resource requirements to the existing ToolScheduler before execution; do not wait on a second semaphore after occupying a tool slot. Register physical completion when the resolver can settle cancellation earlier than process cleanup, and verify that capacity remains held until that completion. These counters are admission limits, not OS isolation or cgroup accounting.
+
 For command runners, reuse `SandboxBackend.executeAsync` with the authorized wrapper and the existing process ownership helpers. Verify combined output/callback limits, continued draining, pre-abort, pending-hook cancellation, descendant termination, and error-path cleanup. An unwrapped invocation and an environment allowlist do not establish OS isolation; describe and test wrapper preparation separately.
 
 Update the architecture document when the pipeline, profile semantics, capability contract, workspace boundary, or sandbox guarantee changes. Update `git-guide`, `add-tool`, or `change-plugin-runtime` when their executable workflow depends on the new classification.

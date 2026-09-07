@@ -26,3 +26,29 @@ describe("ToolExecutor", () => {
     expect(ToolExecutor.classify("question")).toBe("control_plane")
   })
 })
+
+test("host admission can select an executor without exposing model-controlled quotas", async () => {
+  const dispose = ToolExecutor.registerAdmissionProvider("fixture_admission", async () => ({
+    executor: "local_process",
+    resources: [{ key: "trusted-profile", limit: 1 }],
+  }))
+  try {
+    const input = {
+      toolName: "fixture_admission",
+      executor: "control_plane" as const,
+      sessionID: "fixture",
+      signal: new AbortController().signal,
+      input: { resources: [{ key: "trusted-profile", limit: 999 }] },
+    }
+    expect(await ToolExecutor.admission(input)).toEqual({
+      executor: "local_process",
+      resources: [{ key: "trusted-profile", limit: 1 }],
+    })
+    expect(await ToolExecutor.admission({ ...input, executor: "plugin" })).toEqual({ executor: "plugin" })
+    await expect(
+      ToolExecutor.admission({ ...input, signal: AbortSignal.abort(new Error("cancelled")) }),
+    ).rejects.toThrow("cancelled")
+  } finally {
+    dispose()
+  }
+})

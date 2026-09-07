@@ -16,7 +16,7 @@ Callers can set `inheritEnv: false` to supply an exact environment rather than a
 
 Oryn check commands reuse this physical runner with a combined 64 KiB retained-output limit per command. Timeout, cancellation or output truncation stops the remaining command sequence. Truncation produces an inconclusive receipt with an explicit observation and infrastructure-failure flag, so lost output cannot satisfy a passing-evidence requirement.
 
-This change does not activate an OS sandbox for Oryn: its wrapper remains explicitly uncontained. Installing the execution wrapper, enforcing profile capabilities, replacing the custom admission queue and proving receipt authenticity remain necessary before unattended untrusted-code deployment. The wrapper preparation and authorization decisions remain separate from physical process ownership.
+This change does not activate an OS sandbox for Oryn: its wrapper remains explicitly uncontained. Installing the execution wrapper, enforcing profile capabilities and proving receipt authenticity remain necessary before unattended untrusted-code deployment. The wrapper preparation and authorization decisions remain separate from physical process ownership.
 
 ## Alternatives considered
 
@@ -32,4 +32,6 @@ This change does not activate an OS sandbox for Oryn: its wrapper remains explic
 
 ## Consequences
 
-Output callbacks receive only retained bytes, and a call can report truncation when inherited output pipes fail to close within the existing drain grace. Callers requiring complete evidence must treat truncation as incomplete. Existing consumers retain their environment defaults and structured non-zero exit handling. Oryn still needs complete sandbox/admission integration, trusted behavioral evidence and full maintenance-pipeline acceptance; this decision does not establish production readiness.
+Output callbacks receive only retained bytes, and a call can report truncation when inherited output pipes fail to close within the existing drain grace. Callers requiring complete evidence must treat truncation as incomplete. Existing consumers retain their environment defaults and structured non-zero exit handling. Oryn still needs OS sandbox integration, trusted behavioral evidence and full maintenance-pipeline acceptance; this decision does not establish production readiness.
+
+Oryn scheduling uses [check resource admission](../architecture/2026-09-08-oryn-check-resource-admission.md), including capacity retention during registered physical cleanup.

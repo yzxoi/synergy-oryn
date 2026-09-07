@@ -30,6 +30,8 @@ No persisted schema changes are needed: Assignment workspace references and rece
 
 ## Consequences
 
-These tests establish ordinary filesystem/version separation and receipt invalidation, not secure execution of hostile code. The executor still needs to use the canonical sandbox and tool admission path, replace its custom wait queue, validate evidence provenance and bind complete policy/plan versions. Git-linked worktrees share repository metadata, and ignored build artifacts remain outside Git status evidence. Full scripted-model maintenance fixtures, live Feishu/GitHub canaries and Linux deployment acceptance remain separate requirements.
+These tests establish ordinary filesystem/version separation and receipt invalidation, not secure execution of hostile code. The executor still needs to use the canonical sandbox, validate evidence provenance and bind complete policy/plan versions. Git-linked worktrees share repository metadata, and ignored build artifacts remain outside Git status evidence. Full scripted-model maintenance fixtures, live Feishu/GitHub canaries and Linux deployment acceptance remain separate requirements.
 
 Bounded physical execution and cancellation are defined by [check process lifecycle](../bug-fix/2026-09-08-owned-check-process-lifecycle.md); they do not establish OS containment.
+
+Check scheduling and profile quotas are defined by [check resource admission](2026-09-08-oryn-check-resource-admission.md).
