@@ -81,6 +81,14 @@ Generated from the builtin tool registry in `packages/synergy/src/tool/registry.
 | `note_write` | `knowledge.note` | Create a new note or overwrite an existing note with complete markdown content. A Blueprint is not a separate document type; it is a note with kind:"blueprint". Content is converted to the internal Pr |
 | `openai_image_edit` | `communication.visual` | Edit or transform existing images with a text prompt and save the result to output_path. Use it when the user wants to modify, restyle, composite, expand, clean up, or create a variation from one or m |
 | `openai_image_gen` | `communication.visual` | Generate a new image from a text prompt and save it to output_path. Use it when the user wants a raster visual such as an illustration, photo, product shot, UI mockup, concept art, texture, sprite, me |
+| `oryn_case` | `orchestration.session` | Oryn case operations: submit engineering feedback (routed by host config), get/list your linked cases, amend acceptance details, or request human handoff. Identity and routing come from your session b |
+| `oryn_check` | `orchestration.task` | Verification runs: propose a check plan (scenario, profile, commands, assertions), execute it through the trusted executor in your assigned workspace, or read a plan. Local runs you did with bash are  |
+| `oryn_dispatch` | `orchestration.session` | Request the next engineering stage for your case (dispatch), or open a bounded rework round on the frozen candidate when review demands changes (rework). The host picks the agent, workspace, and froze |
+| `oryn_github_read` | `code.read` | Read bounded remote facts for one of your linked cases: the linked issue and pull request (title, state, author class), and CI status on the candidate. The host resolves the repository and refs from t |
+| `oryn_learn` | `knowledge.memory` | Propose a reusable lesson from this case for host promotion into shared memory. Every claim must cite case records as evidence; raw chat text, private logs, and credentials are rejected. Promotion onl |
+| `oryn_publish` | `communication.publish` | Publish host-verified artifacts for your case: the tracking issue, a draft PR from the frozen candidate, PR updates, the review comment, or the final ready delivery. The host records every action in t |
+| `oryn_reply` | `communication.deliver` | Deliver a bounded result to the reporter of your bound source. The host resolves the chat from your session binding — you never name an account or chat id. Repeated ready/needs_human replies for the s |
+| `oryn_result` | `orchestration.session` | Submit your structured worker outcome for an assignment, or read a previously submitted report. The host validates the assignment belongs to your session; stale-epoch reports are archived but not acce |
 | `parse_code` | `code.analyze` | Search code with AST-aware patterns and return anchored file blocks. Use this instead of `ast_grep` in the anchored coding harness. Matched files are returned with real `[path#TAG]` headers and only t |
 | `pathway_read` | `orchestration.dag` | Read the current Lattice Run and ordered Pathway. The result separates pathway.history and pathway.current, which are read-only, from pathway.editableFuture, which is the complete list accepted by pat |
 | `pathway_write` | `orchestration.dag` | Replace the complete ordered list of pending future Steps in the current Lattice Pathway. Pass pathway_read.pathway.editableFuture through futureSteps after making any required additions, removals, re |
@@ -1736,6 +1744,238 @@ Generate a new image from a text prompt and save it to output_path. Use it when 
 | `prompt` | params.prompt | yes |  |
 | `requested` | - | yes |  |
 | `display` | openAIImageGenDisplay | yes |  |
+
+## oryn_case
+
+Kind: `orchestration.session`
+
+Oryn case operations: submit engineering feedback (routed by host config), get/list your linked cases, amend acceptance details, or request human handoff. Identity and routing come from your session binding, never from parameters.
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `callerSessionID` | ctx.sessionID | yes |  |
+| `requestKey` | params.requestKey | yes |  |
+| `kind` | params.kind | yes |  |
+| `summary` | params.summary | yes |  |
+| `observed` | params.observed | yes |  |
+| `expected` | params.expected | yes |  |
+| `title` | result.created | yes |  |
+| `output` | - | yes |  |
+| `metadata` | - | yes |  |
+| `title` | - | yes |  |
+| `output` | JSON.stringify | yes |  |
+| `caseId` | record.id | yes |  |
+| `revision` | record.revision | yes |  |
+| `kind` | record.kind | yes |  |
+| `summary` | record.summary | yes |  |
+| `observed` | record.observed | yes |  |
+| `expected` | record.expected | yes |  |
+| `repoAlias` | record.repoAlias | yes |  |
+| `control` | record.control | yes |  |
+| `activeAttemptId` | record.activeAttemptId | yes |  |
+| `acceptanceRevision` | record.acceptanceRevision | yes |  |
+| `repairRounds` | record.repairRounds | yes |  |
+| `noProgressRounds` | record.noProgressRounds | yes |  |
+| `issueNumber` | record.issueNumber | yes |  |
+| `pullNumbers` | record.pullNumbers | yes |  |
+| `metadata` | - | yes |  |
+| `title` | - | yes |  |
+| `output` | JSON.stringify | yes |  |
+| `caseId` | r.id | yes |  |
+| `kind` | r.kind | yes |  |
+| `summary` | r.summary | yes |  |
+| `control` | r.control | yes |  |
+| `revision` | r.revision | yes |  |
+| `issueNumber` | r.issueNumber | yes |  |
+| `metadata` | - | yes |  |
+| `observed` | params.observed | yes |  |
+| `expected` | params.expected | yes |  |
+| `title` | - | yes |  |
+| `output` | - | yes |  |
+| `metadata` | - | yes |  |
+| `title` | - | yes |  |
+| `output` | - | yes |  |
+| `metadata` | - | yes |  |
+
+## oryn_check
+
+Kind: `orchestration.task`
+
+Verification runs: propose a check plan (scenario, profile, commands, assertions), execute it through the trusted executor in your assigned workspace, or read a plan. Local runs you did with bash are development aid — only receipts from this executor count as evidence.
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `callerSessionID` | ctx.sessionID | yes |  |
+| `caseId` | params.caseId | yes |  |
+| `attemptId` | params.attemptId | yes |  |
+| `assignmentId` | params.assignmentId | yes |  |
+| `scenario` | params.scenario | yes |  |
+| `profileId` | params.profileId | yes |  |
+| `argv` | params.argv | yes |  |
+| `checks` | params.checks | yes |  |
+| `overlay` | params.overlay | yes |  |
+| `title` | - | yes |  |
+| `output` | - | yes |  |
+| `metadata` | - | yes |  |
+| `callerSessionID` | ctx.sessionID | yes |  |
+| `caseId` | params.caseId | yes |  |
+| `attemptId` | params.attemptId | yes |  |
+| `assignmentId` | params.assignmentId | yes |  |
+| `planId` | params.planId | yes |  |
+| `lane` | params.lane | yes |  |
+| `abort` | ctx.abort | yes |  |
+| `title` | - | yes |  |
+| `output` | - | yes |  |
+| `metadata` | - | yes |  |
+| `callerSessionID` | ctx.sessionID | yes |  |
+| `caseId` | params.caseId | yes |  |
+| `planId` | params.planId | yes |  |
+| `title` | - | yes |  |
+| `output` | JSON.stringify | yes |  |
+| `planId` | plan.id | yes |  |
+| `status` | plan.status | yes |  |
+| `scenario` | plan.scenario | yes |  |
+| `profileId` | plan.profileId | yes |  |
+| `argv` | plan.argv | yes |  |
+| `checks` | plan.checks | yes |  |
+| `overlay` | plan.overlay | yes |  |
+| `metadata` | - | yes |  |
+
+## oryn_dispatch
+
+Kind: `orchestration.session`
+
+Request the next engineering stage for your case (dispatch), or open a bounded rework round on the frozen candidate when review demands changes (rework). The host picks the agent, workspace, and frozen inputs. Repeated dispatch requestKeys dedupe to the existing worker.
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `callerSessionID` | ctx.sessionID | yes |  |
+| `caseId` | params.caseId | yes |  |
+| `reason` | params.reason | yes |  |
+| `title` | result.handedOff | yes |  |
+| `output` | - | yes |  |
+| `metadata` | - | yes |  |
+| `callerSessionID` | ctx.sessionID | yes |  |
+| `caseId` | params.caseId | yes |  |
+| `attemptId` | params.attemptId | yes |  |
+| `stage` | params.stage | yes |  |
+| `requestKey` | params.requestKey | yes |  |
+| `reviewDomain` | params.reviewDomain | yes |  |
+| `title` | result.deduped | yes |  |
+| `output` | - | yes |  |
+| `metadata` | - | yes |  |
+
+## oryn_github_read
+
+Kind: `code.read`
+
+Read bounded remote facts for one of your linked cases: the linked issue and pull request (title, state, author class), and CI status on the candidate. The host resolves the repository and refs from the case; you never name a repo, endpoint, or number. Arbitrary GitHub browsing is intentionally unavailable.
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `callerSessionID` | ctx.sessionID | yes |  |
+| `caseId` | params.caseId | yes |  |
+| `title` | - | yes |  |
+| `output` | JSON.stringify | yes |  |
+| `metadata` | - | yes |  |
+
+## oryn_learn
+
+Kind: `knowledge.memory`
+
+Propose a reusable lesson from this case for host promotion into shared memory. Every claim must cite case records as evidence; raw chat text, private logs, and credentials are rejected. Promotion only happens after the case is delivered and the host has verified-memory promotion enabled, and a wrong lesson can be withdrawn.
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `callerSessionID` | ctx.sessionID | yes |  |
+| `caseId` | params.caseId | yes |  |
+| `lesson` | params.lesson | yes |  |
+| `applicability` | params.applicability | yes |  |
+| `invalidation` | params.invalidation | yes |  |
+| `evidenceRefs` | params.evidenceRefs | yes |  |
+| `title` | result.created | yes |  |
+| `output` | - | yes |  |
+| `metadata` | - | yes |  |
+
+## oryn_publish
+
+Kind: `communication.publish`
+
+Publish host-verified artifacts for your case: the tracking issue, a draft PR from the frozen candidate, PR updates, the review comment, or the final ready delivery. The host records every action in the ledger, verifies the frozen candidate and the delivery gate, and holds all credentials — you never touch tokens or endpoints. A timeout leaves the action ambiguous; reconciliation settles it, never a blind retry.
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `callerSessionID` | ctx.sessionID | yes |  |
+| `caseId` | params.caseId | yes |  |
+| `operation` | params.operation | yes |  |
+| `requestKey` | params.requestKey | yes |  |
+| `title` | params.title | yes |  |
+| `body` | params.body | yes |  |
+| `pullNumber` | params.pullNumber | yes |  |
+| `payload` | params.payload | yes |  |
+| `output` | - | yes |  |
+| `metadata` | - | yes |  |
+
+## oryn_reply
+
+Kind: `communication.deliver`
+
+Deliver a bounded result to the reporter of your bound source. The host resolves the chat from your session binding — you never name an account or chat id. Repeated ready/needs_human replies for the same case dedupe to one delivery.
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `callerSessionID` | ctx.sessionID | yes |  |
+| `caseId` | params.caseId | yes |  |
+| `kind` | params.kind | yes |  |
+| `text` | params.text | yes |  |
+| `title` | result.created | yes |  |
+| `output` | - | yes |  |
+| `metadata` | - | yes |  |
+
+## oryn_result
+
+Kind: `orchestration.session`
+
+Submit your structured worker outcome for an assignment, or read a previously submitted report. The host validates the assignment belongs to your session; stale-epoch reports are archived but not accepted.
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `title` | - | yes |  |
+| `output` | JSON.stringify | yes |  |
+| `metadata` | - | yes |  |
+| `callerSessionID` | ctx.sessionID | yes |  |
+| `caseId` | params.caseId | yes |  |
+| `attemptId` | params.attemptId | yes |  |
+| `assignmentId` | params.assignmentId | yes |  |
+| `requestKey` | params.requestKey | yes |  |
+| `headSha` | params.headSha | yes |  |
+| `baseSha` | params.baseSha | yes |  |
+| `domain` | params.domain | yes |  |
+| `findings` | params.findings | yes |  |
+| `questions` | params.questions | yes |  |
+| `evidenceAssessment` | params.evidenceAssessment | yes |  |
+| `designDecisions` | params.designDecisions | yes |  |
+| `recommendation` | params.recommendation | yes |  |
+| `limitedScope` | params.limitedScope | yes |  |
+| `title` | result.stale | yes |  |
+| `output` | - | yes |  |
+| `metadata` | - | yes |  |
+| `callerSessionID` | ctx.sessionID | yes |  |
+| `caseId` | params.caseId | yes |  |
+| `attemptId` | params.attemptId | yes |  |
+| `assignmentId` | params.assignmentId | yes |  |
+| `requestKey` | params.requestKey | yes |  |
+| `kind` | params.kind | yes |  |
+| `outcome` | params.outcome | yes |  |
+| `summary` | params.summary | yes |  |
+| `localBranch` | - | yes |  |
+| `candidateSha` | - | yes |  |
+| `runIds` | - | yes |  |
+| `knownRisks` | - | yes |  |
+| `limitations` | - | yes |  |
+| `title` | result.stale | yes |  |
+| `output` | - | yes |  |
+| `metadata` | - | yes |  |
 
 ## parse_code
 
