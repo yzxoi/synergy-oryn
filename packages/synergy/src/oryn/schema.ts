@@ -87,6 +87,17 @@ export const SourceLink = z
   .strict()
 export type SourceLink = z.infer<typeof SourceLink>
 
+export const ChannelSource = z
+  .object({
+    schemaVersion: z.literal(1),
+    qaSessionId: z.string().min(1),
+    identity: SourceIdentity,
+    chatType: z.enum(["dm", "group"]),
+    scopeKey: z.string().optional(),
+  })
+  .strict()
+export type ChannelSource = z.infer<typeof ChannelSource>
+
 export const IntakeClaim = z
   .object({
     schemaVersion: z.literal(1),

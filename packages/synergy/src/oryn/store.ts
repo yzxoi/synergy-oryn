@@ -5,7 +5,7 @@ import { Storage } from "../storage/storage"
 import { NamedError } from "@ericsanchezok/synergy-util/error"
 import z from "zod"
 import { OrynPath } from "./path"
-import { OutboxEntry, RunReceipt, ReviewReport, WorkerReport } from "./schema"
+import { ChannelSource, OutboxEntry, RunReceipt, ReviewReport, WorkerReport } from "./schema"
 import type { CheckPlan } from "./schema"
 import type {
   ActionReceipt,
@@ -588,6 +588,37 @@ export namespace OrynStore {
 
   export async function sessionSourceBinding(sessionID: string): Promise<SessionSourceBinding | undefined> {
     return Storage.read<SessionSourceBinding>(OrynPath.sessionSource(sessionID)).catch(() => undefined)
+  }
+
+  export async function recordChannelTurn(input: {
+    sessionID: string
+    rootID: string
+    identity: SourceIdentity
+    chatType: "dm" | "group"
+    scopeKey?: string
+  }): Promise<void> {
+    const source = ChannelSource.parse({
+      schemaVersion: 1,
+      qaSessionId: input.sessionID,
+      identity: input.identity,
+      chatType: input.chatType,
+      scopeKey: input.scopeKey,
+    })
+    const link = await recordSource({ identity: input.identity })
+    await Storage.write(OrynPath.channelSource(link.key), source)
+    await Storage.write(OrynPath.channelTurn(input.sessionID, input.rootID), { sourceKey: link.key })
+  }
+
+  export async function channelSource(sourceKeyHash: string): Promise<ChannelSource | undefined> {
+    const record = await Storage.read<unknown>(OrynPath.channelSource(sourceKeyHash)).catch(() => undefined)
+    return record === undefined ? undefined : ChannelSource.parse(record)
+  }
+
+  export async function channelTurn(sessionID: string, rootID: string): Promise<ChannelSource | undefined> {
+    const turn = await Storage.read<{ sourceKey: string }>(OrynPath.channelTurn(sessionID, rootID)).catch(
+      () => undefined,
+    )
+    return turn ? channelSource(turn.sourceKey) : undefined
   }
 
   /** Workers append structured reports; the host validates identity before accepting. */

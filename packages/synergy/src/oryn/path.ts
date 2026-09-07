@@ -78,4 +78,7 @@ export namespace OrynPath {
   /** Durable reply outbox consumed by the channel delivery path. */
   export const outboxRoot = () => ["oryn", "outbox"]
   export const outbox = (entryId: string) => [...outboxRoot(), entryId]
+
+  export const channelSource = (sourceKeyHash: string) => ["oryn", "channel_sources", sourceKeyHash]
+  export const channelTurn = (sessionID: string, rootID: string) => ["oryn", "channel_turns", sessionID, rootID]
 }

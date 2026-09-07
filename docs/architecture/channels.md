@@ -34,6 +34,12 @@ Existing Feishu endpoint records retain the legacy `chatId` / `scopeKey` encodin
 
 Feishu derives an endpoint `scopeKey` from the account's `groupSessionScope`. Topic and sender modes encode the topic or sender into the key; `group_thread` uses the Feishu `thread_id` as the only continuity key and falls back to the inbound `message_id` when no thread exists. A durable `channel/feishu/thread_bindings` record maps a returned `thread_id` back to the `scopeKey`, so later messages in the same thread reuse the same session and the first reply is sent with `reply_in_thread: true`.
 
+## Oryn Conversation Delivery
+
+Explicit Oryn Feishu routes select the QA agent before Runtime Boss aggregation and use a separate endpoint scope-key namespace. Group accounts require `group_thread`. Channel core persists the QA source binding and a per-root reply target before Inbox acceptance. Ordinary routes retain their endpoint keys and delivery behavior.
+
+Oryn foreground streams, reactions and automatic terminal artifacts are silent. The outbound bridge consumes persisted QA reply intents through the provider transport; connection recovery retries only definitely unsent pending intents. Per-root targets preserve the originating message, provider scope key and chat type, while uncertain sends never replay automatically. See the [ingress decision](../decisions/implemented/architecture/2026-09-08-oryn-feishu-ingress.md) and [notification settlement](../decisions/implemented/architecture/2026-09-08-oryn-notification-settlement.md).
+
 ## Provider and Transport Lifecycle
 
 Every provider declares one lifecycle:

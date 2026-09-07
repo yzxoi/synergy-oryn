@@ -29,6 +29,8 @@ Worker execution strips GitHub and SSH agent credential variables (`GH_TOKEN`, `
 
 ## Channel Test Apps
 
+The local mock ingress check needs no Feishu credentials. From `packages/synergy`, run `bun test test/oryn/feishu-ingress.test.ts test/oryn/outbox.test.ts test/oryn/tools.test.ts`. It enters the real ChannelHost, persists Inbox tasks, executes the reply tool and sends through a captured provider. It verifies thread/reply routing and uncertain dispatch with synthetic assistant output. It does not prove live Feishu delivery, model behavior, candidate execution, or GitHub publication; those require separate evidence.
+
 ### Feishu
 
 1. Create a dedicated test tenant app (placeholder name `oryn-test-app`); do not point Oryn at a production bot.

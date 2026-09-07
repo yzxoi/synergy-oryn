@@ -41,6 +41,7 @@ import { ResponseCardRuntime } from "./response-card"
 import { QuestionCardRuntime } from "./question-card"
 import { QuestionCardBridge } from "./question-card-bridge"
 import { getProvider as getProviderImpl, registerProvider as registerProviderImpl } from "./provider-registry"
+import { ChannelOryn } from "./oryn"
 import { ChannelInteraction } from "./interaction"
 import { ChannelOutbound } from "./outbound"
 import { ChannelBusyHandoff } from "./busy-handoff"
@@ -376,6 +377,9 @@ export namespace Channel {
   function initializeScopeBridges() {
     QuestionCardBridge.init()
     ChannelOutbound.init({ getProvider })
+    ChannelOryn.initialize(
+      async (accountId) => (await status())[connectionKey("feishu", accountId)]?.status === "connected",
+    )
   }
   async function connectAccount(input: ConnectContext & { reconnectAttempt?: number }): Promise<void> {
     const {
@@ -524,6 +528,11 @@ export namespace Channel {
 
     log.info("channel connected", { channelType, accountHash: externalIdentityHash(accountId) })
     Bus.publish(Event.Connected, { channelType, accountId })
+    if (channelType === "feishu") {
+      void ScopeContext.provide({ scope, fn: () => ChannelOryn.drain() }).catch((error) =>
+        log.warn("Oryn notification recovery failed", { error }),
+      )
+    }
   }
 
   function connectInBackground(input: ConnectContext & { reconnectAttempt?: number }): void {
@@ -689,7 +698,8 @@ export namespace Channel {
           // anchored to the original message so the outbound bridge never
           // misroutes across chats. A source header is prepended so the boss
           // can attribute the message (group, sender, time).
-          const bossSessionID = await resolveBossRoutingSession(ctx)
+          const orynRoute = await ChannelOryn.route(ctx, accountConfig)
+          const bossSessionID = orynRoute ? undefined : await resolveBossRoutingSession(ctx)
           if (bossSessionID) {
             ctx.scopeKey = BOSS_ROUTE_SCOPE_KEY
             ctx.replyToMessageId = ctx.messageId
@@ -716,7 +726,7 @@ export namespace Channel {
             chatName: bossSessionID ? undefined : ctx.chatName,
             senderId: ctx.senderId,
             senderName: ctx.senderName,
-            scopeKey: ctx.scopeKey,
+            scopeKey: orynRoute?.scopeKey ?? ctx.scopeKey,
             createdAt: Date.now(),
           })
           const session = await Session.getOrCreateForEndpoint(endpoint, {
@@ -726,11 +736,14 @@ export namespace Channel {
             interaction: bossSessionID
               ? SessionInteraction.interactive("boss")
               : ChannelInteraction.forType(ctx.channelType),
-            ...(provider.defaultAgent
-              ? { agentOverride: resolveChannelAccountAgent(accountConfig) ?? provider.defaultAgent }
-              : {}),
+            ...(orynRoute
+              ? { agentOverride: orynRoute.agent }
+              : provider.defaultAgent
+                ? { agentOverride: resolveChannelAccountAgent(accountConfig) ?? provider.defaultAgent }
+                : {}),
           })
           const sessionID = session.id
+          if (orynRoute) await ChannelOryn.bindSource(sessionID, ctx)
           const accountInvocation = resolveChannelAccountInvocation({
             accountConfig,
             sessionModelOverride: session.modelOverride,
@@ -742,6 +755,7 @@ export namespace Channel {
           })
           const metadata = {
             channelReply: true,
+            ...(orynRoute ? { channelDeliveryPolicy: "explicit" } : {}),
             channelReplyToMessageId: replyToMessageId,
             channelRequesterId: ctx.senderId,
             channelChatId: ctx.chatId,
@@ -754,7 +768,10 @@ export namespace Channel {
           const acceptance = await ChannelConversationAcceptance.accept({
             sessionID,
             deliveryKey,
-            prepareParts: (messageID) => buildPromptParts(ctx, { sessionID, messageID }),
+            prepareParts: async (messageID) => {
+              if (orynRoute) await ChannelOryn.prepareTurn(sessionID, messageID, ctx)
+              return buildPromptParts(ctx, { sessionID, messageID })
+            },
             metadata,
             model: accountInvocation.model,
             variant: accountInvocation.variant,
@@ -762,6 +779,7 @@ export namespace Channel {
               const reactionController = createStatusReactionController({
                 adapter: {
                   setReaction: async (emoji: string) => {
+                    if (orynRoute) return
                     const result = await addReaction({
                       accountId: ctx.accountId,
                       messageId: ctx.messageId,
@@ -787,8 +805,8 @@ export namespace Channel {
               // The boss replies through an explicit channel_push tool call, so
               // no Feishu streaming card is created and no terminal is posted.
               // Reactions still give the human lightweight progress feedback.
-              const isBossRoute = bossSessionID !== undefined
-              let streaming: StreamingSession = isBossRoute
+              const explicitDelivery = bossSessionID !== undefined || orynRoute !== undefined
+              let streaming: StreamingSession = explicitDelivery
                 ? createSilentSession()
                 : createStreamingSession({
                     accountId: ctx.accountId,
@@ -798,7 +816,7 @@ export namespace Channel {
                     sessionID,
                     scopeKey: ctx.scopeKey,
                   })
-              if (!isBossRoute) {
+              if (!explicitDelivery) {
                 try {
                   await streaming.start()
                 } catch (error) {
@@ -950,7 +968,7 @@ export namespace Channel {
                 // Boss-route (R6): no response cards, no attachment delivery, no
                 // terminal posting — the boss decides what reaches the user and
                 // sends it through an explicit channel_push tool call.
-                if (!isBossRoute) {
+                if (!explicitDelivery) {
                   const taskMessages = await loadChannelTaskMessages({ sessionID, rootID, terminal: result })
                   await ResponseCardRuntime.deliverTaskCards({
                     provider,
@@ -973,6 +991,7 @@ export namespace Channel {
                   }).catch((err) => log.warn("channel task attachments delivery failed", { sessionID, error: err }))
                 }
                 await reactionController.setDone()
+                if (orynRoute) await ChannelOryn.drain()
               } catch (err) {
                 // A busy Session must not surface a generation failure: persist the
                 // message as a durable inbox task with stable delivery identity so

@@ -722,6 +722,20 @@ export namespace OrynService {
       throw storeError("NOT_AUTHORIZED", "case does not belong to this session")
     }
     const record = caseId ? await OrynStore.getCaseForSource(caseId, binding.sourceKey) : undefined
+    const turn = input.turnID ? await OrynStore.channelTurn(input.callerSessionID, input.turnID) : undefined
+    if (input.turnID && !turn && (await OrynStore.channelSource(binding.sourceKey))) {
+      throw storeError("NOT_AUTHORIZED", "reply turn has no durable Channel source")
+    }
+    if (
+      turn &&
+      (turn.qaSessionId !== input.callerSessionID ||
+        turn.identity.accountId !== binding.identity?.accountId ||
+        turn.identity.chatId !== binding.identity?.chatId ||
+        turn.identity.threadId !== binding.identity?.threadId)
+    ) {
+      throw storeError("NOT_AUTHORIZED", "reply turn does not belong to this source")
+    }
+    const replySourceKey = turn ? sourceKey(turn.identity) : binding.sourceKey
     const conversational = input.kind === "answer" || input.kind === "clarification"
     if (conversational && !input.turnID) {
       throw storeError("NOT_AUTHORIZED", "a reply must be bound to its host-owned root turn")
@@ -730,7 +744,7 @@ export namespace OrynService {
     const dedupKey = externalIdentityHash(binding.sourceKey, caseId ?? "", input.kind, version ?? "")
     const { entry, created } = await OrynStore.writeOutbox({
       caseId,
-      sourceKeyHash: binding.sourceKey,
+      sourceKeyHash: replySourceKey,
       kind: input.kind,
       text: input.text,
       dedupKey,
@@ -746,10 +760,15 @@ export namespace OrynService {
   }) => Promise<void>
 
   let deliverer: OutboxDeliverer | undefined
+  let canDeliver: ((input: { sourceKey: string; identity: SourceIdentity }) => Promise<boolean>) | undefined
 
   /** L4 assembly injection: the product wiring provides the real provider delivery. */
-  export function setOutboxDeliverer(fn: OutboxDeliverer | undefined): void {
+  export function setOutboxDeliverer(
+    fn: OutboxDeliverer | undefined,
+    ready?: (input: { sourceKey: string; identity: SourceIdentity }) => Promise<boolean>,
+  ): void {
     deliverer = fn
+    canDeliver = ready
   }
 
   /**
@@ -771,6 +790,7 @@ export namespace OrynService {
       }
       const send = deliverer
       if (!send || !link.identity) continue
+      if (canDeliver && !(await canDeliver({ sourceKey: entry.sourceKey, identity: link.identity }))) continue
       if (!(await OrynStore.claimOutboxDelivery(entry.id))) continue
       try {
         await send({

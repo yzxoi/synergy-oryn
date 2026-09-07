@@ -180,6 +180,8 @@ Project worktrees may also be managed beneath a project-local Synergy area. Perm
 
 Oryn reply intents live under the `oryn/outbox` Storage namespace. Schema version 2 uses `pending` for definitely unsent intents and `ambiguous` for a claimed dispatch without a confirmed response. The `20260908-oryn-outbox-dispatch` central migration preserves record IDs and confirmed outcomes; version 1 pending records become ambiguous. See the [notification decision](../decisions/implemented/architecture/2026-09-08-oryn-notification-settlement.md) for settlement and rollback constraints.
 
+Oryn `channel_sources` records preserve provider reply targets keyed by hashed source identity; `channel_turns` maps a QA Session/root message to that source. They are version 1 host-owned records, written before durable Inbox acceptance and retained with the corresponding conversations and outbox during backup or restore. The current message target must not overwrite an earlier root's target.
+
 Stop the server before raw filesystem backup or relocation. For supported selective movement, use `synergy data pack`, `merge`, `move`, and `set-home`. Use session export/import for portable session artifacts.
 
 Never include `data/auth/` in a public diagnostics bundle, issue attachment, or repository commit.
