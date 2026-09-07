@@ -23,6 +23,22 @@ import { MessageV2 } from "../session/message-v2"
  * caller's direct child in the same tree.
  */
 export namespace BossService {
+  const taskReportProviders = new Map<string, (session: Session.Info, taskID: string) => Promise<boolean>>()
+
+  export function registerTaskReportProvider(
+    name: string,
+    provider: (session: Session.Info, taskID: string) => Promise<boolean>,
+  ) {
+    taskReportProviders.set(name, provider)
+  }
+
+  export async function hasTaskReport(session: Session.Info, taskID: string): Promise<boolean> {
+    for (const provider of taskReportProviders.values()) {
+      if (await provider(session, taskID)) return true
+    }
+    return false
+  }
+
   export class BossError extends Error {
     constructor(
       public readonly code: string,
@@ -246,12 +262,13 @@ export namespace BossService {
 
   /**
    * Assign a task to a direct child worker. Idempotent per
-   * (caller, taskID): the same deliveryKey yields one inbox delivery.
+   * (caller, taskID): the same deliveryKey yields one inbox delivery. Host
+   * integrations can preserve their existing durable delivery key.
    */
   export async function assign(
     callerID: string,
     input: { sessionID: string; taskID: string; task: string; context?: string; acceptance?: string[] },
-    options: { anchorMessageID?: string } = {},
+    options: { anchorMessageID?: string; deliveryKey?: string } = {},
   ): Promise<AssignResult> {
     const caller = await requireBoss(callerID)
     const target = await assertDirectChild(caller, input.sessionID)
@@ -259,7 +276,7 @@ export namespace BossService {
     if (!taskID) throw new BossError("invalid_task_id", "taskID is required")
     if (!input.task.trim()) throw new BossError("invalid_task", "task is required")
 
-    const deliveryKey = `boss:${caller.id}:${taskID}`
+    const deliveryKey = options.deliveryKey ?? `boss:${caller.id}:${taskID}`
     const taskTitle = input.task.trim().slice(0, 80)
     const channel =
       (await anchorFromUserMessage(caller.id, options.anchorMessageID)) ?? (await recentChannelAnchor(caller.id))

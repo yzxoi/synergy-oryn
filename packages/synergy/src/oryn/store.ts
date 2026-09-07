@@ -625,6 +625,21 @@ export namespace OrynStore {
   export async function writeWorkerReport(
     input: Omit<z.input<typeof WorkerReport>, "id" | "schemaVersion" | "createdAt">,
   ): Promise<WorkerReportT> {
+    using _lock = await Lock.write(
+      `oryn-report-request:${externalIdentityHash(input.caseId, input.assignmentId, input.requestKey)}`,
+    )
+    const payloadSchema = WorkerReport.omit({ id: true, schemaVersion: true, createdAt: true })
+    const payload = payloadSchema.parse(input)
+    const existing = (await listWorkerReports(input.caseId)).find(
+      (report) => report.assignmentId === input.assignmentId && report.requestKey === input.requestKey,
+    )
+    if (existing) {
+      const { id: _id, schemaVersion: _version, createdAt: _createdAt, ...existingPayload } = existing
+      if (JSON.stringify(payloadSchema.parse(existingPayload)) !== JSON.stringify(payload)) {
+        throw storeError("INVALID_STAGE", "result request key was already used with different content")
+      }
+      return existing
+    }
     const record = WorkerReport.parse({
       schemaVersion: 1,
       id: Identifier.ascending("oryn_run"),

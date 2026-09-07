@@ -1,3 +1,4 @@
+import { Lock } from "../util/lock"
 import { externalIdentityHash } from "../util/identity"
 import { Session } from "../session"
 import { SessionInteraction } from "../session/interaction"
@@ -89,6 +90,7 @@ function taskText(input: {
   const lines = [
     `Oryn assignment ${input.assignmentId} (stage: ${input.stage})`,
     `Case: ${input.caseId}`,
+    `Attempt: ${input.attemptId}`,
     `Summary: ${input.summary}`,
     input.observed ? `Observed: ${input.observed}` : undefined,
     input.expected ? `Expected: ${input.expected}` : undefined,
@@ -192,6 +194,7 @@ export namespace OrynService {
     reviewDomain?: ReviewDomain
   }): Promise<{ assignmentId: string; workerSessionId: string; deduped: boolean }> {
     await requireEnabled()
+    using _lock = await Lock.write(`oryn-case:${input.caseId}`)
     const binding = await requireBinding(input.callerSessionID, ["engineering"])
     if (binding.caseId !== input.caseId) {
       throw storeError("NOT_AUTHORIZED", "case does not belong to this engineering session")
@@ -201,12 +204,14 @@ export namespace OrynService {
       throw storeError("NOT_AUTHORIZED", "caller is not the case engineering root")
     }
     const attemptId = input.attemptId ?? record.activeAttemptId
+    if (attemptId !== record.activeAttemptId) throw storeError("INVALID_STAGE", "attempt is not active")
     if (!attemptId) throw storeError("INVALID_STAGE", "case has no active attempt", { caseId: input.caseId })
     const attempt = await OrynStore.getAttempt(input.caseId, attemptId)
     if (!attempt) throw storeError("NOT_AUTHORIZED", `attempt ${attemptId} not found`)
     if (
       attempt.disposition === "superseded" ||
       attempt.disposition === "failed" ||
+      attempt.disposition === "ready" ||
       attempt.disposition === "handed_off"
     ) {
       throw storeError("INVALID_STAGE", `attempt is ${attempt.disposition}`, { caseId: input.caseId })
@@ -214,8 +219,11 @@ export namespace OrynService {
     await assertStageAdmission(input.caseId, attemptId, input.stage)
 
     const existing = await OrynStore.findAssignmentByRequestKey(input.caseId, attemptId, input.requestKey)
-    if (existing?.sessionId) {
-      return { assignmentId: existing.id, workerSessionId: existing.sessionId, deduped: true }
+    if (existing && existing.epoch !== record.epoch) {
+      throw storeError("INVALID_STAGE", "assignment belongs to an invalidated epoch")
+    }
+    if (existing && (existing.stage !== input.stage || existing.reviewDomain !== input.reviewDomain)) {
+      throw storeError("INVALID_STAGE", "dispatch request key belongs to a different assignment")
     }
 
     const frozenInputsDigest = externalIdentityHash(
@@ -224,26 +232,30 @@ export namespace OrynService {
       record.acceptanceDigest,
       input.stage,
     )
-    const assignment = await OrynStore.createAssignment({
-      caseId: input.caseId,
-      attemptId,
-      stage: input.stage,
-      agentId: STAGE_AGENT[input.stage],
-      frozenInputsDigest,
-      epoch: record.epoch,
-      reviewDomain: input.reviewDomain,
-      requestKey: input.requestKey,
-    })
+    const assignment =
+      existing ??
+      (await OrynStore.createAssignment({
+        caseId: input.caseId,
+        attemptId,
+        stage: input.stage,
+        agentId: STAGE_AGENT[input.stage],
+        frozenInputsDigest,
+        epoch: record.epoch,
+        reviewDomain: input.reviewDomain,
+        requestKey: input.requestKey,
+      }))
 
-    const worker = await BossService.spawn(input.callerSessionID, {
-      role: input.stage,
-      agent: STAGE_AGENT[input.stage],
-      instructions: `Oryn case ${input.caseId}: ${input.stage} assignment.`,
-      // The code worker's worktree is pinned to the attempt baseline so the
-      // candidate branch shares the frozen base — never the caller's moving
-      // current checkout HEAD.
-      ...(input.stage === "code" ? { workspace: "worktree" as const, baseRevision: attempt.baselineSha } : {}),
-    })
+    const worker = assignment.sessionId
+      ? await Session.get(assignment.sessionId)
+      : await BossService.spawn(input.callerSessionID, {
+          role: input.stage,
+          agent: STAGE_AGENT[input.stage],
+          instructions: `Oryn case ${input.caseId}: ${input.stage} assignment.`,
+          // The code worker's worktree is pinned to the attempt baseline so the
+          // candidate branch shares the frozen base — never the caller's moving
+          // current checkout HEAD.
+          ...(input.stage === "code" ? { workspace: "worktree" as const, baseRevision: attempt.baselineSha } : {}),
+        })
     await OrynStore.setAssignmentSession(input.caseId, assignment.id, worker.id)
     if (input.stage === "code" && worker.workspace?.type === "git_worktree") {
       await OrynStore.setAssignmentWorkspace(input.caseId, assignment.id, worker.workspace.path)
@@ -257,39 +269,24 @@ export namespace OrynService {
       })
     }
 
-    const delivery = await SessionInbox.deliverUnique({
-      sessionID: worker.id,
-      deliveryKey: `oryn:${assignment.id}`,
-      mode: "task",
-      message: {
-        role: "user",
-        agent: STAGE_AGENT[input.stage],
-        origin: { type: "system", detail: "oryn_assign" },
-        visible: true,
-        parts: [
-          {
-            type: "text",
-            text: taskText({
-              caseId: input.caseId,
-              attemptId,
-              assignmentId: assignment.id,
-              stage: input.stage,
-              summary: record.summary,
-              observed: record.observed,
-              expected: record.expected,
-            }),
-          },
-        ],
-        metadata: {
-          orynCaseId: input.caseId,
-          orynAttemptId: attemptId,
-          orynAssignmentId: assignment.id,
-        },
-        summary: { title: `Oryn ${input.stage} assignment` },
+    await BossService.assign(
+      input.callerSessionID,
+      {
+        sessionID: worker.id,
+        taskID: assignment.id,
+        task: taskText({
+          caseId: input.caseId,
+          attemptId,
+          assignmentId: assignment.id,
+          stage: input.stage,
+          summary: record.summary,
+          observed: record.observed,
+          expected: record.expected,
+        }),
       },
-    })
-    if (delivery.created) SessionManager.scheduleWake(worker.id, "oryn_assign")
-    return { assignmentId: assignment.id, workerSessionId: worker.id, deduped: false }
+      { deliveryKey: `oryn:${assignment.id}` },
+    )
+    return { assignmentId: assignment.id, workerSessionId: worker.id, deduped: existing !== undefined }
   }
 
   /**
@@ -314,6 +311,7 @@ export namespace OrynService {
     limitations?: string[]
   }): Promise<{ reportId: string; accepted: boolean; stale: boolean }> {
     await requireEnabled()
+    using _lock = await Lock.write(`oryn-case:${input.caseId}`)
     await requireBinding(input.callerSessionID, ["worker"])
     const assignment = await OrynStore.getAssignment(input.caseId, input.assignmentId)
     if (!assignment) throw storeError("NOT_AUTHORIZED", `assignment ${input.assignmentId} not found`)
@@ -322,6 +320,12 @@ export namespace OrynService {
     }
     if (assignment.attemptId !== input.attemptId) {
       throw storeError("INVALID_STAGE", "assignment belongs to a different attempt")
+    }
+    const expectedKind = { repro: "repro", code: "candidate", verify: "verification", review: "review_note" }[
+      assignment.stage
+    ]
+    if (input.kind !== expectedKind) {
+      throw storeError("INVALID_STAGE", "report kind does not match the assigned stage")
     }
     const record = await OrynStore.getCase(input.caseId)
     if (!record) throw storeError("NOT_AUTHORIZED", `case ${input.caseId} not found`)
@@ -343,7 +347,14 @@ export namespace OrynService {
       limitations: input.limitations ?? [],
     })
 
-    if (record.epoch !== assignment.epoch) {
+    const attempt = await OrynStore.getAttempt(input.caseId, input.attemptId)
+    if (
+      record.epoch !== assignment.epoch ||
+      record.control !== "active" ||
+      record.activeAttemptId !== input.attemptId ||
+      !attempt ||
+      ["superseded", "failed", "handed_off", "ready"].includes(attempt.disposition)
+    ) {
       return { reportId: report.id, accepted: false, stale: true }
     }
 
@@ -357,6 +368,31 @@ export namespace OrynService {
     }
     for (const runId of input.runIds ?? []) {
       await OrynStore.attachRunEvidence(input.caseId, input.attemptId, runId)
+    }
+    if (record.engineeringSessionId) {
+      const delivery = await SessionInbox.deliverUnique({
+        sessionID: record.engineeringSessionId,
+        deliveryKey: `oryn-result:${report.id}`,
+        mode: "steer",
+        message: {
+          role: "user",
+          origin: { type: "system", detail: "oryn_result" },
+          visible: true,
+          parts: [
+            {
+              type: "text",
+              text: `Oryn ${assignment.stage} result ${report.id} for assignment ${assignment.id} (attempt ${input.attemptId}): ${report.outcome}. Read the structured report before choosing the next step. Acceptance records receipt of the worker judgment, not verification of its claims.`,
+            },
+          ],
+          metadata: {
+            orynCaseId: input.caseId,
+            orynAttemptId: input.attemptId,
+            orynAssignmentId: assignment.id,
+            orynReportId: report.id,
+          },
+        },
+      })
+      if (delivery.created) SessionManager.scheduleWake(record.engineeringSessionId, "oryn_result")
     }
     return { reportId: report.id, accepted: true, stale: false }
   }

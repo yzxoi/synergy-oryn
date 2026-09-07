@@ -3,6 +3,7 @@ import { Session } from "../session/index"
 import { ContinuationKernel } from "../session/continuation-kernel"
 import { SessionInbox } from "../session/inbox"
 import { bossAssignmentMetadata } from "./boss-message"
+import { BossService } from "./boss"
 
 const BOSS_REPORT_TOOL = "boss_report"
 
@@ -31,6 +32,8 @@ export const BossContinuationPolicy: ContinuationKernel.Policy = {
     const latestTask = latestTaskUserMessage(messages, gate.session)
     if (!latestTask) return undefined
     if (hasReported(messages, latestTask.info.id)) return undefined
+    const assignment = bossAssignmentMetadata(latestTask.info, gate.session)
+    if (assignment && (await BossService.hasTaskReport(gate.session, assignment.taskID))) return undefined
 
     return {
       kind: "inbox",

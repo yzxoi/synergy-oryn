@@ -1,4 +1,6 @@
 import { ToolRegistry } from "../tool/registry"
+import { BossService } from "../boss/boss"
+import { OrynStore } from "./store"
 import { registerOrynTools } from "./tools"
 import "./migration"
 
@@ -22,4 +24,12 @@ export function registerOrynDomain(): void {
   registered = true
 
   ToolRegistry.registerToolProvider("oryn", registerOrynTools)
+  BossService.registerTaskReportProvider("oryn", async (session, taskID) => {
+    if (!["oryn-repro", "oryn-code", "oryn-review"].includes(session.agentOverride ?? "")) return false
+    const sessionID = session.id
+    const binding = await OrynStore.sessionSourceBinding(sessionID)
+    if (binding?.role !== "worker" || !binding.caseId) return false
+    const assignment = await OrynStore.getAssignment(binding.caseId, taskID)
+    return assignment?.sessionId === sessionID && Boolean(assignment.acceptedReportId)
+  })
 }
