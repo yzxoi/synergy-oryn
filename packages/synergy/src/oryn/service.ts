@@ -15,8 +15,9 @@ import { OrynConfig } from "./config"
 import { OrynEngineering } from "./engineering"
 import { OrynReports } from "./reports"
 import { OrynReady } from "./ready"
+import { OrynReviewPolicy } from "./review-policy"
 import { OrynEvidence } from "./evidence"
-import { Finding as FindingSchema } from "./schema"
+import { Finding as FindingSchema, REVIEW_POLICY_VERSION } from "./schema"
 import type { Case, Finding, OutboxEntry, ReviewDomain, RunReceipt, SourceIdentity, Stage } from "./schema"
 import { OrynExecutor } from "./executor"
 
@@ -135,6 +136,7 @@ function taskText(input: {
     `Baseline: ${input.baselineSha}`,
     input.candidateSha ? `Candidate: ${input.candidateSha}` : undefined,
     input.stage === "review" ? `Review domain: ${input.reviewDomain ?? "general"}` : undefined,
+    input.stage === "review" ? `Review policy: ${REVIEW_POLICY_VERSION}` : undefined,
     `Summary: ${input.summary}`,
     input.observed ? `Observed: ${input.observed}` : undefined,
     input.expected ? `Expected: ${input.expected}` : undefined,
@@ -374,12 +376,9 @@ export namespace OrynService {
         throw storeError("INVALID_STAGE", "Attempt already has a code writer; replay its request or start rework")
     }
 
-    const frozenInputsDigest = externalIdentityHash(
-      attempt.baselineSha,
-      attempt.candidateSha ?? "",
-      record.acceptanceDigest,
-      input.stage,
-    )
+    const frozenInputsDigest = OrynEvidence.assignmentDigest(record, attempt, input.stage)
+    if (existing && input.stage === "review" && existing.frozenInputsDigest !== frozenInputsDigest)
+      throw storeError("INVALID_STAGE", "assignment inputs changed; request a new review with a fresh key")
     const assignment =
       existing ??
       (await OrynStore.createAssignment({
@@ -725,8 +724,7 @@ export namespace OrynService {
       record.control !== "active" ||
       record.activeAttemptId !== input.attemptId ||
       attempt.disposition !== "candidate_frozen" ||
-      assignment.frozenInputsDigest !==
-        externalIdentityHash(attempt.baselineSha, attempt.candidateSha ?? "", record.acceptanceDigest, "review")
+      assignment.frozenInputsDigest !== OrynEvidence.assignmentDigest(record, attempt, "review")
     ) {
       return { reviewId: report.id, accepted: false, stale: true }
     }
@@ -922,6 +920,14 @@ export namespace OrynService {
         "general",
         ...assignments.filter((item) => item.stage === "review").map((item) => item.reviewDomain ?? "general"),
       ])
+      try {
+        for (const domain of (await OrynReviewPolicy.requirements(record, attempt)).domains) requiredDomains.add(domain)
+      } catch {
+        failures.push({
+          code: "STALE_HEAD",
+          message: "required review domains could not be verified from the candidate",
+        })
+      }
       const accepted = new Map(
         assignments
           .filter(
@@ -956,8 +962,7 @@ export namespace OrynService {
           latest.baseSha !== attempt.baselineSha ||
           latest.policyDigest !== policyDigest ||
           latest.evidenceDigest !== evidenceDigest ||
-          accepted.get(latest.id)?.frozenInputsDigest !==
-            externalIdentityHash(attempt.baselineSha, attempt.candidateSha ?? "", record.acceptanceDigest, "review")
+          accepted.get(latest.id)?.frozenInputsDigest !== OrynEvidence.assignmentDigest(record, attempt, "review")
         ) {
           failures.push({ code: "STALE_HEAD", message: `${domain} review snapshot is stale` })
         }

@@ -110,6 +110,10 @@ Enable Oryn only after all of the following hold:
 
 Worker completion does not imply verified behavior. Reproduction and verification claims must reference the reporting assignment’s actual runs, with matching source and approved plan; delivery requires an independent verifier report. Environment failures remain inconclusive. See [report evidence validation](../decisions/implemented/bug-fix/2026-09-08-oryn-report-execution-evidence.md) for the guarantees and remaining authenticity limits.
 
+Engineering must obtain `reviewRequirements` from `oryn_case get` after freezing a candidate and dispatch a separate reviewer for every required domain. The Host calculates the minimum from cumulative Case changes, including deletions; a general review cannot substitute for a required specialist. Keep the original baseline and candidate objects and the assigned code worktree available through delivery. Run `bun run test test/oryn/review-policy.test.ts test/oryn/publish.test.ts test/oryn/review.test.ts` from `packages/synergy` when validating review-policy changes.
+
+A review-policy upgrade invalidates existing review fingerprints without rewriting their historical reports. For an active frozen candidate, request new reviewer Assignments with fresh request keys under the new binary; replaying an old review key fails. Acknowledged remote publications remain historical facts, while ready notifications recheck the current gate. Already-ready or unresolved publications require operator reconciliation before further automation; do not clear receipts, fabricate new fingerprints or roll back to an older policy to bypass review.
+
 The `oryn/delivery` check run is written only when `oryn.repositories[alias].deliveryCheck` is `true` (default `false`). Follow this sequence when turning it on:
 
 1. On an explicitly authorized test repository, enable `deliveryCheck: true` while leaving the check out of branch protection. With the flag false, no check is written and a canary cannot verify it.

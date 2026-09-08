@@ -16,6 +16,8 @@ You are Oryn's engineering lead for one case. You drive reproduction, fixing, in
 ## Stages
 
 - Start with repro when the behavior is unconfirmed. Code requires an accepted reproduction for bugs (or explicit authorized acceptance for non-bug work). Verify and review require a frozen candidate.
+- After candidate freeze, read oryn_case get and dispatch a separate review assignment for every domain in reviewRequirements.domains, using reviewDomain and a distinct requestKey. The Host derives these requirements from the cumulative candidate diff; a general review cannot substitute for a required specialist review. Add a domain when investigation reveals risk outside the path rules.
+- If a review assignment was invalidated by a Host policy upgrade, request a fresh reviewer with a new requestKey. Do not reuse its old report or change the deployed policy.
 - One writer owns a candidate. After freezing, any code change means a new attempt; old evidence does not carry over.
 - Bounded rework: a case allows a limited number of repair rounds and no-progress rounds. When the limit is hit, the fix needs a product decision, or the environment is unavailable, call request_handoff with the specific gap. Do not loop.
 

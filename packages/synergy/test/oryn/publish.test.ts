@@ -1,3 +1,11 @@
+import { OrynReviewPolicy } from "../../src/oryn/review-policy"
+import { OrynGit } from "../../src/oryn/git"
+import { OrynPath } from "../../src/oryn/path"
+import { Storage } from "../../src/storage/storage"
+import { externalIdentityHash } from "../../src/util/identity"
+import { OrynControl } from "../../src/oryn/control"
+import { OrynCaseTool } from "../../src/oryn/tools"
+import { Session } from "../../src/session"
 import { describe, expect, test } from "bun:test"
 import { Scope } from "../../src/scope"
 import { ScopeContext } from "../../src/scope/context"
@@ -55,7 +63,7 @@ async function activeAttemptId(caseId: string): Promise<string> {
 type Frozen = { caseId: string; engineeringSessionId: string; attemptId: string; candidateSha: string }
 
 /** Case → engineering root → failing baseline → repro → code → frozen candidate. */
-async function seedFrozen(root: string): Promise<Frozen> {
+async function seedFrozen(root: string, paths = ["publication-fixture.txt"]): Promise<Frozen> {
   const identity = feishuIdentity(`chat_${Math.random().toString(36).slice(2, 8)}`)
   await OrynStore.bindSessionSource({ sessionID: "ses_qa_pub", identity, role: "qa" })
   const turnID = `turn_${identity.messageId}`
@@ -120,8 +128,8 @@ async function seedFrozen(root: string): Promise<Frozen> {
     requestKey: "rk_code_pub",
   })
   const assignment = (await OrynStore.getAssignment(caseId, code.assignmentId))!
-  await Bun.write(`${assignment.workspaceRef}/publication-fixture.txt`, "Fixed candidate fixture\n")
-  await Bun.$`git add -- publication-fixture.txt`.cwd(assignment.workspaceRef!).quiet()
+  for (const file of paths) await Bun.write(`${assignment.workspaceRef}/${file}`, "Fixed candidate fixture\n")
+  await Bun.$`git add -- ${paths}`.cwd(assignment.workspaceRef!).quiet()
   await Bun.$`git -c user.name=Fixture -c user.email=fixture@example.test commit -m ${"fix: update publication fixture\n\nCo-authored-by: synergy-agent <299070056+synergy-agent@users.noreply.github.com>"}`
     .cwd(assignment.workspaceRef!)
     .quiet()
@@ -1207,5 +1215,181 @@ test("a label receipt cannot acknowledge a model publication through a reused re
         requestKey: "shared-request",
       }),
     ).rejects.toThrow("different publication operation")
+  })
+})
+
+test("Host requires risk-domain reviews even when engineering only requested general review", async () => {
+  await withPubScope(async (root) => {
+    const seeded = await seedFrozen(root, ["src/channel/credentials/storage.ts", ".github/workflows/release.yml"])
+    await verifyFrozen(seeded)
+    const visible = await (
+      await OrynCaseTool.init()
+    ).execute(
+      { input: { action: "get", caseId: seeded.caseId } },
+      {
+        sessionID: seeded.engineeringSessionId,
+        messageID: "requirements",
+        agent: "oryn-work",
+        abort: new AbortController().signal,
+        metadata() {},
+        async ask() {},
+      },
+    )
+    expect(JSON.parse(visible.output).reviewRequirements).toMatchObject({
+      headSha: seeded.candidateSha,
+      domains: ["general", "persistence", "security", "channel", "publishing"],
+    })
+    const gate = () =>
+      OrynService.evaluateDelivery({
+        callerSessionID: seeded.engineeringSessionId,
+        caseId: seeded.caseId,
+        payload: `Verified candidate ${seeded.candidateSha}`,
+        ciStatus: "passed",
+      })
+    const missing = await gate()
+    expect(missing.ready).toBe(false)
+    for (const domain of ["persistence", "security", "channel", "publishing"] as const) {
+      expect(missing.failures.some((failure) => failure.message.includes(domain))).toBe(true)
+      const assignment = await OrynService.dispatch({
+        callerSessionID: seeded.engineeringSessionId,
+        caseId: seeded.caseId,
+        stage: "review",
+        requestKey: `risk-${domain}`,
+        reviewDomain: domain,
+      })
+      await OrynService.submitReview({
+        callerSessionID: assignment.workerSessionId,
+        caseId: seeded.caseId,
+        attemptId: seeded.attemptId,
+        assignmentId: assignment.assignmentId,
+        requestKey: `risk-report-${domain}`,
+        headSha: seeded.candidateSha,
+        baseSha: (await OrynStore.getAttempt(seeded.caseId, seeded.attemptId))!.baselineSha,
+        domain,
+        findings: [],
+        evidenceAssessment: `Independent ${domain} evidence reviewed`,
+        recommendation: "ready_for_human",
+      })
+    }
+    expect(await gate()).toMatchObject({ ready: true, failures: [] })
+    const reviews = (await OrynStore.listAssignments(seeded.caseId)).filter(
+      (assignment) => assignment.stage === "review",
+    )
+    expect(new Set(reviews.map((assignment) => assignment.sessionId)).size).toBe(5)
+  })
+})
+
+test("repair review requirements retain earlier sensitive changes in the cumulative PR diff", async () => {
+  await withPubScope(async (root) => {
+    const seeded = await seedFrozen(root, ["src/security/check.ts"])
+    const initial = (await OrynStore.getAttempt(seeded.caseId, seeded.attemptId))!
+    const next = await OrynService.rework({
+      callerSessionID: seeded.engineeringSessionId,
+      caseId: seeded.caseId,
+      reason: "fix another part",
+    })
+    const worker = await OrynService.dispatch({
+      callerSessionID: seeded.engineeringSessionId,
+      caseId: seeded.caseId,
+      stage: "code",
+      requestKey: "repair-code",
+    })
+    const assignment = (await OrynStore.getAssignment(seeded.caseId, worker.assignmentId))!
+    await Bun.write(`${assignment.workspaceRef}/ordinary.txt`, "repair\n")
+    await Bun.$`git add -- ordinary.txt`.cwd(assignment.workspaceRef!).quiet()
+    await Bun.$`git -c user.name=Fixture -c user.email=fixture@example.test commit -m "fix: repair ordinary behavior"`
+      .cwd(assignment.workspaceRef!)
+      .quiet()
+    const head = await headSha(assignment.workspaceRef!)
+    await OrynService.submitResult({
+      callerSessionID: worker.workerSessionId,
+      caseId: seeded.caseId,
+      attemptId: next.attemptId,
+      assignmentId: worker.assignmentId,
+      requestKey: "repair-candidate",
+      kind: "candidate",
+      outcome: "candidate_ready",
+      summary: "ordinary repair",
+      candidateSha: head,
+    })
+    const attempt = (await OrynStore.getAttempt(seeded.caseId, next.attemptId))!
+    expect(
+      OrynReviewPolicy.classify(await OrynGit.changes(assignment.workspaceRef!, attempt.baselineSha, head)),
+    ).toEqual(["general"])
+    expect(await OrynReviewPolicy.requirements((await OrynStore.getCase(seeded.caseId))!, attempt)).toMatchObject({
+      baseSha: initial.baselineSha,
+      headSha: head,
+      domains: ["general", "security"],
+    })
+  })
+})
+
+test("a previous policy's review stays stale and cannot resume or replay as a current assignment", async () => {
+  await withPubScope(async (root) => {
+    const seeded = await seedFrozen(root)
+    await verifyFrozen(seeded)
+    const assignment = (await OrynStore.listAssignments(seeded.caseId)).find((item) => item.stage === "review")!
+    const record = (await OrynStore.getCase(seeded.caseId))!
+    const attempt = (await OrynStore.getAttempt(seeded.caseId, seeded.attemptId))!
+    const report = (await OrynStore.getReview(seeded.caseId, assignment.acceptedReportId!))!
+    await Storage.write(OrynPath.assignment(seeded.caseId, assignment.id), {
+      ...assignment,
+      frozenInputsDigest: externalIdentityHash(
+        attempt.baselineSha,
+        attempt.candidateSha!,
+        record.acceptanceDigest,
+        "review",
+      ),
+    })
+    await Storage.write(OrynPath.review(seeded.caseId, report.id), {
+      ...report,
+      policyDigest: externalIdentityHash(record.acceptanceDigest),
+    })
+    expect(await OrynControl.canRun(await Session.get(assignment.sessionId!))).toBe(false)
+    await expect(
+      OrynService.dispatch({
+        callerSessionID: seeded.engineeringSessionId,
+        caseId: seeded.caseId,
+        stage: "review",
+        requestKey: "ready-review",
+      }),
+    ).rejects.toMatchObject({ data: { code: "INVALID_STAGE" } })
+    const gate = await OrynService.evaluateDelivery({
+      callerSessionID: seeded.engineeringSessionId,
+      caseId: seeded.caseId,
+      payload: `Verified candidate ${seeded.candidateSha}`,
+      ciStatus: "passed",
+    })
+    expect(gate.ready).toBe(false)
+    expect(gate.failures).toContainEqual({ code: "STALE_HEAD", message: "general review snapshot is stale" })
+    const fresh = await OrynService.dispatch({
+      callerSessionID: seeded.engineeringSessionId,
+      caseId: seeded.caseId,
+      stage: "review",
+      requestKey: "current-policy-review",
+    })
+    expect(fresh.workerSessionId).not.toBe(assignment.sessionId!)
+    expect(
+      await OrynService.submitReview({
+        callerSessionID: fresh.workerSessionId,
+        caseId: seeded.caseId,
+        attemptId: seeded.attemptId,
+        assignmentId: fresh.assignmentId,
+        requestKey: "current-policy-report",
+        headSha: seeded.candidateSha,
+        baseSha: attempt.baselineSha,
+        findings: [],
+        evidenceAssessment: "Candidate reviewed under the current policy",
+        recommendation: "ready_for_human",
+      }),
+    ).toMatchObject({ accepted: true, stale: false })
+    expect(
+      await OrynService.evaluateDelivery({
+        callerSessionID: seeded.engineeringSessionId,
+        caseId: seeded.caseId,
+        payload: `Verified candidate ${seeded.candidateSha}`,
+        ciStatus: "passed",
+      }),
+    ).toMatchObject({ ready: true, failures: [] })
   })
 })

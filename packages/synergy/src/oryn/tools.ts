@@ -9,6 +9,7 @@ import { OrynService } from "./service"
 import { OrynEngineering } from "./engineering"
 import { OrynStore, OrynStoreError } from "./store"
 import { OrynCandidateCommit } from "./candidate-commit"
+import { OrynReviewPolicy } from "./review-policy"
 import { OrynConfig } from "./config"
 
 function toolError(code: string, message: string): Error {
@@ -144,6 +145,12 @@ export const OrynCaseTool = Tool.define(
               {
                 caseId: record.id,
                 reviewReports,
+                reviewRequirements: attempt?.candidateSha
+                  ? await OrynReviewPolicy.requirements(record, attempt).catch(() => ({
+                      error:
+                        "Candidate review requirements are unavailable; restore its assigned worktree or request human handoff",
+                    }))
+                  : undefined,
                 engineering: engineering ? { state: engineering.state, reason: engineering.reason } : undefined,
                 attempt: attempt
                   ? {

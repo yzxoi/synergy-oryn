@@ -8,6 +8,7 @@ import { ToolScheduler } from "../session/tool-scheduler"
 import { Lock } from "../util/lock"
 import { Log } from "../util/log"
 import { OrynOwnership } from "./ownership"
+import { OrynEvidence } from "./evidence"
 import { OrynConfig } from "./config"
 import { OrynStore, storeError } from "./store"
 import type { Case } from "./schema"
@@ -36,6 +37,12 @@ export namespace OrynControl {
     )
       return false
     const attempt = await OrynStore.getAttempt(record.id, assignment.attemptId)
+    if (
+      attempt &&
+      assignment.stage === "review" &&
+      assignment.frozenInputsDigest !== OrynEvidence.assignmentDigest(record, attempt, "review")
+    )
+      return false
     return !!attempt && ["open", "candidate_frozen"].includes(attempt.disposition)
   }
 

@@ -1,6 +1,36 @@
 import { storeError } from "./store"
 
 export namespace OrynGit {
+  export type Change = { status: string; path: string }
+
+  export async function changes(directory: string, baseline: string, candidate: string): Promise<Change[]> {
+    if (![baseline, candidate].every((sha) => /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(sha)))
+      throw storeError("INVALID_STAGE", "publication requires full source versions")
+    const raw = await OrynGit.read(directory, [
+      "diff",
+      "--name-status",
+      "-z",
+      "--no-renames",
+      "--no-ext-diff",
+      "--no-textconv",
+      baseline,
+      candidate,
+      "--",
+    ])
+    const fields = raw.split("\0")
+    if (fields.at(-1) === "") fields.pop()
+    if (fields.length % 2) throw storeError("INVALID_STAGE", "candidate change list is incomplete")
+    const changes: Change[] = []
+    for (let index = 0; index < fields.length; index += 2) {
+      const status = fields[index]!
+      const path = fields[index + 1]!
+      if (!/^[AMDTUXB]$/.test(status) || !path || path.startsWith("/") || path.split("/").includes(".."))
+        throw storeError("INVALID_STAGE", "candidate change list is invalid")
+      changes.push({ status, path })
+    }
+    return changes
+  }
+
   export function environment() {
     return {
       PATH: process.env.PATH ?? "",

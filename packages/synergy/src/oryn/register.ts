@@ -9,7 +9,7 @@ import { OrynStore } from "./store"
 import { registerOrynTools, CheckParameters, ResultParameters } from "./tools"
 import { ToolExecutor } from "../session/tool-executor"
 import { OrynExecutor } from "./executor"
-import { externalIdentityHash } from "../util/identity"
+import { OrynEvidence } from "./evidence"
 import "./migration"
 
 /**
@@ -65,8 +65,7 @@ export function registerOrynDomain(): void {
     if (!attempt || ["superseded", "failed", "handed_off", "ready"].includes(attempt.disposition)) return true
     if (
       assignment.stage === "review" &&
-      assignment.frozenInputsDigest !==
-        externalIdentityHash(attempt.baselineSha, attempt.candidateSha ?? "", record.acceptanceDigest, "review")
+      assignment.frozenInputsDigest !== OrynEvidence.assignmentDigest(record, attempt, "review")
     )
       return true
     if (assignment.stage === "review")

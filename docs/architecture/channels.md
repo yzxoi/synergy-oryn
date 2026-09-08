@@ -48,6 +48,8 @@ Human handoff persists the reason and Case epoch before writing one outbox inten
 
 Oryn code workers prepare local commits through `oryn_result` with `input.kind: commit_candidate`. The Host validates explicit paths and the active assignment, stages in a private index, and updates only its assigned branch against the expected baseline. Candidate report acceptance, independent verification and publication remain separate. The generic shell does not gain shared Git metadata access; see [Host candidate commits](../decisions/implemented/bug-fix/2026-09-08-oryn-host-candidate-commit.md).
 
+The Oryn delivery gate derives minimum review domains from the verified Git diff between the original Case baseline and the frozen candidate. General review is mandatory; sensitive paths additionally require security, persistence, Channel or publishing review. Deleted paths participate, and domains requested during earlier Attempts remain required. Engineering and review workers read `reviewRequirements` through `oryn_case get`; unreadable candidate state returns an unavailable result and blocks delivery. Path classification is a minimum, so semantic risks outside those rules need additional review. The policy version participates in review Assignment and report fingerprints; an older policy cannot satisfy the gate or resume its reviewer as current. See [Host review requirements](../decisions/implemented/bug-fix/2026-09-08-oryn-required-review-domains.md).
+
 ## Provider and Transport Lifecycle
 
 Every provider declares one lifecycle:

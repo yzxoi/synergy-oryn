@@ -1,11 +1,22 @@
 import { externalIdentityHash } from "../util/identity"
+import { REVIEW_POLICY_VERSION } from "./schema"
 import type { Assignment, Attempt, Case, CheckPlan, RunReceipt, WorkerReport } from "./schema"
 import { OrynStore, storeError } from "./store"
 
 export namespace OrynEvidence {
+  export function assignmentDigest(
+    record: Pick<Case, "acceptanceDigest">,
+    attempt: Pick<Attempt, "baselineSha" | "candidateSha">,
+    stage: Assignment["stage"],
+  ) {
+    const fields = [attempt.baselineSha, attempt.candidateSha ?? "", record.acceptanceDigest, stage]
+    if (stage === "review") fields.push(REVIEW_POLICY_VERSION)
+    return externalIdentityHash(...fields)
+  }
+
   export function reviewDigests(record: Pick<Case, "acceptanceDigest">, attempt: Pick<Attempt, "evidenceRunIds">) {
     return {
-      policyDigest: externalIdentityHash(record.acceptanceDigest),
+      policyDigest: externalIdentityHash(record.acceptanceDigest, REVIEW_POLICY_VERSION),
       evidenceDigest: externalIdentityHash(JSON.stringify(attempt.evidenceRunIds)),
     }
   }

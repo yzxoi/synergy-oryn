@@ -55,6 +55,8 @@ export type FindingSeverity = z.infer<typeof FindingSeverity>
 export const FindingDisposition = z.enum(["open", "resolved", "rejected_with_evidence", "still_open"])
 export type FindingDisposition = z.infer<typeof FindingDisposition>
 
+export const REVIEW_POLICY_VERSION = "oryn-review-paths-v1"
+
 export const ReviewDomain = z.enum(["general", "persistence", "security", "channel", "publishing"])
 export type ReviewDomain = z.infer<typeof ReviewDomain>
 
