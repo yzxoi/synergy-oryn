@@ -1,3 +1,5 @@
+import { BashExecutionPolicy } from "../tool/bash/policy"
+import { OrynShell } from "./shell"
 import { ToolRegistry } from "../tool/registry"
 import { BossService } from "../boss/boss"
 import { OrynStore } from "./store"
@@ -25,6 +27,7 @@ let registered = false
 export function registerOrynDomain(): void {
   if (registered) return
   registered = true
+  BashExecutionPolicy.register("oryn", OrynShell.resolve)
 
   ToolRegistry.registerToolProvider("oryn", registerOrynTools)
   ToolExecutor.registerAdmissionProvider("oryn_check", async (input) => {

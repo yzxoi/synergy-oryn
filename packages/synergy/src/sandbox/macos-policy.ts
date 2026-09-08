@@ -268,6 +268,13 @@ export namespace MacOSPolicy {
 (allow file-read* (literal "/dev/urandom") (literal "/dev/random"))`,
     )
 
+    if (!fs.includePlatformDefaults) {
+      const ancestors = new Set(
+        [...fs.readableRoots, ...fs.writableRoots].flatMap((root) => ancestorLiterals(canonicalize(root))),
+      )
+      for (const root of ancestors) lines.push(`(allow file-read-metadata (literal "${escapeSbpl(root)}"))`)
+    }
+
     // 3. Readable roots — parameterized allow rules
     for (let i = 0; i < fs.readableRoots.length; i++) {
       lines.push(paramReadRule(readParamName(i)))

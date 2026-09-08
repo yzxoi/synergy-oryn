@@ -30,6 +30,7 @@ import { Scope } from "@/scope"
 import { ScopeContext } from "@/scope/context"
 import { EnforcementGate, type Capability, type GateOptions } from "@/enforcement/gate"
 import { SandboxBackend } from "@/sandbox/backend"
+import { BashExecutionPolicy } from "@/tool/bash/policy"
 import type { BashSandboxPrepare } from "@/tool/bash/shared"
 import type { ResolvedProfile } from "@/control-profile/types"
 import { EnforcementError } from "@/enforcement/errors"
@@ -1585,6 +1586,18 @@ export namespace ToolResolver {
 
                 // ── Sandbox wrapping for bash ──────────────────────────
                 if (item.id === "bash") {
+                  const policy = await BashExecutionPolicy.resolve({
+                    sessionID: ctx.sessionID,
+                    agent: ctx.agent,
+                    workspace,
+                    abort: combinedAbort,
+                  })
+                  if (policy) {
+                    if (item.source || Object.hasOwn(args, "targetID") || Object.hasOwn(args, "linkID"))
+                      throw new Error("Host shell execution policy requires the built-in local bash executor")
+                    ;(toolCtx.extra as { bashExecutionPolicy?: BashExecutionPolicy.Policy }).bashExecutionPolicy =
+                      policy
+                  }
                   const sandbox = gate.getSandbox()
                   if (sandbox.mode !== "none" && !shouldBypassShellSandbox(ctx)) {
                     // Register externally-approved roots into the gate so the

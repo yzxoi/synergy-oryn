@@ -6,7 +6,7 @@ import type { OrynExecutionProfile } from "../config/schema"
 import { SandboxBackend } from "../sandbox/backend"
 import { storeError } from "./store"
 
-const SYSTEM_READ_ROOTS = [
+export const SYSTEM_READ_ROOTS = [
   "/bin",
   "/sbin",
   "/usr/bin",
