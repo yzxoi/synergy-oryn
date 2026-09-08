@@ -212,6 +212,12 @@ export namespace OrynGithubRuntime {
             })
           continue
         }
+        if (
+          !record.engineeringSessionId &&
+          work.mode === "review" &&
+          (work.snapshot.draft || (bound.config.github?.autoReview === false && !work.authorizedBy))
+        )
+          continue
         if (!(await OrynGithub.authorized(work, "run"))) {
           if (record.control === "active")
             controls.push({ caseId: record.id, expectedRevision: record.revision, action: "pause" })

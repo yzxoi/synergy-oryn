@@ -24,4 +24,6 @@ ActionReceipt schema version 3 stores a fixed label target. The centrally regist
 
 ## Consequences
 
+The App-authorship requirement remains the default for owned artifacts. [Tracked contributor labels](../feature/2026-09-09-oryn-tracked-emoji-labels.md) adds Host-authorized Issue/PR targets under the current repository binding and maps stable IDs to emoji display names.
+
 Behavioral tests cover projection, known-label ownership, human priority beyond page one, exact App identity, pre-write takeover, lost-response and in-flight recovery, bounded failure and fresh/legacy migration. The network is mocked. Label definitions and live App scopes remain deployment setup, documented in the runbook. Temporary mixed stage labels can occur between individual GitHub requests; readiness continues to depend on delivery evidence and checks, not label text.

@@ -5,9 +5,12 @@ import { OrynLabel, type LabelTarget, type Case, type Attempt, type Assignment }
 import { OrynConfig } from "./config"
 import { OrynStore, storeError } from "./store"
 import { caseMarker, orynBranch } from "./publish"
+import { OrynLabelCatalog } from "./label-catalog"
+import { OrynGithubStore } from "./github-store"
+import { OrynGithub } from "./github"
 
 export type LabelSnapshot = { labels: string[]; owned: boolean }
-export type LabelRead = LabelTarget & { marker: string; branch: string }
+export type LabelRead = LabelTarget & { marker: string; branch: string; tracked?: boolean }
 export type LabelTransport = {
   observe(input: LabelRead): Promise<LabelSnapshot>
   apply(input: LabelRead & { add: OrynLabel[]; remove: OrynLabel[]; beforeWrite: () => Promise<void> }): Promise<void>
@@ -41,11 +44,12 @@ export namespace OrynLabels {
   }
 
   export function delta(current: string[], wanted: OrynLabel[]): { add: OrynLabel[]; remove: OrynLabel[] } {
-    const existing = new Set(current)
-    const priorityPresent = current.some((label) => label.startsWith("oryn:priority/"))
+    const normalized = current.map((label) => OrynLabelCatalog.id(label) ?? label)
+    const existing = new Set(normalized)
+    const priorityPresent = normalized.some((label) => label.startsWith("oryn:priority/"))
     return {
       add: wanted.filter((label) => !existing.has(label) && !(priorityPresent && label.startsWith("oryn:priority/"))),
-      remove: current.filter(
+      remove: [...new Set(normalized)].filter(
         (label): label is OrynLabel =>
           OrynLabel.safeParse(label).success &&
           !label.startsWith("oryn:priority/") &&
@@ -61,17 +65,60 @@ export namespace OrynLabels {
     if (!config?.enabled || !record || record.control !== "active" || !repo?.labels) return
     const attempt = record.activeAttemptId ? await OrynStore.getAttempt(record.id, record.activeAttemptId) : undefined
     const labels = project(record, attempt, await OrynStore.listAssignments(record.id), repo.defaultPriority)
+    const repository = `${repo.owner}/${repo.repo}`
+    const work = await OrynGithubStore.get(caseId)
+    const tracked =
+      work &&
+      work.mode !== "repair" &&
+      work.state !== "stopped" &&
+      work.snapshot.state === "open" &&
+      work.repoAlias === record.repoAlias &&
+      work.repository === repository &&
+      work.accountId === repo.githubAccount &&
+      (await OrynGithub.binding(work.accountId, work.repository))
+        ? work
+        : undefined
     const targets: LabelTarget[] = [
       ...(record.issueNumber ? [{ kind: "issue" as const, number: record.issueNumber }] : []),
       ...record.pullNumbers.map((number) => ({ kind: "pull" as const, number })),
     ].map((target) => ({
       ...target,
       labels,
-      repository: `${repo.owner}/${repo.repo}`,
+      repository,
       baseBranch: repo.baseBranch ?? "dev",
       ...(target.kind === "pull" ? { candidateSha: attempt?.candidateSha } : {}),
     }))
-    return { record, targets }
+    if (tracked) {
+      const kind = tracked.snapshot.kind === "pull" ? "pull" : "issue"
+      const type =
+        tracked.snapshot.labels.includes("enhancement") || /^feat(?:\([^)]*\))?!?:/i.test(tracked.snapshot.title)
+          ? "feature"
+          : tracked.snapshot.labels.includes("question")
+            ? "question"
+            : /^perf(?:\([^)]*\))?!?:/i.test(tracked.snapshot.title)
+              ? "performance"
+              : record.kind
+      const progress =
+        tracked.mode === "review"
+          ? tracked.state === "settled"
+            ? "oryn:status/ready"
+            : tracked.state === "running"
+              ? "oryn:status/reviewing"
+              : "oryn:status/triage"
+          : labels[1]!
+      const target: LabelTarget = {
+        repository,
+        number: tracked.number,
+        kind,
+        baseBranch: tracked.snapshot.baseRef ?? repo.baseBranch ?? "dev",
+        ...(kind === "pull" ? { candidateSha: tracked.snapshot.headSha } : {}),
+        labels: [`oryn:type/${type}`, progress, labels[2]!],
+      }
+      const existing = targets.findIndex((item) => item.kind === kind && item.number === tracked.number)
+      if (existing < 0) targets.push(target)
+      else targets[existing] = target
+    }
+    return { record, targets, tracked }
   }
 
   export async function syncCase(caseId: string): Promise<void> {
@@ -87,9 +134,18 @@ export namespace OrynLabels {
       const serialized = JSON.stringify(target)
       const valid = async () => {
         const fresh = await inputs(caseId)
-        return fresh?.record.epoch === record.epoch && fresh.targets.some((item) => JSON.stringify(item) === serialized)
+        return (
+          fresh?.record.epoch === record.epoch &&
+          fresh.tracked?.fingerprint === state.tracked?.fingerprint &&
+          fresh.targets.some((item) => JSON.stringify(item) === serialized)
+        )
       }
-      const read = { ...target, marker: caseMarker(caseId), branch: orynBranch(caseId) }
+      const read = {
+        ...target,
+        marker: caseMarker(caseId),
+        branch: orynBranch(caseId),
+        tracked: state.tracked?.number === target.number,
+      }
       const snapshot = await activeTransport.observe(read)
       if (!snapshot.owned || !(await valid())) continue
       const changes = delta(snapshot.labels, target.labels)

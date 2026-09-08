@@ -2,6 +2,7 @@ import { GitHubApiError, GitHubChannelAuth } from "./api"
 import { record } from "./record"
 import { LabelTarget, OrynLabel } from "../../../oryn/schema"
 import { OrynLabels, type LabelRead, type LabelTransport, type LabelSnapshot } from "../../../oryn/labels"
+import { OrynLabelCatalog } from "../../../oryn/label-catalog"
 
 export namespace OrynGithubLabels {
   export function createTransport(): LabelTransport {
@@ -22,8 +23,8 @@ export namespace OrynGithubLabels {
       GitHubChannelAuth.GitHubClient.send<T>(request)
     async function observe(input: LabelRead): Promise<LabelSnapshot> {
       const auth = await client(input)
-      const slug = await GitHubChannelAuth.getAppSlug()
-      if (!slug || !input.marker || !input.branch) return { owned: false, labels: [] }
+      const slug = input.tracked ? undefined : await GitHubChannelAuth.getAppSlug()
+      if (!input.tracked && (!slug || !input.marker || !input.branch)) return { owned: false, labels: [] }
       const entity = record(
         await send<unknown>(
           input.kind === "pull"
@@ -34,9 +35,10 @@ export namespace OrynGithubLabels {
       const common =
         entity.number === input.number &&
         entity.state === "open" &&
-        record(entity.user).login === `${slug}[bot]` &&
-        typeof entity.body === "string" &&
-        entity.body.includes(input.marker)
+        (input.tracked ||
+          (record(entity.user).login === `${slug}[bot]` &&
+            typeof entity.body === "string" &&
+            entity.body.includes(input.marker)))
       const head = record(entity.head)
       const base = record(entity.base)
       const owned =
@@ -45,9 +47,9 @@ export namespace OrynGithubLabels {
           ? !entity.pull_request
           : Boolean(input.candidateSha) &&
             head.sha === input.candidateSha &&
-            head.ref === input.branch &&
+            (input.tracked || head.ref === input.branch) &&
             base.ref === input.baseBranch &&
-            record(head.repo).full_name === input.repository &&
+            (input.tracked || record(head.repo).full_name === input.repository) &&
             record(base.repo).full_name === input.repository)
       if (!owned) return { owned: false, labels: [] }
       const labels: string[] = []
@@ -77,7 +79,11 @@ export namespace OrynGithubLabels {
           await input.beforeWrite()
           if (delta.add.length) {
             await send(
-              GitHubChannelAuth.GitHubClient.addIssueLabels({ ...auth, issueNumber: input.number, labels: delta.add }),
+              GitHubChannelAuth.GitHubClient.addIssueLabels({
+                ...auth,
+                issueNumber: input.number,
+                labels: delta.add.map((id) => OrynLabelCatalog.definitions[id].name),
+              }),
             )
             continue
           }
@@ -86,7 +92,7 @@ export namespace OrynGithubLabels {
               GitHubChannelAuth.GitHubClient.removeIssueLabel({
                 ...auth,
                 issueNumber: input.number,
-                name: delta.remove[0]!,
+                name: current.labels.find((name) => OrynLabelCatalog.id(name) === delta.remove[0])!,
               }),
             )
           } catch (error) {
