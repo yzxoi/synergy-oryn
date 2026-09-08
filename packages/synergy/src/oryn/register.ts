@@ -1,7 +1,7 @@
 import { ToolRegistry } from "../tool/registry"
 import { BossService } from "../boss/boss"
 import { OrynStore } from "./store"
-import { registerOrynTools, CheckParameters } from "./tools"
+import { registerOrynTools, CheckParameters, ResultParameters } from "./tools"
 import { ToolExecutor } from "../session/tool-executor"
 import { OrynExecutor } from "./executor"
 import { externalIdentityHash } from "../util/identity"
@@ -31,6 +31,12 @@ export function registerOrynDomain(): void {
     const params = CheckParameters.parse((input.input as { input?: unknown } | null)?.input)
     if (params.action !== "run") return { executor: "control_plane" }
     return OrynExecutor.admission({ ...params, callerSessionID: input.sessionID, abort: input.signal })
+  })
+  ToolExecutor.registerAdmissionProvider("oryn_result", async (input) => {
+    const params = ResultParameters.parse((input.input as { input?: unknown } | null)?.input)
+    return params.kind === "commit_candidate"
+      ? { executor: "local_process", resources: [{ key: `oryn:commit:${params.caseId}`, limit: 1 }] }
+      : { executor: "control_plane" }
   })
   BossService.registerTaskReportProvider("oryn", async (session, taskID) => {
     if (!["oryn-repro", "oryn-code", "oryn-review"].includes(session.agentOverride ?? "")) return undefined

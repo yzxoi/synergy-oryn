@@ -5,6 +5,31 @@ import type { Assignment, Attempt } from "./schema"
 import { OrynStoreError, storeError } from "./store"
 
 export namespace OrynCandidate {
+  export async function workspace(assignment: Assignment, localBranch?: string) {
+    if (assignment.stage !== "code" || assignment.agentId !== "oryn-code" || !assignment.sessionId)
+      throw storeError("NOT_AUTHORIZED", "candidate requires the assigned code worker")
+    const session = await Session.get(assignment.sessionId)
+    const workspace = session.workspace
+    if (session.agentOverride !== "oryn-code" || workspace?.type !== "git_worktree" || !assignment.workspaceRef)
+      throw storeError("NOT_AUTHORIZED", "candidate requires the assigned worktree")
+    const directory = await realpath(workspace.path)
+    if ((await realpath(assignment.workspaceRef)) !== directory)
+      throw storeError("NOT_AUTHORIZED", "candidate workspace binding changed")
+    const root = await realpath(await OrynGit.read(directory, ["rev-parse", "--show-toplevel"]))
+    if (root !== directory) throw storeError("NOT_AUTHORIZED", "candidate directory is not a worktree root")
+    const common = await realpath(
+      await OrynGit.read(directory, ["rev-parse", "--path-format=absolute", "--git-common-dir"]),
+    )
+    const expected = await realpath(
+      await OrynGit.read(session.scope.directory, ["rev-parse", "--path-format=absolute", "--git-common-dir"]),
+    )
+    if (common !== expected) throw storeError("NOT_AUTHORIZED", "candidate belongs to a different repository")
+    const branch = await OrynGit.read(directory, ["symbolic-ref", "--quiet", "--short", "HEAD"])
+    if (branch !== workspace.branch || (localBranch !== undefined && localBranch !== branch))
+      throw storeError("INVALID_STAGE", "candidate branch differs from the assigned branch")
+    return { directory, branch }
+  }
+
   export async function verify(input: {
     assignment: Assignment
     attempt: Attempt
@@ -16,28 +41,8 @@ export namespace OrynCandidate {
       throw storeError("INVALID_STAGE", "candidate requires a full commit SHA")
     if (attempt.candidateSha && attempt.candidateSha !== candidateSha)
       throw storeError("INVALID_STAGE", "a frozen candidate requires a new Attempt before changes")
-    if (assignment.stage !== "code" || assignment.agentId !== "oryn-code" || !assignment.sessionId)
-      throw storeError("NOT_AUTHORIZED", "candidate requires the assigned code worker")
-    const session = await Session.get(assignment.sessionId)
-    const workspace = session.workspace
-    if (session.agentOverride !== "oryn-code" || workspace?.type !== "git_worktree" || !assignment.workspaceRef)
-      throw storeError("NOT_AUTHORIZED", "candidate requires the assigned worktree")
     try {
-      const directory = await realpath(workspace.path)
-      if ((await realpath(assignment.workspaceRef)) !== directory)
-        throw storeError("NOT_AUTHORIZED", "candidate workspace binding changed")
-      const root = await realpath(await OrynGit.read(directory, ["rev-parse", "--show-toplevel"]))
-      if (root !== directory) throw storeError("NOT_AUTHORIZED", "candidate directory is not a worktree root")
-      const common = await realpath(
-        await OrynGit.read(directory, ["rev-parse", "--path-format=absolute", "--git-common-dir"]),
-      )
-      const expected = await realpath(
-        await OrynGit.read(session.scope.directory, ["rev-parse", "--path-format=absolute", "--git-common-dir"]),
-      )
-      if (common !== expected) throw storeError("NOT_AUTHORIZED", "candidate belongs to a different repository")
-      const branch = await OrynGit.read(directory, ["symbolic-ref", "--quiet", "--short", "HEAD"])
-      if (branch !== workspace.branch || (input.localBranch !== undefined && input.localBranch !== branch))
-        throw storeError("INVALID_STAGE", "candidate branch differs from the assigned branch")
+      const { directory } = await workspace(assignment, input.localBranch)
       if ((await OrynGit.read(directory, ["rev-parse", "--verify", "HEAD^{commit}"])) !== candidateSha)
         throw storeError("INVALID_STAGE", "candidate is not the assigned branch HEAD")
       if (!/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(attempt.baselineSha))

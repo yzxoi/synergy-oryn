@@ -46,6 +46,8 @@ Ready publication queues one Host-generated result per authorized reporter and a
 
 Human handoff persists the reason and Case epoch before writing one outbox intent per authorized linked reporter. Runtime startup repairs interrupted intent creation; QA replies reuse those intents. Delivery suppresses disabled notification kinds, unlinked sources and superseded handoffs. Unknown send outcomes remain ambiguous. The task detail API and Oryn panel expose a public-safe reason; legacy human-owned Cases have no inferred reason. See [handoff outcomes](../decisions/implemented/architecture/2026-09-08-oryn-handoff-outcome.md).
 
+Oryn code workers prepare local commits through `oryn_result` with `input.kind: commit_candidate`. The Host validates explicit paths and the active assignment, stages in a private index, and updates only its assigned branch against the expected baseline. Candidate report acceptance, independent verification and publication remain separate. The generic shell does not gain shared Git metadata access; see [Host candidate commits](../decisions/implemented/bug-fix/2026-09-08-oryn-host-candidate-commit.md).
+
 ## Provider and Transport Lifecycle
 
 Every provider declares one lifecycle:

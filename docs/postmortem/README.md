@@ -47,6 +47,7 @@ Entries are added only when an incident qualifies; the table stays empty until t
 | 0009   | Rollout cancellation closed an artifact before its pending bytes arrived   | implemented | 2026-09-08 |
 | 0010   | Channel acceptance fixtures left background work after their assertions    | implemented | 2026-09-08 |
 | 0011   | Oryn engineering mock depended on a real embedding model                   | implemented | 2026-09-08 |
+| 0012   | Oryn could edit a candidate but could not commit it                        | implemented | 2026-09-08 |
 
 ## History rules
 

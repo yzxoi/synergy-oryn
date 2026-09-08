@@ -1,4 +1,5 @@
 import z from "zod"
+import { ToolScheduler } from "../session/tool-scheduler"
 import { Tool } from "../tool/tool"
 import { MessageV2 } from "../session/message-v2"
 import { Finding } from "./schema"
@@ -7,6 +8,7 @@ import { OrynLearning } from "./learn"
 import { OrynService } from "./service"
 import { OrynEngineering } from "./engineering"
 import { OrynStore, OrynStoreError } from "./store"
+import { OrynCandidateCommit } from "./candidate-commit"
 import { OrynConfig } from "./config"
 
 function toolError(code: string, message: string): Error {
@@ -292,7 +294,20 @@ export const OrynDispatchTool = Tool.define(
   },
 )
 
-const ResultParameters = z.discriminatedUnion("kind", [
+export const ResultParameters = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("commit_candidate"),
+    caseId: z.string().min(1),
+    attemptId: z.string().min(1),
+    assignmentId: z.string().min(1),
+    requestKey: z.string().min(1).max(200),
+    title: z.string().min(1).max(200).describe("Single conventional commit title; Host adds provenance"),
+    paths: z
+      .array(z.string().min(1).max(1024))
+      .min(1)
+      .max(128)
+      .describe("Explicit relative source paths to commit in your assigned branch"),
+  }),
   z.object({
     kind: z.literal("get"),
     caseId: z.string().min(1),
@@ -359,10 +374,20 @@ export const OrynResultTool = Tool.define(
   "oryn_result",
   {
     description:
-      "Submit your structured worker outcome for an assignment, or read a previously submitted report. The host validates the assignment belongs to your session; stale-epoch reports are archived but not accepted.",
+      "Create a local candidate commit with kind commit_candidate (code worker only), submit your structured worker outcome, or read a previously submitted report. Host commit uses your explicit relative paths and conventional title, returns the candidate SHA and branch, and leaves report submission and independent verification separate. Replay the same request after an interrupted commit; changed inputs or branches are rejected. The host validates the assignment belongs to your session; stale-epoch reports are archived but not accepted.",
     parameters: z.object({ input: ResultParameters }),
     async execute({ input: params }, ctx): Promise<Tool.ExecutionResult> {
       return execute(async () => {
+        if (params.kind === "commit_candidate") {
+          const result = await ToolScheduler.trackPhysicalExecution(() =>
+            OrynCandidateCommit.create({ ...params, callerSessionID: ctx.sessionID, abort: ctx.abort }),
+          )
+          return {
+            title: "Candidate committed",
+            output: `candidateSha: ${result.candidateSha}\nlocalBranch: ${result.localBranch}\nreplayed: ${result.replayed}`,
+            metadata: result,
+          }
+        }
         if (params.kind === "get") {
           await requireBinding(ctx.sessionID, params.caseId)
           const report =

@@ -1,5 +1,7 @@
+import { symlink } from "node:fs/promises"
 import { describe, expect, test } from "bun:test"
 import { BossService } from "../../src/boss/boss"
+import { OrynCandidateCommit } from "../../src/oryn/candidate-commit"
 import { OrynService } from "../../src/oryn/service"
 import { OrynStore } from "../../src/oryn/store"
 import { ScopeContext } from "../../src/scope/context"
@@ -217,6 +219,117 @@ describe("Oryn candidate verification", () => {
         OrynService.submitResult({ ...report({ ...input, candidateSha: sha }), requestKey: "replacement" }),
       ).rejects.toThrow()
       expect((await OrynStore.getAttempt(input.caseId, input.attemptId))?.candidateSha).toBe(input.candidateSha)
+    })
+  })
+})
+
+describe("Oryn Host candidate commits", () => {
+  const request = (input: Parameters<Parameters<typeof fixture>[0]>[0]) => ({
+    callerSessionID: input.callerSessionID,
+    caseId: input.caseId,
+    attemptId: input.attemptId,
+    assignmentId: input.assignmentId,
+    requestKey: "commit",
+    title: "fix: preserve attachments",
+    paths: ["fix.txt"],
+    abort: new AbortController().signal,
+  })
+
+  test("commits only the assigned branch and repairs an interrupted index on replay", async () => {
+    await fixture(async (input) => {
+      const rootDirectory = (await Session.get(input.rootSessionID)).scope.directory
+      const originalHead = (await Bun.$`git rev-parse HEAD`.cwd(rootDirectory).text()).trim()
+      const originalStatus = (await Bun.$`git status --porcelain`.cwd(rootDirectory).text()).trim()
+      await Bun.write(`${input.directory}/fix.txt`, "fixed")
+      const first = await OrynCandidateCommit.create(request(input))
+      expect(first.candidateSha).not.toBe(input.candidateSha)
+      expect(first.localBranch).toBe(input.branch)
+      expect(first.replayed).toBe(false)
+      expect((await Bun.$`git rev-parse HEAD`.cwd(rootDirectory).text()).trim()).toBe(originalHead)
+      expect((await Bun.$`git status --porcelain`.cwd(rootDirectory).text()).trim()).toBe(originalStatus)
+      await Bun.$`git read-tree ${input.candidateSha}`.cwd(input.directory).quiet()
+      expect(await OrynCandidateCommit.create(request(input))).toEqual({ ...first, replayed: true })
+      expect((await Bun.$`git status --porcelain`.cwd(input.directory).text()).trim()).toBe("")
+      expect((await OrynStore.getAttempt(input.caseId, input.attemptId))?.candidateSha).toBeUndefined()
+      const accepted = await OrynService.submitResult(report({ ...input, candidateSha: first.candidateSha }))
+      expect(accepted.accepted).toBe(true)
+      await expect(OrynCandidateCommit.create(request(input))).rejects.toThrow()
+    })
+  })
+
+  test("does not create a commit for omitted files, protected paths, or a different caller", async () => {
+    await fixture(async (input) => {
+      await Bun.write(`${input.directory}/fix.txt`, "fixed")
+      await Bun.write(`${input.directory}/omitted.txt`, "uncommitted")
+      for (const patch of [
+        {},
+        { paths: ["../outside"] },
+        { paths: [".git/config"] },
+        { paths: ["."] },
+        { callerSessionID: input.rootSessionID },
+      ]) {
+        await expect(OrynCandidateCommit.create({ ...request(input), ...patch })).rejects.toThrow()
+        expect((await Bun.$`git rev-parse HEAD`.cwd(input.directory).text()).trim()).toBe(input.candidateSha)
+      }
+      expect(await Bun.file(`${input.directory}/omitted.txt`).text()).toBe("uncommitted")
+    })
+  })
+
+  test("rejects a changed replay rather than replacing the recorded commit", async () => {
+    await fixture(async (input) => {
+      await Bun.write(`${input.directory}/fix.txt`, "fixed")
+      const first = await OrynCandidateCommit.create(request(input))
+      await expect(OrynCandidateCommit.create({ ...request(input), requestKey: "different" })).rejects.toThrow()
+      await Bun.write(`${input.directory}/fix.txt`, "different fix")
+      await expect(OrynCandidateCommit.create(request(input))).rejects.toThrow()
+      expect((await Bun.$`git rev-parse HEAD`.cwd(input.directory).text()).trim()).toBe(first.candidateSha)
+      expect(await Bun.file(`${input.directory}/fix.txt`).text()).toBe("different fix")
+    })
+  })
+
+  test("rejects cancellation and human takeover before Git mutation", async () => {
+    await fixture(async (input) => {
+      await Bun.write(`${input.directory}/fix.txt`, "fixed")
+      await expect(OrynCandidateCommit.create({ ...request(input), abort: AbortSignal.abort() })).rejects.toThrow()
+      const record = (await OrynStore.getCase(input.caseId))!
+      await OrynStore.control(input.caseId, record.revision, "takeover")
+      await expect(OrynCandidateCommit.create(request(input))).rejects.toThrow()
+      expect((await Bun.$`git rev-parse HEAD`.cwd(input.directory).text()).trim()).toBe(input.candidateSha)
+    })
+  })
+  test("does not execute repository hooks and rejects configured filters", async () => {
+    await fixture(async (input) => {
+      const common = (
+        await Bun.$`git rev-parse --path-format=absolute --git-common-dir`.cwd(input.directory).text()
+      ).trim()
+      const hook = `${common}/hooks/pre-commit`
+      await Bun.write(hook, "#!/bin/sh\nprintf hook-ran > hook-ran.txt\n")
+      await Bun.$`chmod +x ${hook}`.quiet()
+      await Bun.write(`${input.directory}/fix.txt`, "fixed")
+      const first = await OrynCandidateCommit.create(request(input))
+      expect(first.candidateSha).not.toBe(input.candidateSha)
+      expect(await Bun.file(`${input.directory}/hook-ran.txt`).exists()).toBe(false)
+      await Bun.$`git config filter.probe.clean 'touch filter-ran.txt'`.cwd(input.directory).quiet()
+      await expect(OrynCandidateCommit.create(request(input))).rejects.toThrow()
+      expect(await Bun.file(`${input.directory}/filter-ran.txt`).exists()).toBe(false)
+    })
+  })
+  test("supports repository Skills while rejecting runtime metadata and symlink traversal", async () => {
+    await fixture(async (input) => {
+      await using outside = await tmpdir()
+      await Bun.write(`${outside.path}/outside.txt`, "external")
+      await symlink(outside.path, `${input.directory}/link`)
+      await expect(OrynCandidateCommit.create({ ...request(input), paths: ["link/outside.txt"] })).rejects.toThrow()
+      expect(await Bun.file(`${outside.path}/outside.txt`).text()).toBe("external")
+      for (const file of [".synergy/tmp/file", ".synergy/worktrees/file", ".GIT/config", "C:outside"])
+        await expect(OrynCandidateCommit.create({ ...request(input), paths: [file] })).rejects.toThrow()
+      await Bun.write(`${input.directory}/.gitignore`, "/link\n/.synergy/*\n!/.synergy/skill/\n")
+      const file = ".synergy/skill/check/SKILL.md"
+      await Bun.write(`${input.directory}/${file}`, "# Candidate check workflow\n")
+      const result = await OrynCandidateCommit.create({ ...request(input), paths: [".gitignore", file] })
+      expect((await Bun.$`git show ${result.candidateSha + ":" + file}`.cwd(input.directory).text()).trim()).toBe(
+        "# Candidate check workflow",
+      )
     })
   })
 })

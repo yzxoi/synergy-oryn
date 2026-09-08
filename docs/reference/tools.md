@@ -91,7 +91,7 @@ Generated from the builtin tool registry in `packages/synergy/src/tool/registry.
 | `oryn_learn` | `knowledge.memory` | Propose a reusable lesson from this case for host promotion into shared memory. Every claim must cite case records as evidence; raw chat text, private logs, and credentials are rejected. Promotion onl |
 | `oryn_publish` | `communication.publish` | Publish host-verified artifacts for your case: the tracking issue, a draft PR from the frozen candidate, PR updates, the review comment, or the final ready delivery. The host generates PR scope diagra |
 | `oryn_reply` | `communication.deliver` | Queue a bounded QA reply to your bound reporter source. The host supplies recipient and root turn identity; no account or chat id is accepted. Answers deduplicate within the current turn. Ready replie |
-| `oryn_result` | `orchestration.session` | Submit your structured worker outcome for an assignment, or read a previously submitted report. The host validates the assignment belongs to your session; stale-epoch reports are archived but not acce |
+| `oryn_result` | `orchestration.session` | Create a local candidate commit with kind commit_candidate (code worker only), submit your structured worker outcome, or read a previously submitted report. Host commit uses your explicit relative pat |
 | `parse_code` | `code.analyze` | Search code with AST-aware patterns and return anchored file blocks. Use this instead of `ast_grep` in the anchored coding harness. Matched files are returned with real `[path#TAG]` headers and only t |
 | `pathway_read` | `orchestration.dag` | Read the current Lattice Run and ordered Pathway. The result separates pathway.history and pathway.current, which are read-only, from pathway.editableFuture, which is the complete list accepted by pat |
 | `pathway_write` | `orchestration.dag` | Replace the complete ordered list of pending future Steps in the current Lattice Pathway. Pass pathway_read.pathway.editableFuture through futureSteps after making any required additions, removals, re |
@@ -1307,7 +1307,7 @@ Queue a bounded QA reply to your bound reporter source. The host supplies recipi
 
 Kind: `orchestration.session`
 
-Submit your structured worker outcome for an assignment, or read a previously submitted report. The host validates the assignment belongs to your session; stale-epoch reports are archived but not accepted.
+Create a local candidate commit with kind commit_candidate (code worker only), submit your structured worker outcome, or read a previously submitted report. Host commit uses your explicit relative paths and conventional title, returns the candidate SHA and branch, and leaves report submission and independent verification separate. Replay the same request after an interrupted commit; changed inputs or branches are rejected. The host validates the assignment belongs to your session; stale-epoch reports are archived but not accepted.
 
 | Parameter | Type | Required | Description |
 | --- | --- | --- | --- |
