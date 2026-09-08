@@ -8,6 +8,173 @@ import { OrynLearning, setMemoryPromoter } from "../../src/oryn/learn"
 import type { PublishExecuteInput, PublishExecuteResult, PublishTransport } from "../../src/oryn/publish"
 import { tmpdir, runCheck } from "./fixture"
 
+async function proposedReadyLesson(root: string) {
+  const seeded = await seedFrozen(root)
+  const proposed = await OrynLearning.propose({
+    callerSessionID: seeded.engineeringSessionId,
+    caseId: seeded.caseId,
+    lesson: "A durable learning write has one identity",
+    applicability: "publication recovery",
+    invalidation: "when the evidence is superseded",
+    evidenceRefs: [seeded.baselineRunId],
+  })
+  await OrynStore.mutateAttempt(seeded.caseId, seeded.attemptId, (draft) => ({ ...draft, disposition: "ready" }))
+  return { ...seeded, ...proposed }
+}
+
+describe("learning side-effect recovery", () => {
+  test("withdrawal preserves an acknowledged historical memory identity", async () => {
+    await withLearnScope({ verifiedMemory: true }, async (root) => {
+      const seeded = await proposedReadyLesson(root)
+      await OrynStore.mutateLearning(seeded.learningId, (draft) => ({
+        ...draft,
+        promotionState: "promoted",
+        memoryRef: "mem_historical_oryn_entry",
+      }))
+      const removed: string[] = []
+      setMemoryPromoter({
+        async promote({ id }) {
+          return id
+        },
+        async remove(id) {
+          removed.push(id)
+        },
+      })
+      await OrynLearning.invalidate({
+        callerSessionID: seeded.engineeringSessionId,
+        caseId: seeded.caseId,
+        learningId: seeded.learningId,
+        reason: "superseded",
+      })
+      expect(removed).toEqual(["mem_historical_oryn_entry"])
+      expect((await OrynStore.getLearning(seeded.learningId))?.promotionState).toBe("rejected")
+    })
+  })
+
+  test("simultaneous identical proposals create one durable candidate", async () => {
+    await withLearnScope({}, async (root) => {
+      const seeded = await seedFrozen(root)
+      const input = {
+        callerSessionID: seeded.engineeringSessionId,
+        caseId: seeded.caseId,
+        lesson: "Concurrent proposals have one identity",
+        applicability: "recovery",
+        invalidation: "new evidence",
+        evidenceRefs: [seeded.baselineRunId],
+      }
+      const results = await Promise.all([OrynLearning.propose(input), OrynLearning.propose(input)])
+      expect(new Set(results.map((result) => result.learningId)).size).toBe(1)
+      expect(results.filter((result) => result.created)).toHaveLength(1)
+      expect(await OrynStore.listLearnings(seeded.caseId)).toHaveLength(1)
+    })
+  })
+
+  test("withdrawal stays retryable when the Library writer is unavailable", async () => {
+    await withLearnScope({ verifiedMemory: true }, async (root) => {
+      const seeded = await proposedReadyLesson(root)
+      await expect(
+        OrynLearning.invalidate({
+          callerSessionID: seeded.engineeringSessionId,
+          caseId: seeded.caseId,
+          learningId: seeded.learningId,
+          reason: "contradicted",
+        }),
+      ).rejects.toThrow("memory writer is required")
+      expect((await OrynStore.getLearning(seeded.learningId))?.promotionState).toBe("proposed")
+    })
+  })
+
+  test("a memory written before a lost acknowledgment is reused on retry", async () => {
+    await withLearnScope({ verifiedMemory: true }, async (root) => {
+      const seeded = await proposedReadyLesson(root)
+      const memories = new Map<string, string>()
+      let interrupted = true
+      setMemoryPromoter({
+        async promote(input) {
+          const id = input.id
+          memories.set(id, input.content)
+          if (interrupted) {
+            interrupted = false
+            throw new Error("lost memory acknowledgment")
+          }
+          return id
+        },
+        async remove(id) {
+          memories.delete(id)
+        },
+      })
+      await expect(OrynLearning.promoteCase(seeded.caseId)).rejects.toThrow("lost memory acknowledgment")
+      expect((await OrynStore.getLearning(seeded.learningId))?.promotionState).toBe("proposed")
+      await OrynLearning.promoteCase(seeded.caseId)
+      expect(memories.size).toBe(1)
+      expect(memories.has((await OrynStore.getLearning(seeded.learningId))!.memoryRef!)).toBe(true)
+    })
+  })
+
+  test("withdrawal removes an unacknowledged write and prevents later promotion", async () => {
+    await withLearnScope({ verifiedMemory: true }, async (root) => {
+      const seeded = await proposedReadyLesson(root)
+      const memories = new Map<string, string>()
+      setMemoryPromoter({
+        async promote(input) {
+          const id = input.id
+          memories.set(id, input.content)
+          throw new Error("lost memory acknowledgment")
+        },
+        async remove(id) {
+          memories.delete(id)
+        },
+      })
+      await expect(OrynLearning.promoteCase(seeded.caseId)).rejects.toThrow("lost memory acknowledgment")
+      await OrynLearning.invalidate({
+        callerSessionID: seeded.engineeringSessionId,
+        caseId: seeded.caseId,
+        learningId: seeded.learningId,
+        reason: "contradicted",
+      })
+      expect(memories.size).toBe(0)
+      expect(await OrynLearning.promoteCase(seeded.caseId)).toEqual({ promoted: 0, skipped: 1 })
+    })
+  })
+
+  test("concurrent promotion and withdrawal settle as one removed memory", async () => {
+    await withLearnScope({ verifiedMemory: true }, async (root) => {
+      const seeded = await proposedReadyLesson(root)
+      const entered = Promise.withResolvers<void>()
+      const release = Promise.withResolvers<void>()
+      const memories = new Map<string, string>()
+      let writes = 0
+      setMemoryPromoter({
+        async promote(input) {
+          writes++
+          entered.resolve()
+          await release.promise
+          const id = input.id
+          memories.set(id, input.content)
+          return id
+        },
+        async remove(id) {
+          memories.delete(id)
+        },
+      })
+      const promotion = OrynLearning.promoteCase(seeded.caseId)
+      await entered.promise
+      const replay = OrynLearning.promoteCase(seeded.caseId)
+      const withdrawal = OrynLearning.invalidate({
+        callerSessionID: seeded.engineeringSessionId,
+        caseId: seeded.caseId,
+        learningId: seeded.learningId,
+        reason: "contradicted while writing",
+      })
+      release.resolve()
+      await Promise.all([promotion, replay, withdrawal])
+      expect(writes).toBe(1)
+      expect(memories.size).toBe(0)
+      expect((await OrynStore.getLearning(seeded.learningId))?.promotionState).toBe("rejected")
+    })
+  })
+})
+
 function errorCode(error: unknown): string | undefined {
   return (error as { data?: { code?: string } })?.data?.code
 }
@@ -37,7 +204,12 @@ async function withLearnScope<T>(learning: { verifiedMemory?: boolean }, fn: (ro
     },
   })
   const scope = (await Scope.fromDirectory(tmp.path)).scope
-  return await ScopeContext.provide({ scope, fn: () => fn(tmp.path) })
+  const previous = setMemoryPromoter(undefined)
+  try {
+    return await ScopeContext.provide({ scope, fn: () => fn(tmp.path) })
+  } finally {
+    setMemoryPromoter(previous)
+  }
 }
 
 async function headSha(root: string): Promise<string> {
@@ -219,9 +391,9 @@ describe("OrynLearning", () => {
       const seeded = await seedFrozen(root)
       const written: string[] = []
       setMemoryPromoter({
-        async promote({ title }) {
+        async promote({ id, title }) {
           written.push(title)
-          return `mem_${written.length}`
+          return id
         },
         async remove() {},
       })
@@ -266,8 +438,7 @@ describe("OrynLearning", () => {
       const written: Array<{ id: string; title: string; content: string }> = []
       const removed: string[] = []
       setMemoryPromoter({
-        async promote({ title, content }) {
-          const id = `mem_${written.length + 1}`
+        async promote({ id, title, content }) {
           written.push({ id, title, content })
           return id
         },

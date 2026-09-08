@@ -1,9 +1,8 @@
-import { Log } from "../util/log"
+import { Lock } from "../util/lock"
+import { externalIdentityHash } from "../util/identity"
 import { OrynStore, storeError } from "./store"
 import { OrynConfig } from "./config"
 import type { LearningCandidate } from "./schema"
-
-const log = Log.create({ service: "oryn.learn" })
 
 /**
  * Injected verified-memory port. The Oryn domain never imports the Library
@@ -13,15 +12,31 @@ const log = Log.create({ service: "oryn.learn" })
  * idempotency, so `oryn.learning.autoReward` stays unimplemented by design.
  */
 export type MemoryPromoter = {
-  promote(input: { title: string; content: string }): Promise<string>
-  remove(memoryId: string): Promise<void>
+  promote(input: { id: string; title: string; content: string }): Promise<string>
+  remove(memoryId: string, expected: { title: string; content: string }): Promise<void>
 }
 
 let promoter: MemoryPromoter | undefined
 
 /** Product assembly injection. */
-export function setMemoryPromoter(fn: MemoryPromoter): void {
+export function setMemoryPromoter(fn: MemoryPromoter | undefined): MemoryPromoter | undefined {
+  const previous = promoter
   promoter = fn
+  return previous
+}
+
+function memoryInput(candidate: LearningCandidate) {
+  return {
+    id: candidate.memoryRef ?? `mem_oryn_${externalIdentityHash(candidate.id)}`,
+    title: candidate.lesson.slice(0, 120),
+    content: [
+      `Lesson: ${candidate.lesson}`,
+      `Applies to: ${candidate.applicability}`,
+      `Invalid when: ${candidate.invalidation}`,
+      `Evidence (case-scoped records): ${candidate.evidenceRefs.join(", ")}`,
+      `Verified at outcome version: ${candidate.outcomeVersion}`,
+    ].join("\n"),
+  }
 }
 
 export namespace OrynLearning {
@@ -64,6 +79,7 @@ export namespace OrynLearning {
       })
     }
 
+    using _lock = await Lock.write(`oryn-learning-proposals:${input.caseId}`)
     const existing = (await OrynStore.listLearnings(input.caseId)).find((l) => l.lesson === input.lesson)
     if (existing) return { learningId: existing.id, created: false }
     const candidate = await OrynStore.writeLearning({
@@ -87,27 +103,26 @@ export namespace OrynLearning {
    */
   export async function promoteCase(caseId: string): Promise<{ promoted: number; skipped: number }> {
     const oryn = await OrynConfig.info()
-    if (oryn?.learning?.verifiedMemory !== true) return { promoted: 0, skipped: 0 }
+    if (!oryn?.enabled || oryn.learning?.verifiedMemory !== true) return { promoted: 0, skipped: 0 }
     const ready = (await OrynStore.listAttempts(caseId)).find((a) => a.disposition === "ready")
     if (!ready) {
       throw storeError("INVALID_STAGE", "promotion requires a delivered (ready) attempt", { caseId })
     }
-    if (!promoter) return { promoted: 0, skipped: 0 }
+    const writer = promoter
+    if (!writer) return { promoted: 0, skipped: 0 }
     let promoted = 0
     let skipped = 0
-    for (const candidate of await OrynStore.listLearnings(caseId)) {
-      if (candidate.promotionState !== "proposed") {
+    for (const listed of await OrynStore.listLearnings(caseId)) {
+      using _lock = await Lock.write(`oryn-learning-effect:${listed.id}`)
+      const candidate = await OrynStore.getLearning(listed.id)
+      if (!candidate || candidate.promotionState !== "proposed") {
         skipped++
         continue
       }
-      const content = [
-        `Lesson: ${candidate.lesson}`,
-        `Applies to: ${candidate.applicability}`,
-        `Invalid when: ${candidate.invalidation}`,
-        `Evidence (case-scoped records): ${candidate.evidenceRefs.join(", ")}`,
-        `Verified at outcome version: ${candidate.outcomeVersion}`,
-      ].join("\n")
-      const memoryId = await promoter.promote({ title: candidate.lesson.slice(0, 120), content })
+      const input = memoryInput(candidate)
+      const memoryId = await writer.promote(input)
+      if (memoryId !== input.id)
+        throw storeError("EVIDENCE_INSUFFICIENT", "memory writer returned a different learning identity")
       await OrynStore.mutateLearning(candidate.id, (d) => ({
         ...d,
         promotionState: "promoted" as const,
@@ -138,20 +153,15 @@ export namespace OrynLearning {
     if (binding.caseId !== input.caseId) {
       throw storeError("NOT_AUTHORIZED", "case does not belong to this session")
     }
+    using _lock = await Lock.write(`oryn-learning-effect:${input.learningId}`)
     const candidate = await OrynStore.getLearning(input.learningId)
     if (!candidate || candidate.caseId !== input.caseId) {
       throw storeError("NOT_AUTHORIZED", `learning candidate ${input.learningId} not found`)
     }
-    if (candidate.promotionState === "promoted" && candidate.memoryRef) {
-      if (!promoter) {
-        log.warn("promoted learning has no memory promoter wired; skipping shared-memory removal", {
-          learningId: input.learningId,
-        })
-      } else {
-        await promoter.remove(candidate.memoryRef)
-      }
-    }
     if (candidate.promotionState === "rejected") return candidate
+    if (!promoter) throw storeError("ENVIRONMENT_UNAVAILABLE", "memory writer is required to confirm lesson removal")
+    const memory = memoryInput(candidate)
+    await promoter.remove(memory.id, memory)
     return OrynStore.mutateLearning(input.learningId, (d) => ({
       ...d,
       promotionState: "rejected" as const,

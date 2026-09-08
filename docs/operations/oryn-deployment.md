@@ -254,6 +254,12 @@ Readiness is tied to a Case-owned PR, frozen candidate SHA, branch/base and the 
 
 GitHub's ready mutation has no expected-head parameter. The transport checks the head before and in the mutation result, but it cannot make the remote transition atomic with concurrent pushes. Required checks and human review must remain tied to the current head. Publication receipts pin the Attempt and repository/base/check settings; changes leave unresolved actions for reconciliation. Full review-policy changes during unresolved publication still need operator reconciliation; this is not a claim that the remaining pipeline acceptance work is complete.
 
+## Learning write recovery
+
+Keep `oryn.learning.verifiedMemory` disabled until lesson provenance and applicability have been reviewed for the deployment. When enabled, promotion derives one memory identity per learning candidate and reuses an identical existing Library row after interruption. Withdrawal removes that row even when its insertion acknowledgment was lost, and concurrent promotion cannot overwrite a completed withdrawal. Conflicting Library content or an unavailable writer leaves the operation unresolved rather than deleting unrelated knowledge or claiming successful removal. See [learning write recovery](../decisions/implemented/bug-fix/2026-09-08-oryn-learning-write-recovery.md).
+
+Acknowledged historical `memoryRef` values are preserved. Before upgrading an installation that already enabled learning, reconcile any old unacknowledged random-ID Library insertions: their IDs were never recorded, so the new deterministic identity cannot identify them. Back up Oryn records and the Library database consistently. Run `bun run test test/oryn/learn.test.ts test/library/oryn-memory.test.ts` from `packages/synergy` for fault recovery and actual Library insertion/replay/removal with simulated embeddings. These tests establish storage behavior, not semantic truth or release availability.
+
 ## Backup and Recovery
 
 Oryn JSON records live under `$SYNERGY_HOME/.synergy/data/oryn/`. `SYNERGY_HOME` is the parent home; the runtime appends `.synergy`, as defined in [Storage and paths](../reference/storage-and-paths.md). The logical storage keys are:

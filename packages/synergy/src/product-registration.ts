@@ -34,9 +34,7 @@ import { OrynLabels, setLabelTransport } from "./oryn/labels"
 import { OrynGithubLabels } from "./channel/provider/github/labels"
 import { OrynGithubPublish, setGithubPollReconciler } from "./channel/provider/github/publish"
 import { setMemoryPromoter } from "./oryn/learn"
-import { LibraryDB } from "./library/database"
-import { Embedding } from "./vector/embedding"
-import { Identifier } from "./id/id"
+import { OrynMemory } from "./library/oryn-memory"
 import { registerLightLoopDomain } from "./light-loop/register"
 import { registerBlueprintDomain } from "./blueprint/register"
 import { registerLatticeDomain } from "./lattice/register"
@@ -182,20 +180,4 @@ setGithubPollReconciler(async () => {
 })
 RuntimeReloadExecutor.setGlobalExecutor((input, options) => RuntimeReload.reloadGlobal(input, options))
 
-// L4 assembly: Oryn verified-memory promotion writes through the Library
-// database with a fresh embedding per lesson. Deliberately no semantic dedup
-// here: every promoted lesson is a self-contained entry (own evidence refs
-// and invalidation condition) so withdrawal removes exactly the entry it
-// created and never a pre-existing unrelated memory. autoReward stays
-// unimplemented: the upstream Experience reward API lacks event idempotency.
-setMemoryPromoter({
-  async promote({ title, content }) {
-    const id = Identifier.ascending("memory")
-    const embedding = await Embedding.generate({ id, text: `${title}\n${content}` })
-    LibraryDB.Memory.insert({ id, title, content, category: "knowledge", recallMode: "contextual" }, embedding)
-    return id
-  },
-  async remove(memoryId) {
-    LibraryDB.Memory.remove(memoryId)
-  },
-})
+setMemoryPromoter(OrynMemory)

@@ -28,6 +28,8 @@ description: Add or modify Synergy durable state, JSON storage keys, SQLite tabl
 2. Put upgrades, backfills, and rewrites in versioned domain migrations registered through the central migration runner.
 3. Preserve transaction, WAL, vector-extension fail-soft, and backup assumptions of the owning store.
 
+When one logical operation crosses JSON storage and Library SQLite, establish its destination identity before the side effect and make replay verify both identity and content. Serialize creation and withdrawal, and test a destination write followed by a lost source acknowledgment. A matching destination row can settle replay; different content must remain available for reconciliation rather than being overwritten or removed.
+
 ## Migrate Existing Data
 
 1. Add a migration whenever an existing persisted shape can reach the new code.
