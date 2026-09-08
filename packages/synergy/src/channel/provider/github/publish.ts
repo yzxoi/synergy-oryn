@@ -269,38 +269,77 @@ export namespace OrynGithubPublish {
         const facts: PublishFacts = { ci: { state: "none" } }
         const slug = await GitHubChannelAuth.getAppSlug(signal)
 
-        if (input.issueNumber) {
+        let issueNumber = input.issueNumber
+        let pullNumber = input.pullNumber
+        if (!issueNumber && !pullNumber && input.marker) {
+          // GitHub lists PRs alongside issues; inspect pull_request before binding numbers.
+          // https://docs.github.com/en/rest/issues/issues#list-repository-issues
+          const issues = new Set<number>()
+          const pulls = new Set<number>()
+          for (let page = 1; page <= 10; page++) {
+            const response = await GitHubChannelAuth.GitHubClient.sendPage<unknown>(
+              GitHubChannelAuth.GitHubClient.listRepositoryIssues({
+                owner,
+                repo,
+                creator: `${slug}[bot]`,
+                page,
+                installationToken: token,
+              }),
+              signal,
+            )
+            if (!Array.isArray(response.data)) throw new Error("GitHub artifact list is malformed")
+            for (const item of response.data) {
+              if (
+                !(stringField(item, "body") ?? "").includes(input.marker) ||
+                stringField(record(item).user, "login") !== `${slug}[bot]`
+              )
+                continue
+              const number = numberField(item, "number")
+              if (!number || !Number.isInteger(number) || number < 1)
+                throw new Error("GitHub artifact number is malformed")
+              const matches = record(item).pull_request ? pulls : issues
+              matches.add(number)
+              if (matches.size > 1) throw new Error("GitHub artifact marker is ambiguous")
+            }
+            if (!(response.headers.get("link") ?? "").includes('rel="next"')) break
+            if (page === 10) throw new Error("GitHub artifact pagination limit exceeded")
+          }
+          issueNumber = issues.values().next().value
+          pullNumber = pulls.values().next().value
+        }
+
+        if (issueNumber) {
           const issue = await send<unknown>(
             GitHubChannelAuth.GitHubClient.getIssue({
               owner,
               repo,
-              issueNumber: input.issueNumber,
+              issueNumber: issueNumber,
               installationToken: token,
             }),
           )
           const body = stringField(issue, "body") ?? ""
           const login = stringField(record(issue).user, "login") ?? ""
           facts.issue = {
-            number: input.issueNumber,
+            number: issueNumber,
             title: stringField(issue, "title") ?? "",
             state: stringField(issue, "state") ?? "unknown",
             markerPresent: input.marker ? body.includes(input.marker) : false,
             authorIsApp: login === `${slug}[bot]`,
           }
         }
-        if (input.pullNumber) {
+        if (pullNumber) {
           const pull = await send<unknown>(
             GitHubChannelAuth.GitHubClient.getPullRequest({
               owner,
               repo,
-              pullNumber: input.pullNumber,
+              pullNumber: pullNumber,
               installationToken: token,
             }),
           )
           const body = stringField(pull, "body") ?? ""
           const login = stringField(record(pull).user, "login") ?? ""
           facts.pull = {
-            number: input.pullNumber,
+            number: pullNumber,
             title: stringField(pull, "title") ?? "",
             draft: typeof record(pull).draft === "boolean" ? (record(pull).draft as boolean) : undefined,
             headSha: stringField(record(pull).head, "sha") ?? "",

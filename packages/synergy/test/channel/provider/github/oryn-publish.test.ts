@@ -28,6 +28,7 @@ function remote(
     status?: unknown
     checks?: unknown[]
     checkPages?: unknown[][]
+    issuePages?: unknown[][]
   } = {},
 ) {
   const token = spyOn(GitHubChannelAuth, "resolveInstallationToken").mockResolvedValue("fixture-token")
@@ -68,6 +69,24 @@ function remote(
           if (path.endsWith("/check-runs")) return Response.json({ id: 99 })
           throw new Error(`Unexpected write: ${path}`)
         }
+        if (path.endsWith("/issues")) {
+          const query = new URL(String(url)).searchParams
+          expect(query.get("state")).toBe("all")
+          expect(query.get("creator")).toBe("oryn-app[bot]")
+          const page = Number(query.get("page"))
+          const pages = options.issuePages ?? [[]]
+          return Response.json(pages[page - 1], {
+            headers: page < pages.length ? { link: '<https://api.github.com/next>; rel="next"' } : {},
+          })
+        }
+        if (path.endsWith("/issues/101"))
+          return Response.json({
+            number: 101,
+            title: "Reported defect",
+            state: "open",
+            body: input.marker,
+            user: { login: "oryn-app[bot]" },
+          })
         if (path.endsWith("/pulls/55"))
           return Response.json({
             node_id: "PR_fixture",
@@ -272,4 +291,31 @@ test("ready publication refreshes the host-generated evidence body before leavin
   await OrynGithubPublish.createTransport().execute({ ...input, title: "fix: attachment", body })
   expect(network.writes.map((write) => write.path)).toEqual(["/repos/acme/widget/pulls/55", "/graphql"])
   expect(network.writes[0]!.body).toMatchObject({ title: "fix: attachment", body })
+})
+
+describe("Oryn artifact discovery after a lost creation response", () => {
+  const issue = { number: 101, body: input.marker, user: { login: "oryn-app[bot]" } }
+  const pull = { ...issue, number: 55, pull_request: { url: "https://api.github.com/repos/acme/widget/pulls/55" } }
+  test("discovers both artifact numbers across pages and reads their current facts", async () => {
+    const network = remote({ issuePages: [[{ ...issue, user: { login: "unrelated[bot]" } }], [issue, pull]] })
+    const facts = await OrynGithubPublish.createTransport().observe({
+      repository: input.repository,
+      marker: input.marker,
+    })
+    expect(facts.issue).toMatchObject({ number: 101, authorIsApp: true, markerPresent: true })
+    expect(facts.pull).toMatchObject({ number: 55, headSha: input.candidateSha, authorIsApp: true })
+    expect(network.writes).toHaveLength(0)
+  })
+  test("rejects multiple matching issues instead of choosing a plausible artifact", async () => {
+    remote({ issuePages: [[issue, { ...issue, number: 102 }]] })
+    await expect(
+      OrynGithubPublish.createTransport().observe({ repository: input.repository, marker: input.marker }),
+    ).rejects.toThrow("ambiguous")
+  })
+  test("does not accept a partial scan even when its first page contains a match", async () => {
+    remote({ issuePages: Array.from({ length: 11 }, () => [issue]) })
+    await expect(
+      OrynGithubPublish.createTransport().observe({ repository: input.repository, marker: input.marker }),
+    ).rejects.toThrow("pagination limit")
+  })
 })

@@ -244,18 +244,22 @@ export namespace GitHubChannelAuth {
     export function listRepositoryIssues(input: {
       owner: string
       repo: string
-      since: string
-      pageSize: number
+      since?: string
+      creator?: string
+      page?: number
+      pageSize?: number
       installationToken: string
     }) {
       const query = new URLSearchParams({
         filter: "all",
         state: "all",
-        since: input.since,
         sort: "updated",
         direction: "asc",
-        per_page: String(input.pageSize),
+        per_page: String(input.pageSize ?? 100),
       })
+      if (input.since) query.set("since", input.since)
+      if (input.creator) query.set("creator", input.creator)
+      if (input.page) query.set("page", String(input.page))
       return request({
         path: `/repos/${input.owner}/${input.repo}/issues?${query.toString()}`,
         installationToken: input.installationToken,

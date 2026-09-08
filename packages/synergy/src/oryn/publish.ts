@@ -175,6 +175,17 @@ async function completeReady(action: ActionReceipt): Promise<void> {
   await OrynLearning.promoteCase(action.caseId).catch(() => undefined)
 }
 
+async function completeAcknowledged(action: ActionReceipt): Promise<void> {
+  if (action.state !== "acknowledged") return
+  if (action.remoteRefs?.issueNumber || action.remoteRefs?.pullNumber)
+    await OrynStore.attachRemoteRefs(action.caseId, {
+      issueNumber: action.remoteRefs.issueNumber,
+      pullNumber: action.remoteRefs.pullNumber,
+      expectedEpoch: action.epoch,
+    })
+  await completeReady(action)
+}
+
 export namespace OrynPublish {
   /**
    * Execute one host-verified publish operation through the injected
@@ -202,6 +213,8 @@ export namespace OrynPublish {
     refs?: PublishRefs
     deduped: boolean
   }> {
+    using publicationLock = await Lock.tryAcquireWrite(`oryn-publication:${input.caseId}`)
+    if (!publicationLock) throw storeError("INVALID_STAGE", "Case publication is in progress; retry after settlement")
     if (input.operation === "sync_labels") throw storeError("NOT_AUTHORIZED", "label synchronization is host-owned")
     if (!(await OrynConfig.enabled())) throw storeError("NOT_AUTHORIZED", "oryn runtime is disabled")
     const binding = await OrynStore.sessionSourceBinding(input.callerSessionID)
@@ -249,10 +262,8 @@ export namespace OrynPublish {
       if (existing.state === "rejected" || existing.state === "cancelled") {
         throw storeError("INVALID_STAGE", "requestKey already failed; use a new requestKey", { caseId: input.caseId })
       }
-      // Idempotent replay: return the settled receipt without re-running the
-      // delivery gate (which would now fail on the rotated disposition).
-      await completeReady(existing)
-      return { actionId: existing.id, state: existing.state, refs: existing.remoteRefs, deduped: true }
+      const settled = await reconcile(input.caseId, existing.id, 3)
+      return { actionId: settled.id, state: settled.state, refs: settled.remoteRefs, deduped: true }
     }
 
     const targetsPull = ["refresh_pr", "publish_review", "mark_ready"].includes(input.operation)
@@ -444,11 +455,7 @@ export namespace OrynPublish {
         state: "acknowledged",
         remoteRefs: { ...(a.remoteRefs ?? {}), ...refs },
       }))
-      await OrynStore.attachRemoteRefs(input.caseId, {
-        issueNumber: refs.issueNumber,
-        pullNumber: refs.pullNumber,
-      })
-      await completeReady(settled)
+      await completeAcknowledged(settled)
       return { actionId: settled.id, state: settled.state, refs: settled.remoteRefs, deduped: false }
     } catch (error) {
       const name = error instanceof Error ? error.name : ""
@@ -493,12 +500,24 @@ export namespace OrynPublish {
    * (fail-closed) and leaves the receipt ambiguous — no blind replay.
    */
   export async function reconcileAmbiguous(caseId: string, actionId: string, maxAttempts = 3): Promise<ActionReceipt> {
-    const action = await OrynStore.getAction(actionId)
+    using publicationLock = await Lock.tryAcquireWrite(`oryn-publication:${caseId}`)
+    if (!publicationLock) {
+      const action = await OrynStore.getAction(actionId)
+      if (!action || action.caseId !== caseId) throw storeError("NOT_AUTHORIZED", "action belongs to another Case")
+      return action
+    }
+    return reconcile(caseId, actionId, maxAttempts)
+  }
+
+  async function reconcile(caseId: string, actionId: string, maxAttempts: number): Promise<ActionReceipt> {
+    let action = await OrynStore.getAction(actionId)
     if (!action) throw storeError("NOT_AUTHORIZED", `action ${actionId} not found`)
     if (action.caseId !== caseId) throw storeError("NOT_AUTHORIZED", "action belongs to another Case")
     if (action.operation === "sync_labels") return action
+    if (action.state === "prepared" || action.state === "in_flight")
+      action = await OrynStore.mutateAction(actionId, (value) => ({ ...value, state: "ambiguous" }))
     if (action.state !== "ambiguous") {
-      await completeReady(action)
+      await completeAcknowledged(action)
       return action
     }
     const record = await OrynStore.getCase(caseId)
@@ -513,25 +532,36 @@ export namespace OrynPublish {
     const marker = caseMarker(caseId)
 
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
-      const facts = await requireTransport().observe({
-        repository,
-        issueNumber: action.remoteRefs?.issueNumber,
-        pullNumber: action.remoteRefs?.pullNumber,
-        ref: action.expectedHead,
-        marker,
-      })
+      let facts: PublishFacts
+      try {
+        facts = await requireTransport().observe(
+          {
+            repository,
+            issueNumber: action.remoteRefs?.issueNumber,
+            pullNumber: action.remoteRefs?.pullNumber,
+            ref: action.expectedHead,
+            marker,
+          },
+          AbortSignal.timeout(30_000),
+        )
+      } catch {
+        await OrynStore.mutateAction(actionId, (value) => ({ ...value, lastErrorClass: "REMOTE_READ_ERROR" }))
+        continue
+      }
       if (action.operation === "ensure_issue") {
         if (facts.issue?.markerPresent && facts.issue.authorIsApp) {
-          return OrynStore.mutateAction(actionId, (a) => ({
+          const settled = await OrynStore.mutateAction(actionId, (a) => ({
             ...a,
             state: "acknowledged",
             remoteRefs: { ...(a.remoteRefs ?? {}), issueNumber: facts.issue!.number },
           }))
+          await completeAcknowledged(settled)
+          return settled
         }
       } else if (action.operation === "ensure_draft" || action.operation === "refresh_pr") {
         if (facts.pull) {
           if (facts.pull.headSha === action.expectedHead && facts.pull.markerPresent && facts.pull.authorIsApp) {
-            return OrynStore.mutateAction(actionId, (a) => ({
+            const settled = await OrynStore.mutateAction(actionId, (a) => ({
               ...a,
               state: "acknowledged",
               remoteRefs: {
@@ -540,6 +570,8 @@ export namespace OrynPublish {
                 branch: facts.pull!.headBranch,
               },
             }))
+            await completeAcknowledged(settled)
+            return settled
           }
           if (facts.pull.headSha !== action.expectedHead && facts.pull.authorIsApp && facts.pull.markerPresent) {
             // A human moved the branch: the remote is no longer ours. Cancel
@@ -602,21 +634,17 @@ export namespace OrynPublish {
     return (await OrynStore.getAction(actionId))!
   }
 
-  /** Reconcile every ambiguous action; the poll loop calls this incrementally. */
+  /** Reconcile orphaned publication intents and repair acknowledged Case links. */
   export async function reconcileAllAmbiguous(): Promise<number> {
     if (!(await OrynConfig.enabled())) return 0
     const actions = await OrynStore.listActions()
     let settled = 0
     for (const action of actions) {
-      if (action.state === "acknowledged" && action.operation === "mark_ready") {
-        await completeReady(action).catch(() => undefined)
-        continue
-      }
       if (action.operation === "sync_labels") continue
-      if (action.state !== "ambiguous") continue
+      if (!["prepared", "in_flight", "ambiguous", "acknowledged"].includes(action.state)) continue
       const before = action.state
       const after = await reconcileAmbiguous(action.caseId, action.id).catch(() => undefined)
-      if (after && before === "ambiguous" && after.state !== "ambiguous") settled++
+      if (after && before !== "acknowledged" && ["acknowledged", "cancelled"].includes(after.state)) settled++
     }
     return settled
   }

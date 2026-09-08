@@ -399,6 +399,109 @@ describe("OrynPublish ledger", () => {
     })
   })
 
+  test("polling cannot reconcile or duplicate an active publication", async () => {
+    await withPubScope(async (root) => {
+      const seeded = await seedFrozen(root)
+      const entered = Promise.withResolvers<void>()
+      const release = Promise.withResolvers<void>()
+      const transport = fakeTransport({
+        candidateSha: seeded.candidateSha,
+        marker: caseMarker(seeded.caseId),
+        onExecute: async () => {
+          entered.resolve()
+          await release.promise
+          return { refs: { issueNumber: 101 } }
+        },
+      })
+      setTransport(transport)
+      const request = {
+        callerSessionID: seeded.engineeringSessionId,
+        caseId: seeded.caseId,
+        operation: "ensure_issue" as const,
+        requestKey: "held",
+      }
+      const publishing = OrynPublish.publish(request)
+      try {
+        await entered.promise
+        await OrynPublish.reconcileAllAmbiguous()
+        expect((await OrynStore.listActions({ caseId: seeded.caseId }))[0].state).toBe("in_flight")
+        await expect(OrynPublish.publish(request)).rejects.toMatchObject({ data: { code: "INVALID_STAGE" } })
+        expect((await OrynStore.getCase(seeded.caseId))?.control).toBe("active")
+      } finally {
+        release.resolve()
+        await publishing
+      }
+      expect((await OrynPublish.publish(request)).deduped).toBe(true)
+      expect(await OrynStore.listActions({ caseId: seeded.caseId })).toHaveLength(1)
+    })
+  })
+
+  test.each(["prepared", "in_flight", "acknowledged"] as const)(
+    "repairs a %s receipt and its missing Case link without another write",
+    async (state) => {
+      await withPubScope(async (root) => {
+        const seeded = await seedFrozen(root)
+        const record = (await OrynStore.getCase(seeded.caseId))!
+        const action = await OrynStore.writeAction({
+          caseId: record.id,
+          operation: "ensure_issue",
+          requestKey: "orphan",
+          state,
+          payloadDigest: "fixture",
+          expectedRevision: record.revision,
+          epoch: record.epoch,
+          ...(state === "acknowledged" ? { remoteRefs: { issueNumber: 101 } } : {}),
+        })
+        let writes = 0
+        setTransport({
+          execute: async () => {
+            writes++
+            throw new Error("Must not replay writes")
+          },
+          observe: async () => ({
+            issue: { number: 101, title: "Recovered issue", state: "open", authorIsApp: true, markerPresent: true },
+            ci: { state: "none" },
+          }),
+        })
+        await OrynPublish.reconcileAllAmbiguous()
+        expect((await OrynStore.getAction(action.id))?.state).toBe("acknowledged")
+        expect((await OrynStore.getCase(record.id))?.issueNumber).toBe(101)
+        await OrynPublish.reconcileAllAmbiguous()
+        expect(
+          (
+            await OrynPublish.publish({
+              callerSessionID: seeded.engineeringSessionId,
+              caseId: record.id,
+              operation: "ensure_issue",
+              requestKey: "orphan",
+            })
+          ).refs?.issueNumber,
+        ).toBe(101)
+        expect(writes).toBe(0)
+      })
+    },
+  )
+
+  test("an acknowledged receipt cannot attach links after an epoch change", async () => {
+    await withPubScope(async (root) => {
+      const seeded = await seedFrozen(root)
+      const record = (await OrynStore.getCase(seeded.caseId))!
+      const action = await OrynStore.writeAction({
+        caseId: record.id,
+        operation: "ensure_issue",
+        requestKey: "old-epoch",
+        state: "acknowledged",
+        payloadDigest: "fixture",
+        expectedRevision: record.revision,
+        epoch: record.epoch,
+        remoteRefs: { issueNumber: 101 },
+      })
+      await OrynStore.control(record.id, record.revision, "takeover")
+      await OrynPublish.reconcileAmbiguous(record.id, action.id)
+      expect((await OrynStore.getCase(record.id))?.issueNumber).toBeUndefined()
+    })
+  })
+
   test("transient failure parks the action as ambiguous and bounded reconciliation settles it", async () => {
     await withPubScope(async (root) => {
       const seeded = await seedFrozen(root)

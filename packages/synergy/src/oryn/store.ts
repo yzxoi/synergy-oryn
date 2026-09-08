@@ -1010,11 +1010,17 @@ export namespace OrynStore {
    */
   export async function attachRemoteRefs(
     caseId: string,
-    refs: { issueNumber?: number; pullNumber?: number },
+    refs: { issueNumber?: number; pullNumber?: number; expectedEpoch?: number },
   ): Promise<Case> {
     using _lock = await Lock.write(`oryn-case:${caseId}`)
     const current = await getCase(caseId)
     if (!current) throw storeError("NOT_AUTHORIZED", `case ${caseId} not found`)
+    if (refs.expectedEpoch !== undefined && current.epoch !== refs.expectedEpoch) return current
+    if (
+      (!refs.issueNumber || refs.issueNumber === current.issueNumber) &&
+      (!refs.pullNumber || current.pullNumbers.includes(refs.pullNumber))
+    )
+      return current
     const record: Case = {
       ...current,
       issueNumber: refs.issueNumber ?? current.issueNumber,
