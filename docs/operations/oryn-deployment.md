@@ -168,11 +168,12 @@ During host provisioning, an administrator starts the dedicated account's user m
 
 ```bash
 oryn_unit="user@$(id -u).service"
+sudo systemctl stop "$oryn_unit"
 sudo install -d "/run/systemd/system/${oryn_unit}.d"
 printf '[Service]\nDelegate=cpu memory pids\n' | sudo tee "/run/systemd/system/${oryn_unit}.d/oryn.conf" > /dev/null
 sudo systemctl daemon-reload
 sudo loginctl enable-linger "$(id -un)"
-sudo systemctl restart "$oryn_unit"
+sudo systemctl start "$oryn_unit"
 ```
 
 A starting policy for the 20-core/80-GB pilot is shown below. The numbers are proposed limits, not measured capacity. Keep heavy check admission at two, account for simultaneous worker Bash commands, and configure a dedicated-user aggregate memory/CPU/task ceiling with systemd so the sum of independent scopes cannot consume the entire VPS. Scope creation uses the user manager, so a limit applied only to the Oryn server service does not cover its sibling scopes; place aggregate limits on the dedicated user's parent slice. For example, reserve host capacity by starting below 64 GiB and 16 CPUs for that user's total workload, then tune from observed peaks.
