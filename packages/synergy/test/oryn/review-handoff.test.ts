@@ -10,7 +10,7 @@ import { Session } from "../../src/session"
 import { SessionInbox } from "../../src/session/inbox"
 import { SessionManager } from "../../src/session/manager"
 import { tmpdir } from "./fixture"
-import { externalIdentityHash } from "../../src/util/identity"
+import { OrynEvidence } from "../../src/oryn/evidence"
 
 async function request(input: { caseId: string; attemptId: string; assignmentId: string; workerId: string }) {
   const sha = (await OrynStore.getAttempt(input.caseId, input.attemptId))!.baselineSha
@@ -48,6 +48,7 @@ describe("Oryn structured review handoff", () => {
         ],
       })
       const original = (await OrynStore.getReview(input.caseId, result.reviewId))!
+      expect(result).toMatchObject({ accepted: true, stale: false })
       const { id: _id, schemaVersion: _schema, createdAt: _time, ...payload } = original
       await OrynStore.writeReview({
         ...payload,
@@ -335,10 +336,9 @@ async function fixture(
         attemptId: root.attemptId,
         stage: "review",
         agentId: "oryn-review",
-        frozenInputsDigest: externalIdentityHash(
-          (await OrynStore.getAttempt(claim.caseId, root.attemptId))!.baselineSha,
-          (await OrynStore.getAttempt(claim.caseId, root.attemptId))!.candidateSha!,
-          (await OrynStore.getCase(claim.caseId))!.acceptanceDigest,
+        frozenInputsDigest: OrynEvidence.assignmentDigest(
+          (await OrynStore.getCase(claim.caseId))!,
+          (await OrynStore.getAttempt(claim.caseId, root.attemptId))!,
           "review",
         ),
         epoch: 0,

@@ -26,4 +26,6 @@ Review Assignment and report fingerprints include the Host policy version. Old r
 
 Host gate tests reproduce missing-domain delivery and require all specialist reviews before success. Other tests retain security requirements across an ordinary repair, detect a renamed sensitive path and verify that fresh review restores eligibility after legacy fingerprints fail.
 
+Structured review-handoff fixtures derive current Assignment fingerprints through the Host builder and assert successful acceptance before testing blocker continuity. Explicit older fingerprints remain in the policy-upgrade rejection test; a stale fixture must not bypass the acceptance or recovery path its test intends to exercise.
+
 Path rules are a minimum rather than a semantic risk detector. Changes to the classifier require a policy-version bump and new reviews for in-flight candidates. Cumulative diff inspection requires the original Git objects and assigned worktree to remain available; failures block delivery. Already-ready or unresolved publications across a policy upgrade still need operator reconciliation.
