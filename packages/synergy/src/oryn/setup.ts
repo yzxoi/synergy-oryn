@@ -115,7 +115,7 @@ export namespace OrynSetup {
     const previous = await Config.globalRaw()
     if (revision(previous) !== input.revision)
       throw storeError("STALE_REVISION", "Settings changed; refresh before saving")
-    if (!input.enabled) {
+    if (!input.enabled && previous.oryn?.enabled) {
       const domain = await Config.domainGet("runtime")
       return Config.domainUpdateWithChange(
         "runtime",

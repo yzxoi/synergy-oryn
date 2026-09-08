@@ -27,7 +27,7 @@ test("setup discovers configured repositories while disabled, validates checkout
   expect(view.repositories).toEqual([{ accountId: "app", repository: "acme/widget" }])
   const input = {
     revision: view.revision,
-    enabled: true,
+    enabled: false,
     repoAlias: "widget",
     githubAccount: "app",
     repository: "acme/widget",
@@ -41,6 +41,7 @@ test("setup discovers configured repositories while disabled, validates checkout
   await expect(OrynSetup.save({ ...input, notificationTarget: "unknown" })).rejects.toBeDefined()
   await OrynSetup.save(input)
   const stored = (await Config.globalRaw()).oryn
+  expect(stored?.enabled).toBe(false)
   expect(stored?.limits?.maxActiveCases).toBe(2)
   expect(stored?.notifications?.target).toBeUndefined()
   expect(stored?.repositories?.widget?.github).toEqual({
@@ -50,6 +51,14 @@ test("setup discovers configured repositories while disabled, validates checkout
     autoFix: false,
   })
   await expect(OrynSetup.save(input)).rejects.toBeDefined()
+  await OrynSetup.save({ ...input, enabled: true, revision: (await OrynSetup.view()).revision })
+  await OrynSetup.save({
+    ...input,
+    enabled: false,
+    directory: "/unavailable-checkout",
+    revision: (await OrynSetup.view()).revision,
+  })
+  expect((await Config.globalRaw()).oryn?.enabled).toBe(false)
 })
 
 test("empty installation setup is readable without credentials", async () => {
