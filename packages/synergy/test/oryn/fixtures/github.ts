@@ -1,3 +1,4 @@
+import { OrynGit } from "../../../src/oryn/git"
 import type { PublishExecuteInput, PublishFacts, PublishTransport } from "../../../src/oryn/publish"
 
 export function mockGithub() {
@@ -30,6 +31,20 @@ export function mockGithub() {
           markerPresent: true,
           authorIsApp: true,
         }
+        return { refs: { pullNumber: pull.number, branch: pull.headBranch } }
+      }
+      if (input.operation === "refresh_pr") {
+        if (
+          !pull ||
+          !input.directory ||
+          !input.candidateSha ||
+          input.pullNumber !== pull.number ||
+          input.branch !== pull.headBranch ||
+          input.baseBranch !== pull.baseRef
+        )
+          throw new Error("invalid PR refresh")
+        await OrynGit.read(input.directory, ["merge-base", "--is-ancestor", pull.headSha, input.candidateSha])
+        pull.headSha = input.candidateSha
         return { refs: { pullNumber: pull.number, branch: pull.headBranch } }
       }
       if (!pull || input.candidateSha !== pull.headSha || input.pullNumber !== pull.number)

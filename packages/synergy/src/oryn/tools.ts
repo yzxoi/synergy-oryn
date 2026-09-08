@@ -435,6 +435,7 @@ export const OrynResultTool = Tool.define(
           localBranch: "localBranch" in params ? params.localBranch : undefined,
           candidateSha: "candidateSha" in params ? params.candidateSha : undefined,
           runIds: "runIds" in params ? params.runIds : undefined,
+          addressedFindings: "addressedFindings" in params ? params.addressedFindings : undefined,
           knownRisks: "knownRisks" in params ? params.knownRisks : undefined,
           limitations: "limitations" in params ? params.limitations : undefined,
         })
