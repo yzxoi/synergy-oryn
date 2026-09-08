@@ -11,6 +11,8 @@ description: Design, write, run, and diagnose Synergy tests with Bun, temporary 
 2. For a bug or new behavior, write the smallest failing test before the implementation. Skip a new test only for a pure refactor whose existing tests already cover unchanged behavior.
 3. Assert public results, state transitions, emitted contracts, permissions, or recovery behavior. Avoid source-text assertions, private call counts, and snapshots of irrelevant structure.
 
+For non-blocking and ordering contracts, hold the downstream operation behind an explicit promise and assert the upstream result while it remains pending. When asserting that an inbox item remains queued after an operation that schedules a wake, hold a real SessionManager loop lease on the worker; clean up its queued work before releasing the lease so a delayed wake cannot escape the fixture. Use a generous test-framework timeout only to detect deadlocks, release the barrier in cleanup, and avoid wall-clock performance thresholds in instrumented correctness suites. Do not wrap correctness-only completion signals in shorter `Promise.race` timers: filesystem and worktree startup contention can exceed those incidental budgets on CI.
+
 ## Choose the Lowest Useful Level
 
 - pure function/schema: inline data and direct calls
@@ -23,9 +25,13 @@ description: Design, write, run, and diagnose Synergy tests with Bun, temporary 
 
 Inspect two nearby tests and `packages/synergy/test/preload.ts` before introducing a new harness pattern.
 
+When a workflow advances on execution evidence, success fixtures must produce that evidence through the real executor and resource admission. Do not seed a model's success string or an accepted report to bypass the prerequisite being tested. Keep deliberate forged receipts in adversarial tests, and distinguish those tests from fixtures that demonstrate successful workflow progress.
+
 Place every test under the owning package's `test/` directory, mirroring the relevant source domain when that helps navigation. Place repository-level script and policy tests under the root `test/` directory. Never cascade `*.test.*` or `*.spec.*` files beside implementation files in `src/`, `script/`, or another source directory. Run `bun run test-layout:check` when adding or moving tests.
 
 For localized UI behavior, use a real Lingui `I18nProvider` with minimal English and Simplified Chinese messages. Assert visible text and accessibility labels after a reactive locale change; do not mock translation calls to return IDs because that hides missing catalogs and stale module-load translations. Keep plugin-author, user, LLM, path, identifier, and raw-error pass-through in the same boundary test as translated host chrome.
+
+When testing durable acceptance with an injected execution callback, define what consumes queued follow-up work. Acceptance-only tests may capture the scheduled wake boundary and must remove their owned pending inbox items before restoring it. Keep a separate test that exercises actual scheduling with a deterministic execution boundary and awaits its completion. An accepted execution promise is not proof that later queued work has settled; passing assertions with background provider requests or post-cleanup writes are test failures.
 
 ## Use Real Isolation
 
@@ -39,7 +45,9 @@ Tests that exercise the cold-cache path — where no disk or memory cache exists
 
 Use a fake or local boundary only where the external system is not the subject of the test. Do not add Jest/Vitest mocks to the Bun suite without an established package-specific reason.
 
-Playwright DOM-test fixtures that boot a Vite dev server must be hermetic against a no-build checkout (the `ci-coverage` gate runs no build step): alias workspace-package entries whose `import` condition points at gitignored `dist/` output to their source entry; resolve runtime packages that break under dependency pre-bundling (Lingui's `@messageformat/parser` chain) to minimal fixture-local stubs when the suite asserts behavior unrelated to i18n rendering, or add them to `optimizeDeps.include` when the real runtime is the subject; set `optimizeDeps.include` for the Solid runtime/JSX runtime/zod with `noDiscovery: true` so the optimizer never re-runs mid-load and reloads the page; scope `cacheDir` to the fixture temp directory so sibling Playwright servers sharing `node_modules/.vite` cannot invalidate each other; `warmupRequest` the fixture entry before launching the browser and surface page/console/HTTP errors in the failure message instead of a bare 30s selector timeout; and register the suite in the package's `playwrightIsolated` list so bun's worker reaping cannot kill its Chromium process mid-suite. See the [hermetic Vite fixtures decision](../../../docs/decisions/implemented/testing/2026-08-31-hermetic-vite-fixtures-for-playwright-dom-tests.md).
+Playwright DOM-test fixtures that boot a Vite dev server must declare their package prerequisites: published Plugin entries use the root coverage command’s dependency build; alias other workspace-package entries whose `import` condition points at gitignored `dist/` output to their source entry when the fixture tests source behavior; resolve runtime packages that break under dependency pre-bundling (Lingui's `@messageformat/parser` chain) to minimal fixture-local stubs when the suite asserts behavior unrelated to i18n rendering, or add them to `optimizeDeps.include` when the real runtime is the subject; set `optimizeDeps.include` for the Solid runtime/JSX runtime/zod with `noDiscovery: true` so the optimizer never re-runs mid-load and reloads the page; scope `cacheDir` to the fixture temp directory so sibling Playwright servers sharing `node_modules/.vite` cannot invalidate each other; `warmupRequest` the fixture entry before launching the browser and surface page/console/HTTP errors in the failure message instead of a bare 30s selector timeout; and register the suite in the package's `playwrightIsolated` list so bun's worker reaping cannot kill its Chromium process mid-suite. See the [hermetic Vite fixtures decision](../../../docs/decisions/implemented/testing/2026-08-31-hermetic-vite-fixtures-for-playwright-dom-tests.md). Root production-host UI acceptance follows the same process isolation: run `bun run plugin-ui:test`, which starts one Bun process per suite in sequence, instead of passing the entire browser directory to `bun test`.
+
+For browser fixtures that reload a stateful application between cases, use a fresh page/context per test and close the prior page. Disable HMR when the test does not edit sources, bind an explicitly available port (Vite can interpret `port: 0` as its default), and close only the fixture-owned HTTP connections during teardown. This keeps client caches, sockets and navigation state from leaking between cases.
 
 ## Run Core Suites Through the Orchestrators
 
@@ -94,9 +102,13 @@ Run the narrow failing test during iteration, then the affected package/domain s
 Coverage has a floor. `bun run coverage:check` enforces per-package line/function thresholds (the only metrics Bun 1.3.14 exposes in lcov) with an auditable exemption list in `script/coverage-exempt.json`. The rules:
 
 - Cover product logic with real behavioral tests before exempting anything.
+- Assert the complete asynchronous state being tested, not the first intermediate event. For time-budgeted maintenance, drive deferred passes through the public maintenance operation before asserting the final cap; preserve a bounded overall deadline.
+- Register each new workspace package in `script/coverage-exempt.json` with a coverage command and thresholds. When adding nested test directories, verify that the package's coverage command includes them as well as its ordinary test command.
 - Every exemption entry carries a `reason`; entries that match nothing, overlap, or cover more than 25% of a package fail validation.
 - Bun 1.3.14 supports no ignore comments (`istanbul ignore`, `v8 ignore`, and `c8 ignore` are all inert), so whole-file exemption is the only exclusion mechanism. Do not add ignore comments expecting them to work.
 - A source file never loaded by any test counts as 0% and fails the package — add a real test that loads it rather than exempting blindly.
+- Subprocess acceptance is not parent-process coverage. Supplement process-only entry modules with direct behavioral tests where possible, while retaining native execution checks. Restore signal listeners and explicit zero/default exit status after invoking a CLI handler or process runner in a Bun test.
+- For Solid wrappers exercised through a Vite-compiled DOM fixture, verify whether Bun attributes coverage to the emitted bundle instead of the TSX source. An exact-file exemption must identify the behavioral suite and this instrumentation boundary; keep directly testable logic measured separately.
 
 Use [Development reference](../../../docs/reference/development.md) and [Open-source quality](../../../docs/operations/open-source-quality.md) for current command ownership. Do not invent a root `bun test`; the root script intentionally rejects that ambiguous command.
 
@@ -110,3 +122,15 @@ Use [Development reference](../../../docs/reference/development.md) and [Open-so
 ## Handoff
 
 Report the invariant, test location, red/green evidence, commands run, pass/fail counts, unrun gates, platform limitations, and any remaining nondeterminism.
+
+The root `coverage:check` command builds the public Plugin package through the dependency graph before instrumented suites run. Browser fixtures and Plugin Kit scaffolds resolve the published `import` entries; a clean checkout must not rely on artifacts left by another test or package-validation job.
+
+For Oryn model-pipeline fixtures, configure both chat and embedding through the reusable loopback scripted-model transport, assert the fixture receives recall requests, and let ChannelHost, Sessions, tools and Inbox advance the scenario. Do not drive business stages from the test harness. Repair scenarios must retrieve prior findings through the model tools, execute a failing first candidate and corrected replacement, and assert preserved evidence plus persisted addressed findings; a final ready status alone is insufficient. When installation fixtures replace provider configuration, reload provider caches on installation and restoration; run model scenarios together to detect closed-endpoint reuse. Cancel and await all fixture-owned root and worker Sessions before restoring configuration.
+
+For recorded streams, cancel both after a delivered chunk and while a read is pending with a buffered prefix. Use barriers at the external stream boundary and assert that byte records precede body/attempt completion. Cancellation tests must retain received bytes and still propagate real recording failures; increasing timeouts or dropping late evidence does not verify this invariant.
+
+In model-driven success scenarios, let the coder prepare and commit its candidate through the actual product tools. A commit made by the test driver bypasses the coder's permission and workspace constraints. Require the same behavioral assertion to fail on baseline and pass under a separate verifier on candidate; have the reviewer retrieve those receipts before submitting its judgment.
+
+For Oryn process-restart scenarios, use `test/oryn/fixtures/runtime-process.ts` with its isolated explicit environment and canonical inbound message schema. Keep deterministic external services in the parent so remote writes survive runtime death, and let the actual child RuntimeHandle, Agent workers and tools advance business stages. Hold the external request at the intended failure point, terminate only the fixture-owned process group, and reuse the durable home in a new process. Assert artifact numbers, task identities, reporter anchors and replay counts across the restart. Cover adapter behavior separately: a mock transport that discovers a marker cannot establish that the real GitHub adapter supports discovery. State which outcomes are exercised; investigation handoff does not prove crash-safe PR readiness.
+
+When a sharded CI failure is not reproducible in isolation, retain bounded assertion and stack context around the failing test before changing runtime semantics, test expectations or isolation lists. Normalize ANSI styling and preserve meaningful blank-line-separated diffs; a passing isolated rerun does not prove the shard failure is resolved.

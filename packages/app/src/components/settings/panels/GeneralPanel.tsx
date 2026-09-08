@@ -1,3 +1,4 @@
+import { SkinPreferenceRow } from "@/plugin/skin-preference-row"
 import { For, Show } from "solid-js"
 import { useLingui } from "@lingui/solid"
 import { Button } from "@ericsanchezok/synergy-ui/button"
@@ -10,12 +11,13 @@ import type { LocalePreference } from "@/context/locale"
 import { translateDescriptor } from "@/locales/translate"
 import { usePlatform, type DesktopUpdateMode } from "@/context/platform"
 import { DevicePushBlock } from "./DevicePushBlock"
-import { SettingRow } from "../components/SettingRow"
+import { SettingRow } from "@ericsanchezok/synergy-ui/setting-row"
 import { SegmentPill } from "../components/SegmentPill"
 import { ThemePicker } from "../components/ThemePicker"
-import { MenuField } from "../../menu-field/MenuField"
+import { MenuField } from "@ericsanchezok/synergy-ui/menu-field"
 import { SettingsPage, SettingsSection } from "../components/SettingsPrimitives"
 import { InterfaceZoom } from "./interface-zoom"
+import { ShellPreferenceRow } from "@/plugin/shell-preference-row"
 import {
   desktopUpdateStatusCopy,
   downloadLabel,
@@ -91,7 +93,6 @@ const copy = {
     message: "Used for code, terminals, diffs, and other monospaced content.",
   },
   behaviorTitle: { id: "settings.general.behavior.title", message: "Behavior" },
-  snapshotsTitle: { id: "settings.general.snapshots.title", message: "File snapshots" },
   activityDisplayTitle: { id: "settings.general.activityDisplay.title", message: "Activity display" },
   activityDisplayDescription: {
     id: "settings.general.activityDisplay.description",
@@ -107,10 +108,6 @@ const copy = {
   },
   workspaceMain: { id: "settings.general.workspace.main", message: "Main checkout" },
   workspaceWorktree: { id: "settings.general.workspace.worktree", message: "Worktree" },
-  snapshotsDescription: {
-    id: "settings.general.snapshots.description",
-    message: "Keep restore points when Synergy edits files",
-  },
   compactReasoningTitle: { id: "settings.general.compactReasoning.title", message: "Compact reasoning" },
   compactReasoningDescription: {
     id: "settings.general.compactReasoning.description",
@@ -238,6 +235,8 @@ export function GeneralPanel(props: {
   return (
     <SettingsPage title={_(copy.pageTitle)} description={_(copy.pageDescription)}>
       <SettingsSection title={_(copy.appearanceTitle)}>
+        <ShellPreferenceRow popoverLayer={props.popoverLayer} />
+        <SkinPreferenceRow popoverLayer={props.popoverLayer} onThemeChange={setThemeId} />
         <div class="settings-theme-picker-section">
           <div class="settings-theme-picker-copy">
             <span class="settings-row-title">{_(copy.themeTitle)}</span>
@@ -321,13 +320,6 @@ export function GeneralPanel(props: {
       </SettingsSection>
 
       <SettingsSection title={_(copy.behaviorTitle)}>
-        <SettingRow
-          title={_(copy.snapshotsTitle)}
-          description={_(copy.snapshotsDescription)}
-          trailing={
-            <Switch checked={props.general.snapshot} onChange={(value) => props.onGeneralChange("snapshot", value)} />
-          }
-        />
         <SettingRow
           title={_(copy.compactReasoningTitle)}
           description={_(copy.compactReasoningDescription)}

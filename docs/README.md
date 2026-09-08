@@ -39,12 +39,14 @@ Architecture documents define current invariants, ownership boundaries, and the 
 - [Sessions and messages](architecture/session-and-messages.md)
 - [LLM loop and compaction](architecture/llm-loop.md)
 - [Frontend data sync](architecture/frontend-data-sync.md)
+- [Frontend plugin platform](architecture/frontend-plugin-platform.md)
 - [Frontend localization](architecture/localization.md)
 - [Channels](architecture/channels.md)
 - [Execution boundaries](architecture/execution-boundaries.md)
 - [Cortex and delegated work](architecture/cortex.md)
 - [Workflow engine](architecture/workflows.md)
 - [Browser runtime](architecture/browser-runtime.md)
+- [Native Computer Use](architecture/computer-use.md)
 
 ## Reference
 

@@ -3,7 +3,8 @@ import { Scope } from "../../src/scope"
 import { ScopeContext } from "../../src/scope/context"
 import { OrynService } from "../../src/oryn/service"
 import { OrynStore } from "../../src/oryn/store"
-import { tmpdir } from "../fixture/fixture"
+import { OrynCheckTool } from "../../src/oryn/tools"
+import { tmpdir, runCheck } from "./fixture"
 
 function errorCode(error: unknown): string | undefined {
   return (error as { data?: { code?: string } })?.data?.code
@@ -37,7 +38,7 @@ async function withRevScope<T>(
     },
   })
   const scope = (await Scope.fromDirectory(tmp.path)).scope
-  return ScopeContext.provide({ scope, fn: () => fn(tmp.path) })
+  return await ScopeContext.provide({ scope, fn: () => fn(tmp.path) })
 }
 
 async function headSha(root: string): Promise<string> {
@@ -107,7 +108,7 @@ async function seedFrozen(root: string): Promise<Frozen> {
     argv: [["bun", "--print", "process.exit(1)"]],
     checks: ["baseline assertion"],
   })
-  const baselineRun = await OrynService.runCheck({
+  const baselineRun = await runCheck({
     callerSessionID: repro.workerSessionId,
     caseId,
     attemptId,
@@ -116,7 +117,7 @@ async function seedFrozen(root: string): Promise<Frozen> {
     lane: "baseline",
     abort: new AbortController().signal,
   })
-  expect(baselineRun.outcome).toBe("failed")
+  expect(baselineRun.outcome, JSON.stringify(await OrynStore.getRun(caseId, baselineRun.runId))).toBe("failed")
 
   await OrynService.submitResult({
     callerSessionID: repro.workerSessionId,
@@ -386,7 +387,7 @@ describe("OrynService delivery gate", () => {
         argv: [["echo", "candidate-ok"]],
         checks: ["acceptance scenario passes"],
       })
-      const candRun = await OrynService.runCheck({
+      const candRun = await runCheck({
         callerSessionID: verify.workerSessionId,
         caseId,
         attemptId: seeded.attemptId,
@@ -396,6 +397,24 @@ describe("OrynService delivery gate", () => {
         abort: new AbortController().signal,
       })
       expect(candRun.outcome).toBe("passed")
+      const receipt = await (
+        await OrynCheckTool.init()
+      ).execute(
+        { input: { action: "get_run", caseId, runId: candRun.runId } },
+        {
+          sessionID: verify.workerSessionId,
+          messageID: "fixture",
+          agent: "oryn-repro",
+          abort: new AbortController().signal,
+          metadata() {},
+          async ask() {},
+        },
+      )
+      expect(JSON.parse(receipt.output)).toMatchObject({
+        id: candRun.runId,
+        outcome: "passed",
+        actualSha: seeded.candidateSha,
+      })
 
       const payload = `Fix forwarded-message handling\n\ncandidate: ${seeded.candidateSha}`
 
@@ -501,6 +520,25 @@ describe("OrynService delivery gate", () => {
       // Resumed with everything green → ready.
       const pausedRecord = await OrynStore.getCase(caseId)
       await OrynStore.control(caseId, pausedRecord!.revision, "resume")
+      const unverified = await OrynService.evaluateDelivery({
+        callerSessionID: seeded.engineeringSessionId,
+        caseId,
+        ciStatus: "passed",
+        payload,
+      })
+      expect(unverified.ready).toBe(false)
+      expect(unverified.failures.some((failure) => failure.message.includes("independent verification"))).toBe(true)
+      await OrynService.submitResult({
+        callerSessionID: verify.workerSessionId,
+        caseId,
+        attemptId: seeded.attemptId,
+        assignmentId: verify.assignmentId,
+        requestKey: "verify-result",
+        kind: "verification",
+        outcome: "verified",
+        summary: "Independent fixture verification",
+        runIds: [candRun.runId],
+      })
       const ready = await OrynService.evaluateDelivery({
         callerSessionID: seeded.engineeringSessionId,
         caseId,

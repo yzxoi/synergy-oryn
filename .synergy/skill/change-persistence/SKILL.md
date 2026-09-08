@@ -18,13 +18,19 @@ description: Add or modify Synergy durable state, JSON storage keys, SQLite tabl
 1. Build logical keys through `StoragePath`; use `Storage` for locks, atomic writes, reads, scans, and removal.
 2. Keep independently updated or streamed records independently addressable. Do not rewrite a whole session or collection for one leaf update.
 3. Update derived indexes and events in the same owner transaction/lifecycle as the canonical write.
+   For recoverable creation spanning several records, reserve object identities before the first write and reuse them on retry. Repair a missing link or projection from existing canonical data through its owning domain; never treat an index lookup failure as proof that the object does not exist. Inject failures between canonical writes, links, projections and Inbox delivery, then verify both identity and content survive recovery.
 4. Preserve the atomic-write transient-retry contract: `Storage` write+rename retries `EPERM`/`EACCES`/`EBUSY` (classified by `isRetryableIOError`) so Windows sharing violations do not fail persistence, permanent errors fail fast, and temp files are removed (with the same transient retry) on the failure path. Do not bypass `Storage` with a bare rename; extend `test/storage/storage-retry.test.ts` when changing write-path failure behavior.
+5. Authoritative rollout evidence uses private, durable Storage writes and the bounded `RolloutArtifact` stream store. Keep progress independently committed, verify content hashes, and preserve partial observations. Do not replace its persistence failures with diagnostic warnings, empty data, or successful completion; propagate `RolloutRecordingError` so execution admission can stop.
 
 ### SQLite and other domain stores
 
 1. Keep fresh-install schema creation in the owning database initialization.
 2. Put upgrades, backfills, and rewrites in versioned domain migrations registered through the central migration runner.
 3. Preserve transaction, WAL, vector-extension fail-soft, and backup assumptions of the owning store.
+
+When one logical operation crosses JSON storage and Library SQLite, establish its destination identity before the side effect and make replay verify both identity and content. Serialize creation and withdrawal, and test a destination write followed by a lost source acknowledgment. A matching destination row can settle replay; different content must remain available for reconciliation rather than being overwritten or removed. When a destination write depends on revocable ownership, prepare remote work outside the ownership lock, then revalidate the captured policy and delivery evidence under that lock before committing the local side effect. Test revocation during both preparation and remote confirmation; the control action must complete before the held operation is released.
+
+When deletion or replay compares rendered content, persist the exact payload rather than regenerating it from mutable status or a new template. Migrate the historical writer's bytes and preserve missing provenance explicitly; do not attach an old claim to the current task or candidate merely because they now share a record. Exercise actual destination matching and removal after migration.
 
 ## Migrate Existing Data
 
@@ -34,6 +40,13 @@ description: Add or modify Synergy durable state, JSON storage keys, SQLite tabl
 4. Keep compatibility readers only at a named boundary when migration cannot make old data impossible; do not spread legacy checks through business logic.
 5. Preserve secrets and owner-only permissions. Never log raw credentials or include them in diagnostics fixtures.
 6. Build old-state fixtures from schemas emitted by shipped writers. Do not use a synthetic superset of multiple historical variants as the only upgrade fixture.
+7. Validate the historical fields a migration reads or rewrites, and preserve unrelated metadata when updating the record. Use the full current schema only when upgrading the whole record to that schema. Include nullable historical fields, archived source metadata, and preservation of unknown fields in upgrade tests where those formats existed.
+8. Inventory every record layer traversed by a startup-blocking migration, including nested message parts and attachments. Classify malformed historical input separately from storage failures: preserve the record and persist an explicit evidence gap when its original content cannot be recovered; keep permission, read/write and evidence-persistence failures fatal. Test both cases using real storage fixtures.
+9. For independent scans within one migration, pass an increasing phase index to `progress(current, total, phase)`, beginning with `progress(0, 0, nextPhase)` before preparing the next scan. Keep counts monotonic within each phase and test phase transitions through the central runner; do not relax Desktop stale-progress rejection to accommodate raw counter resets.
+
+## File Snapshot Storage
+
+Use `SnapshotStore` for backend resolution, `SnapshotLifecycle` for copied/deleted ownership, and `SnapshotMaintenance` for offline migration and collection. Hold the Scope lease for all object/ref transactions and the session lock for mutable indexes. Publish refs before message hashes; remove canonical session records before releasing their refs. Preserve every historical root across archive, transcript rollback, and message compaction. Full-data copies must use `SnapshotArchive` for snapshot directories, never generic copy-skip-existing. Rollout ZIP export/import uses its session-scoped object transfer under Scope leases; retain imported roots before publishing message references. Test packed refs, alternates without refs, unknown objects, checkpoint interruptions, and cross-process exclusion. Run `bun script/benchmark-snapshots.ts` from `packages/synergy` for an isolated storage-backend comparison; distinguish that measurement from old-binary timing or production capacity estimates.
 
 ## Verify
 

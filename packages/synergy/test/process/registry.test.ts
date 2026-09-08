@@ -214,3 +214,25 @@ describe("ProcessRegistry lifecycle", () => {
     expect(ProcessRegistry.getFinished(proc.id)?.status).toBe("failed")
   })
 })
+
+test("stale process inspection waits for the registered executor cleanup", async () => {
+  const proc = ProcessRegistry.create({ sessionID: "owned-worker", command: "cleanup-pending" })
+  proc.pid = 12345
+  const done = Promise.withResolvers<void>()
+  ProcessRegistry.setCompletion(proc, done.promise)
+  const restore = ProcessRegistry.setProcessInspector(() => ({ alive: false }))
+  try {
+    ProcessRegistry.settleStaleProcesses()
+    expect(ProcessRegistry.get(proc.id)).toBe(proc)
+    expect(ProcessRegistry.getFinished(proc.id)).toBeUndefined()
+    done.resolve()
+    await done.promise
+    ProcessRegistry.settleStaleProcesses()
+    expect(ProcessRegistry.get(proc.id)).toBeUndefined()
+    expect(ProcessRegistry.getFinished(proc.id)?.sessionID).toBe("owned-worker")
+  } finally {
+    done.resolve()
+    restore()
+    ProcessRegistry.remove(proc.id)
+  }
+})

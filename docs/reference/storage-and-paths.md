@@ -22,6 +22,8 @@ Synergy keeps installation state under one root:
 
 Cache version changes can clear `cache/` on startup. Treat cache as reproducible, not as a backup source.
 
+Oryn learning records use schema version 2 with an immutable memory payload and optional Host provenance. The domain migration preserves historical payload bytes and memory identities while leaving unknown provenance absent; those records cannot be automatically promoted. See [learning provenance](../decisions/implemented/bug-fix/2026-09-08-oryn-learning-provenance.md) for upgrade and replay semantics.
+
 ## JSON Storage
 
 Most durable product objects use file-based JSON storage rooted at `data/`. A logical storage key maps to nested directories plus a `.json` suffix. Writes take per-file locks and use a temporary file followed by atomic rename. The write+rename sequence retries transient sharing-violation errors (`EPERM`/`EACCES`/`EBUSY`, classified via `isRetryableIOError`) up to 4 attempts with 50–200 ms backoff, because Windows renames fail when antivirus, sync clients, or cross-process readers briefly hold a handle; permanent errors fail on the first attempt and the temp file is removed (with the same transient retry) before the original error propagates. Cross-process readers of these files read through `readFileWithRetry` for the same reason. Streaming message/part writes can use compact JSON; lower-frequency records remain indented.
@@ -88,6 +90,12 @@ The session index, paged-session index, child-session index, navigation index, m
 
 Lattice stores every v2 run by immutable run ID. A session's `lattice/current` record selects the run shown as current without overwriting older terminal runs; it is a repairable index over canonical Run records. Per-run event files are idempotent, best-effort audit records, not an event-sourced reconstruction of the Run. Run, Step, Blueprint binding, and BlueprintLoop records remain the recovery facts.
 
+## Rollout Artifacts
+
+The rollout artifact store uses `rollout/` beneath its owning session, or `data/operations/<scope>/<operation>/rollout/` for sessionless operations. `artifacts/<id>/info.json` commits the readable byte/chunk count and completeness state; individually addressed chunk descriptors reference owner-local, SHA-256-addressed binary blobs. Payloads are streamed in bounded chunks and verified on read. Interrupted streams retain their committed prefix. Under the same rollout owner, `runs/<run>/info.json` stores run state, `runs/<run>/calls/<call>.json` stores logical calls, and `runs/<run>/attempts/<call>/<attempt>.json` stores actual provider attempts with ordered indices and body references. Private records use owner-only permissions and durable atomic writes; they are separate from public product assets and telemetry retention.
+
+Externalized files in `data/tool-output/` have no age-based expiration. Creating a new tool-output file does not delete older observations.
+
 ## Library Database
 
 Library uses:
@@ -117,18 +125,19 @@ Plugin-scoped credentials live separately at `data/plugin/<plugin-id>/auth.json`
 
 ## Browser, Worktrees, and Artifacts
 
-| Path                      | Content                                                    |
-| ------------------------- | ---------------------------------------------------------- |
-| `data/browser/sessions/`  | canonical Browser session/page metadata                    |
-| `data/browser/profiles/`  | persistent browser profiles and storage state              |
-| `data/browser/uploads/`   | owner-scoped upload staging                                |
-| `data/browser/downloads/` | browser downloads grouped by Scope                         |
-| `data/browser/chromium/`  | managed Chromium assets                                    |
-| `data/worktree/`          | Synergy-managed worktree metadata/resources                |
-| `data/snapshot/`          | file snapshots used by history/file restoration            |
-| `data/tool-output/`       | large tool outputs externalized from message records       |
-| `data/assets/`            | product/plugin assets                                      |
-| `data/media/`             | generated or captured media, including Browser screenshots |
+| Path                      | Content                                                                 |
+| ------------------------- | ----------------------------------------------------------------------- |
+| `data/browser/sessions/`  | canonical Browser session/page metadata                                 |
+| `data/browser/profiles/`  | persistent browser profiles and storage state                           |
+| `data/browser/uploads/`   | owner-scoped upload staging                                             |
+| `data/browser/downloads/` | browser downloads grouped by Scope                                      |
+| `data/browser/chromium/`  | managed Chromium assets                                                 |
+| `data/worktree/`          | Synergy-managed worktree metadata/resources                             |
+| `data/snapshot/`          | registered legacy file snapshot repositories pending migration          |
+| `data/snapshot-v2/`       | Scope object stores, historical roots, owners, and maintenance journals |
+| `data/tool-output/`       | large tool outputs externalized from message records                    |
+| `data/assets/`            | product/plugin assets                                                   |
+| `data/media/`             | generated or captured media, including Browser screenshots              |
 
 Archiving or deleting a session disposes its live Browser runtime, but persisted Browser state follows its own lifecycle and migration rules.
 
@@ -171,6 +180,36 @@ Project worktrees may also be managed beneath a project-local Synergy area. Perm
 
 ## Relocation and Backup
 
+Oryn reply intents live under the `oryn/outbox` Storage namespace. Schema version 2 uses `pending` for definitely unsent intents and `ambiguous` for a claimed dispatch without a confirmed response. The `20260908-oryn-outbox-dispatch` central migration preserves record IDs and confirmed outcomes; version 1 pending records become ambiguous. See the [notification decision](../decisions/implemented/architecture/2026-09-08-oryn-notification-settlement.md) for settlement and rollback constraints.
+
+Oryn action receipts use schema version 4. `20260908-oryn-label-target` adds pinned label targets at version 3 after the version 2 ready-target migration; `20260908-oryn-ready-notification` upgrades version 3 without inventing notification keys. New ready receipts pin a deterministic conclusion key before dispatch; migrated receipts retain their existing notification identity. Ready actions pin their Attempt, repository, branch/base and delivery-check setting before dispatch. The `20260908-oryn-ready-target` central migration preserves legacy receipts without inferring missing targets; those records cannot automatically finalize readiness. See the [GitHub ready decision](../decisions/implemented/bug-fix/2026-09-08-oryn-github-ready-transition.md).
+
+Oryn `channel_sources` records preserve provider reply targets keyed by hashed source identity; `channel_turns` maps a QA Session/root message to that source. They are version 1 host-owned records, written before durable Inbox acceptance and retained with the corresponding conversations and outbox during backup or restore. The current message target must not overwrite an earlier root's target.
+
+Each Oryn Case can have a version 1 `engineering_start` record containing its reserved Session/Attempt identities, fixed repository Scope and baseline, startup phase and blocked reason. It is a recovery record, not an execution queue. Include it with the Case and Session records in backup and restore. The startup owner repairs interrupted creation; absent records are reserved when an active Case first starts. See [engineering startup](../decisions/implemented/architecture/2026-09-08-oryn-engineering-startup.md).
+
+Oryn Assignment v1 `sessionId` reserves the worker identity before Session creation; its `workspaceRef` records completed workspace linkage. Recovery preserves both and repairs the Attempt's assignment list from the canonical Assignment. A missing Session index is repairable from Session info, while a previously bound worker with missing canonical info is not recreated. Keep Assignment, Session and Git/worktree registry state together in backups. See [worker handoff](../decisions/implemented/architecture/2026-09-08-oryn-worker-handoff.md).
+
 Stop the server before raw filesystem backup or relocation. For supported selective movement, use `synergy data pack`, `merge`, `move`, and `set-home`. Use session export/import for portable session artifacts.
 
 Never include `data/auth/` in a public diagnostics bundle, issue attachment, or repository commit.
+
+Rollout runs also own `tools/<executionID>` and `processes/<processID>` metadata through `RolloutLedger`. Tool inputs, original results, returned observations, and channel-framed process streams use the same private artifact store as model evidence. A process record can remain active after an explicitly backgrounded tool returns; exports must preserve its partial stream boundary rather than infer completion from the tool result.
+
+## File snapshot persistence
+
+`data/snapshot-v2/<scope>/store.git` holds self-contained Git objects and all historical retention refs. `repository.json` records object format; `owners/<session>.json` selects `legacy`, `shared`, or the permanent deletion tombstone. `migrations/<session>.json` and `deletions/<session>.json` are durable recovery state. Scope `leases.json`, the root `leases.json`, and `.locks/` coordinate processes and are regenerated rather than merged into archives. `format.json` marks the installed layout version.
+
+`cache/snapshot-index/<scope>/<session>/<workspace-hash>/index` is rebuildable working state. It can be removed independently of historical objects. The workspace hash uses its canonical filesystem path. Legacy owners resolve only to `data/snapshot/<scope>/<session>` until explicit migration switches their ownership; unknown and reclaimed repositories remain intact and are reported separately. Legacy directories with no owner record and no session record (including the `__reclaimed__` scope) are reclaimable through `synergy data snapshots clean` and `POST /global/storage/snapshot/clean`: both default to a dry run, refuse a scope that fails its integrity check, and never touch the shared store or directories with owners. The HTTP endpoint rejects an empty `scopeID`; scope-targeted requests return 409 on busy or failed integrity checks, while batch requests (no `scopeID`) return `{ results, failures }` and keep the completed work of scopes processed before a failure. The `20260907-snapshot-release-orphan-owners` migration releases legacy owner records that the shared-store migration created for directories without session records, so such orphans reach `clean` on upgraded installations. Owned legacy repositories move through `synergy data snapshots migrate` or `POST /global/storage/snapshot/migrate`, and the shared store packs through `compact` or `POST /global/storage/snapshot/compact`; both HTTP endpoints default to a dry run and return 409 when storage is busy or a scope fails its integrity check. Clean before running `migrate` — a registered repository is migration's responsibility and is no longer a clean candidate.
+
+JSON session export does not contain file objects. Complete `data pack`, `move`, and `merge` preserve file history through the snapshot domain's object/ref transfer. Owner-backend or maintenance-record conflicts abort that data transfer so the source remains available for resolution. These commands acquire offline ownership and never stop a running server. Migration changes are not backward-readable by an older runtime after shared snapshots have been captured.
+
+Oryn Cases use schema version 2 with an optional handoff reason, epoch and request timestamp. The centrally registered `20260908-oryn-handoff-outcome` migration preserves version 1 ownership and upgrades the record without inventing a reason. Include Cases and outbox records together in backup and restore; recovery derives missing handoff intents from this durable outcome. See [handoff outcomes](../decisions/implemented/architecture/2026-09-08-oryn-handoff-outcome.md).
+
+Oryn Host candidate preparation uses disposable `cache/oryn-index-*` directories for its private Git index. Normal completion removes them; an interrupted process can leave rebuildable scratch, which is not an authoritative commit receipt. Replay derives the committed outcome from the assigned branch, exact generated trailer and tree. See [Host candidate commits](../decisions/implemented/bug-fix/2026-09-08-oryn-host-candidate-commit.md).
+
+Oryn worker shells create disposable `oryn-shell-*` directories under the operating-system temporary root. They contain private HOME/temp data and a Git index/ref view; the actual repository object store is read-only. Normal completion waits for process-group termination and removes scratch asynchronously. Abrupt host termination can leave scratch; it is not canonical Case, Session or candidate state and must not be restored as a result receipt. Stop affected workers before removing orphaned scratch. See [worker shell containment](../decisions/implemented/bug-fix/2026-09-08-oryn-worker-shell-containment.md).
+
+Oryn stores version 2 Attempt transition intents under `oryn/cases/<case>/attempt_transitions/<previous-attempt>` for rework or `oryn/cases/<case>/attempt_transitions/resume_<epoch>` for human resume. Each pins the replacement identity and initial state, exact transition inputs, purpose/control precondition, ownership epoch, expected Case revision and resulting counters before rotation writes begin. Keep this record family with Case and Attempt backups. Startup reconciles it before waking Sessions; it is recovery metadata in the existing store, not an execution queue. See [Attempt transition recovery](../decisions/implemented/bug-fix/2026-09-08-oryn-attempt-transition-recovery.md).
+
+The central `20260908-oryn-attempt-transition-purpose` migration preserves version 1 transition identities and counter effects as version 2 rework intents. A human-resume intent reserves a fresh Attempt before Case activation. Its engineering task uses the existing Inbox delivery key and canonical message history; there is no separate task acknowledgment record. See [ownership resume](../decisions/implemented/bug-fix/2026-09-08-oryn-ownership-resume.md).

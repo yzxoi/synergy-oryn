@@ -1,7 +1,10 @@
+import { OrynControl } from "../oryn/control"
 import { Hono, type Context } from "hono"
 import { describeRoute, resolver, validator } from "hono-openapi"
 import z from "zod"
 import { OrynStore } from "../oryn/store"
+import { OrynService } from "../oryn/service"
+import { Case } from "../oryn/schema"
 import { OrynConfig } from "../oryn/config"
 import { errors } from "./error"
 
@@ -50,6 +53,7 @@ const CaseDetailResponse = z
     pullNumbers: z.array(z.number().int()),
     sourceCount: z.number().int(),
     humanDecisions: z.array(z.string()),
+    handoff: Case.shape.handoff,
     createdAt: z.number().int(),
     updatedAt: z.number().int(),
   })
@@ -186,6 +190,7 @@ export const OrynRoute = new Hono()
           pullNumbers: record.pullNumbers,
           sourceCount: record.sourceIds.length,
           humanDecisions: record.humanDecisions,
+          handoff: OrynService.handoffSummary(record),
           createdAt: record.createdAt,
           updatedAt: record.updatedAt,
         })
@@ -251,7 +256,7 @@ export const OrynRoute = new Hono()
       try {
         const { id } = c.req.valid("param")
         const { expectedRevision, action } = c.req.valid("json")
-        const record = await OrynStore.control(id, expectedRevision, action)
+        const record = await OrynControl.change({ caseId: id, expectedRevision, action })
         return c.json({
           id: record.id,
           revision: record.revision,
@@ -267,6 +272,7 @@ export const OrynRoute = new Hono()
           pullNumbers: record.pullNumbers,
           sourceCount: record.sourceIds.length,
           humanDecisions: record.humanDecisions,
+          handoff: OrynService.handoffSummary(record),
           createdAt: record.createdAt,
           updatedAt: record.updatedAt,
         })

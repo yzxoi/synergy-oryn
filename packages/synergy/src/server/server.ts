@@ -1,3 +1,4 @@
+import { ComputerRoute } from "./computer-route"
 import { BusEvent } from "@/bus/bus-event"
 import { Bus } from "@/bus"
 import { GlobalBus } from "@/bus/global"
@@ -72,6 +73,7 @@ import { SessionNavRoute } from "./session-nav"
 import { GlobalNavRoute } from "./global-nav"
 import { ControlProfileRoute } from "./control-profile-route"
 import { SandboxReadinessRoute } from "./sandbox-readiness-route"
+import { GlobalStorageRoute } from "./storage-route"
 import { BrowserRoute, configureBrowserViewerOrigins } from "./browser-route"
 import { BrowserHostBrokerProcess } from "../browser/host-broker-process"
 import { BlueprintRoute } from "./blueprint"
@@ -79,7 +81,6 @@ import { LatticeRoute } from "./lattice"
 import { WorkflowRoute } from "./workflow"
 import { BossRoute } from "./boss"
 import { OrynRoute } from "./oryn"
-import { RuntimeReload } from "../runtime/reload"
 import { ObservabilityRoute } from "./observability-route"
 import { PerformanceRoute } from "./performance-route"
 import { Observability } from "@/observability"
@@ -88,8 +89,6 @@ import { ServerSseMetrics } from "./sse-metrics"
 import { ObservabilityMetrics } from "@/observability/metrics"
 import { ObservabilitySpans } from "@/observability/spans"
 import { ObservabilityRedaction } from "@/observability/redaction"
-import { ObservabilityConfig } from "@/observability/config"
-import { ObservabilityResources } from "@/observability/resources"
 import { DEFAULT_SERVER_HOST, DEFAULT_SERVER_PORT, DEFAULT_SERVER_URL } from "./defaults"
 import { ObservabilityStore } from "@/observability/store"
 import { ObservabilityContext } from "@/observability/context"
@@ -102,21 +101,6 @@ import { resolveAppStaticRequest } from "./app-static"
 
 // @ts-ignore This global is needed to prevent ai-sdk from logging warnings to stdout https://github.com/vercel/ai/blob/2dc67e0ef538307f21368db32d5a12345d98831b/packages/ai/src/logger/log-warnings.ts#L85
 globalThis.AI_SDK_LOG_WARNINGS = false
-
-RuntimeReload.startAutoReload()
-void Config.current()
-  .then((config) => {
-    ObservabilityConfig.refresh(config)
-    ObservabilityStore.reconfigure()
-    ObservabilityResources.reconfigure()
-  })
-  .catch(() => {
-    ObservabilityConfig.refresh()
-    ObservabilityStore.reconfigure()
-    ObservabilityResources.reconfigure()
-  })
-ObservabilityResources.start()
-ObservabilityStore.open()
 
 export namespace Server {
   export const DEFAULT_PORT = DEFAULT_SERVER_PORT
@@ -795,6 +779,7 @@ export namespace Server {
         .route("/global/update", UpdateRoute)
         .route("/global", ObservabilityRoute)
         .route("/global", PerformanceRoute)
+        .route("/global/storage", GlobalStorageRoute)
         .get(
           "/global/event/ws",
           (() => {
@@ -1359,6 +1344,7 @@ export namespace Server {
         .route("/voice", VoiceRoute)
         .route("/holos", HolosDataRoute)
         .route("", BrowserRoute)
+        .route("", ComputerRoute)
         .route("/plugin", PluginRoute)
         .route("/api/plugins", ApiPluginRoute)
         .route("/api/plugins", PluginRuntimeRoute)
@@ -1780,7 +1766,13 @@ export namespace Server {
     return ips.flatMap((ip) => ports.map((port) => `http://${ip}:${port}`))
   }
 
-  export function listen(opts: { port: number; hostname: string; mdns?: boolean; cors?: string[] }) {
+  export function listen(opts: {
+    port: number
+    hostname: string
+    mdns?: boolean
+    cors?: string[]
+    preferDefaultPort?: boolean
+  }) {
     const isExternalHost = opts.hostname !== "127.0.0.1" && opts.hostname !== "localhost" && opts.hostname !== "::1"
     const configuredOrigins = (opts.cors ?? []).flatMap((origin) => {
       const normalized = normalizeCorsOrigin(origin)
@@ -1802,7 +1794,10 @@ export namespace Server {
         return undefined
       }
     }
-    const server = opts.port === 0 ? (tryServe(DEFAULT_PORT) ?? tryServe(0)) : tryServe(opts.port)
+    const server =
+      opts.port === 0 && opts.preferDefaultPort !== false
+        ? (tryServe(DEFAULT_PORT) ?? tryServe(0))
+        : tryServe(opts.port)
     if (!server) throw new Error(`Failed to start server on port ${opts.port}`)
 
     _url = server.url

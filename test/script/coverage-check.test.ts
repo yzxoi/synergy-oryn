@@ -4,6 +4,7 @@ import os from "node:os"
 import path from "node:path"
 import {
   evaluatePackage,
+  loadManifest,
   extractFailureSignals,
   matchesExempt,
   mergeLcov,
@@ -15,6 +16,16 @@ import {
 } from "../../script/coverage-check"
 
 const roots: string[] = []
+
+test("the Computer protocol participates in coverage enforcement", async () => {
+  const manifest = await loadManifest()
+  const config = manifest.packages["packages/computer"]
+  expect(config).toBeDefined()
+  expect(config!.command).toContain("coverage")
+  expect(config!.thresholds.lines).toBeGreaterThanOrEqual(80)
+  expect(config!.thresholds.functions).toBeGreaterThanOrEqual(75)
+  expect(config!.exempt).toEqual([])
+})
 
 afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })))
@@ -307,4 +318,26 @@ describe("coverage failure signal extraction", () => {
     expect(signals).toHaveLength(25)
     expect(signals[0]).toContain("plain line 15")
   })
+})
+
+test("coverage summaries retain colored Bun assertion context across blank lines", () => {
+  const detail = [
+    "(pass) unrelated test [1ms]",
+    "321 | expect(currentTask).toEqual(expected)",
+    "                                  ^",
+    "\u001b[31merror: expect(received).toEqual(expected)\u001b[0m",
+    "",
+    'Expected: { taskID: "original" }',
+    "Received: undefined",
+    "",
+    "      at test/boss/service.test.ts:322:48",
+    "\u001b[31m(fail) BossService > status retains an assignment [428ms]\u001b[0m",
+    "(pass) unrelated successor [1ms]",
+  ].join("\n")
+  const signals = extractFailureSignals(detail).join("\n")
+  expect(signals).toContain('Expected: { taskID: "original" }')
+  expect(signals).toContain("Received: undefined")
+  expect(signals).toContain("test/boss/service.test.ts:322:48")
+  expect(signals).not.toContain("\u001b[")
+  expect(signals).not.toContain("unrelated")
 })

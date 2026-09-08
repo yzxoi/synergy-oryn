@@ -31,10 +31,17 @@ export namespace OrynPath {
   export const casesRoot = () => ["oryn", "cases"]
   export const caseRoot = (caseId: string) => [...casesRoot(), caseId]
   export const caseInfo = (caseId: string) => [...caseRoot(caseId), "info"]
+  export const engineeringStart = (caseId: string) => [...caseRoot(caseId), "engineering_start"]
 
   /** Versioned candidate validation cycles per case. */
   export const attemptsRoot = (caseId: string) => [...caseRoot(caseId), "attempts"]
   export const attempt = (caseId: string, attemptId: string) => [...attemptsRoot(caseId), attemptId]
+
+  export const attemptTransitionsRoot = (caseId: string) => [...caseRoot(caseId), "attempt_transitions"]
+  export const attemptTransition = (caseId: string, fromAttemptId: string) => [
+    ...attemptTransitionsRoot(caseId),
+    fromAttemptId,
+  ]
 
   /** Host-bound worker task identities (recovery anchor for spawned sessions). */
   export const assignmentsRoot = (caseId: string) => [...caseRoot(caseId), "assignments"]
@@ -78,4 +85,8 @@ export namespace OrynPath {
   /** Durable reply outbox consumed by the channel delivery path. */
   export const outboxRoot = () => ["oryn", "outbox"]
   export const outbox = (entryId: string) => [...outboxRoot(), entryId]
+
+  export const channelSource = (sourceKeyHash: string) => ["oryn", "channel_sources", sourceKeyHash]
+  export const channelTurnsRoot = (sessionID: string) => ["oryn", "channel_turns", sessionID]
+  export const channelTurn = (sessionID: string, rootID: string) => [...channelTurnsRoot(sessionID), rootID]
 }

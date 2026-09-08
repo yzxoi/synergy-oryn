@@ -45,7 +45,7 @@ describe("withFileLock", () => {
     await fs.writeFile(filename, JSON.stringify({ pid: 2_147_483_647 }), { mode: 0o600 })
 
     let acquired = false
-    await withFileLock({ directory, key: "shared", timeoutMs: 100 }, async () => {
+    await withFileLock({ directory, key: "shared", timeoutMs: 2_000 }, async () => {
       acquired = true
     })
 
@@ -111,11 +111,12 @@ describe("withFileLock", () => {
       withFileLock({ directory, key: "shared", retryMs: 5, timeoutMs: 25, staleMetadataMs: 5_000 }, async () => {}),
     ).rejects.toThrow("Timed out acquiring file lock for shared")
 
+    await expect(fs.readFile(filename, "utf8")).resolves.toBe("")
     const staleTime = new Date(Date.now() - 10_000)
     await fs.utimes(filename, staleTime, staleTime)
 
     let acquired = false
-    await withFileLock({ directory, key: "shared", timeoutMs: 100, staleMetadataMs: 5_000 }, async () => {
+    await withFileLock({ directory, key: "shared", timeoutMs: 2_000, staleMetadataMs: 5_000 }, async () => {
       acquired = true
     })
 

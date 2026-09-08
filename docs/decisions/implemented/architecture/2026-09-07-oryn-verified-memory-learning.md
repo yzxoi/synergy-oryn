@@ -14,6 +14,8 @@ Promotion (`OrynLearning.promoteCase`) is host-side and double-gated: the case m
 
 Withdrawal (`OrynLearning.invalidate`) flips the candidate to `rejected` and removes the promoted shared memory through the same port; the candidate record stays for audit. Reward automation (`oryn.learning.autoReward`) is declared in config but intentionally unimplemented pending upstream idempotency.
 
+Promotion and withdrawal use [stable memory identity and effect serialization](../bug-fix/2026-09-08-oryn-learning-write-recovery.md) to recover cross-store interruptions. These persistence guarantees do not strengthen the existing semantic evidence checks.
+
 ## Alternatives considered
 
 **Let workers write shared memory directly.** Rejected: it collapses the propose/promote boundary, leaks whatever the worker saw into a shared surface, and leaves no audit trail of who claimed what from which evidence.

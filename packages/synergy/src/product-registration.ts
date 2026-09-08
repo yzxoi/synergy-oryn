@@ -30,11 +30,11 @@ import { RuntimeReloadExecutor } from "./config/reload-executor"
 import { registerBossDomain } from "./boss/register"
 import { registerOrynDomain } from "./oryn/register"
 import { setTransport } from "./oryn/publish"
+import { OrynLabels, setLabelTransport } from "./oryn/labels"
+import { OrynGithubLabels } from "./channel/provider/github/labels"
 import { OrynGithubPublish, setGithubPollReconciler } from "./channel/provider/github/publish"
 import { setMemoryPromoter } from "./oryn/learn"
-import { LibraryDB } from "./library/database"
-import { Embedding } from "./vector/embedding"
-import { Identifier } from "./id/id"
+import { OrynMemory } from "./library/oryn-memory"
 import { registerLightLoopDomain } from "./light-loop/register"
 import { registerBlueprintDomain } from "./blueprint/register"
 import { registerLatticeDomain } from "./lattice/register"
@@ -44,6 +44,7 @@ import { registerAgendaTools } from "./agenda/tools"
 import { registerNoteTools } from "./note/tools"
 import { registerEmailTools } from "./email/tools"
 import { registerChannelTools } from "./channel/tools"
+import { registerComputerTools } from "./computer/tools"
 import { registerBrowserTools } from "./browser/tools"
 import { registerCortexTools } from "./cortex/tools"
 import { registerProjectTools } from "./project/tools"
@@ -104,6 +105,7 @@ registerNoteTools()
 registerEmailTools()
 registerChannelTools()
 registerBrowserTools()
+registerComputerTools()
 registerCortexTools()
 registerProjectTools()
 registerQuestionTools()
@@ -170,25 +172,12 @@ RuntimeReloadExecutor.setExecutor((input, options) => RuntimeReload.reload(input
 // an injected transport so the oryn domain stays acyclic (the provider owns
 // credential access; tokens are never returned to model callers).
 setTransport(OrynGithubPublish.createTransport())
-setGithubPollReconciler(() =>
-  import("./oryn/publish").then((m) => m.OrynPublish.reconcileAllAmbiguous().then(() => undefined)),
-)
+setLabelTransport(OrynGithubLabels.createTransport())
+setGithubPollReconciler(async () => {
+  const { OrynPublish } = await import("./oryn/publish")
+  await OrynPublish.reconcileAllAmbiguous()
+  await OrynLabels.syncAll()
+})
 RuntimeReloadExecutor.setGlobalExecutor((input, options) => RuntimeReload.reloadGlobal(input, options))
 
-// L4 assembly: Oryn verified-memory promotion writes through the Library
-// database with a fresh embedding per lesson. Deliberately no semantic dedup
-// here: every promoted lesson is a self-contained entry (own evidence refs
-// and invalidation condition) so withdrawal removes exactly the entry it
-// created and never a pre-existing unrelated memory. autoReward stays
-// unimplemented: the upstream Experience reward API lacks event idempotency.
-setMemoryPromoter({
-  async promote({ title, content }) {
-    const id = Identifier.ascending("memory")
-    const embedding = await Embedding.generate({ id, text: `${title}\n${content}` })
-    LibraryDB.Memory.insert({ id, title, content, category: "knowledge", recallMode: "contextual" }, embedding)
-    return id
-  },
-  async remove(memoryId) {
-    LibraryDB.Memory.remove(memoryId)
-  },
-})
+setMemoryPromoter(OrynMemory)

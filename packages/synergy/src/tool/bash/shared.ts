@@ -22,6 +22,7 @@ export interface BashResult {
 export type BashContext = Tool.Context<BashMetadata>
 
 export interface BashSandboxPrepareInput {
+  cwd?: string
   command: string
   extraReadRoots: string[]
 }

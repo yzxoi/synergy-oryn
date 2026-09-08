@@ -39,6 +39,13 @@ interface DetectionPattern {
 }
 
 const PATTERNS: DetectionPattern[] = [
+  {
+    pattern: /\bEROFS\b|read-only file system/i,
+    label: "readonly_filesystem",
+    platform: "any",
+    access: "write",
+    confidence: "medium",
+  },
   // macOS Seatbelt sandbox-exec denial
   {
     pattern: /deny\(file-read\*?\).*?\(path.*?"([^"]+)/s,

@@ -1,10 +1,16 @@
 import z from "zod"
+import { ToolScheduler } from "../session/tool-scheduler"
 import { Tool } from "../tool/tool"
+import { MessageV2 } from "../session/message-v2"
 import { Finding } from "./schema"
 import { OrynPublish } from "./publish"
 import { OrynLearning } from "./learn"
 import { OrynService } from "./service"
+import { OrynEngineering } from "./engineering"
 import { OrynStore, OrynStoreError } from "./store"
+import { OrynCandidateCommit } from "./candidate-commit"
+import { OrynReviewPolicy } from "./review-policy"
+import { OrynConfig } from "./config"
 
 function toolError(code: string, message: string): Error {
   return Object.assign(new Error(message), { code })
@@ -20,6 +26,7 @@ function toToolError(error: unknown): Error {
 
 async function execute(fn: () => Promise<Tool.ExecutionResult>): Promise<Tool.ExecutionResult> {
   try {
+    if (!(await OrynConfig.enabled())) throw toolError("NOT_AUTHORIZED", "oryn runtime is disabled")
     return await fn()
   } catch (error) {
     throw toToolError(error)
@@ -66,9 +73,16 @@ const CaseAction = z.discriminatedUnion("action", [
     .describe("Hand the case to a human operator"),
 ])
 
-async function requireBinding(sessionID: string) {
+async function requireBinding(sessionID: string, caseId?: string) {
   const binding = await OrynStore.sessionSourceBinding(sessionID)
   if (!binding) throw toolError("NOT_AUTHORIZED", "session has no Oryn source binding")
+  if (!["qa", "engineering", "worker"].includes(binding.role)) {
+    throw toolError("NOT_AUTHORIZED", "session has no recognized Oryn role")
+  }
+  if (binding.role !== "qa" && (!binding.caseId || (caseId && caseId !== binding.caseId))) {
+    throw toolError("NOT_AUTHORIZED", "case does not belong to this session")
+  }
+  if (caseId) await OrynStore.getCaseForSession(caseId, sessionID)
   return binding
 }
 
@@ -77,12 +91,16 @@ export const OrynCaseTool = Tool.define(
   {
     description:
       "Oryn case operations: submit engineering feedback (routed by host config), get/list your linked cases, amend acceptance details, or request human handoff. Identity and routing come from your session binding, never from parameters.",
-    parameters: CaseAction,
-    async execute(params, ctx): Promise<Tool.ExecutionResult> {
+    parameters: z.object({ input: CaseAction }),
+    async execute({ input: params }, ctx): Promise<Tool.ExecutionResult> {
       return execute(async () => {
         if (params.action === "submit") {
+          const message = await MessageV2.get({ sessionID: ctx.sessionID, messageID: ctx.messageID })
+          const turnID =
+            message.info.rootID ?? (message.info.role === "assistant" ? message.info.parentID : message.info.id)
           const result = await OrynService.submitCase({
             callerSessionID: ctx.sessionID,
+            turnID,
             requestKey: params.requestKey,
             kind: params.kind,
             summary: params.summary,
@@ -91,18 +109,74 @@ export const OrynCaseTool = Tool.define(
           })
           return {
             title: result.created ? "Case submitted" : "Case already exists",
-            output: `caseId: ${result.caseId}\nrevision: ${result.revision}\nrepoAlias: ${result.repoAlias}\ncreated: ${result.created}`,
-            metadata: { caseId: result.caseId, revision: result.revision, created: result.created },
+            output: `caseId: ${result.caseId}\nrevision: ${result.revision}\nrepoAlias: ${result.repoAlias}\ncreated: ${result.created}\nengineering: ${result.engineering.state}\nreason: ${result.engineering.reason ?? "none"}`,
+            metadata: {
+              caseId: result.caseId,
+              revision: result.revision,
+              created: result.created,
+              engineering: result.engineering.state,
+              startupReason: result.engineering.reason,
+            },
           }
         }
         if (params.action === "get") {
-          const binding = await requireBinding(ctx.sessionID)
-          const record = await OrynStore.getCaseForSource(params.caseId, binding.sourceKey)
+          const binding = await requireBinding(ctx.sessionID, params.caseId)
+          const record = await OrynStore.getCaseForSession(params.caseId, ctx.sessionID)
+          const engineering = await OrynEngineering.get(record.id)
+          const attempt =
+            binding.role !== "qa" && record.activeAttemptId
+              ? await OrynStore.getAttempt(record.id, record.activeAttemptId)
+              : undefined
+          const reviewReports =
+            binding.role !== "qa"
+              ? (await OrynStore.listReviews(record.id))
+                  .sort((left, right) => left.createdAt - right.createdAt)
+                  .slice(-64)
+                  .map((report) => ({
+                    id: report.id,
+                    domain: report.domain,
+                    attemptId: report.attemptId,
+                    headSha: report.headSha,
+                  }))
+              : undefined
           return {
             title: `Case ${record.id}`,
             output: JSON.stringify(
               {
                 caseId: record.id,
+                executionProfiles:
+                  binding.role !== "qa"
+                    ? Object.fromEntries(
+                        Object.entries(OrynConfig.profiles(await OrynConfig.info(), record.repoAlias)).map(
+                          ([id, profile]) => [
+                            id,
+                            {
+                              ...profile,
+                              dependencySnapshots: profile.dependencySnapshots?.map(({ digest }) => ({ digest })),
+                            },
+                          ],
+                        ),
+                      )
+                    : undefined,
+                reviewReports,
+                reviewRequirements: attempt?.candidateSha
+                  ? await OrynReviewPolicy.requirements(record, attempt).catch(() => ({
+                      error:
+                        "Candidate review requirements are unavailable; restore its assigned worktree or request human handoff",
+                    }))
+                  : undefined,
+                engineering: engineering ? { state: engineering.state, reason: engineering.reason } : undefined,
+                attempt: attempt
+                  ? {
+                      id: attempt.id,
+                      baselineSha: attempt.baselineSha,
+                      candidateSha: attempt.candidateSha,
+                      disposition: attempt.disposition,
+                      evidenceRunIds: attempt.evidenceRunIds,
+                      reviewIds: attempt.reviewIds,
+                      assignmentIds: attempt.assignmentIds,
+                    }
+                  : undefined,
                 revision: record.revision,
                 kind: record.kind,
                 summary: record.summary,
@@ -110,6 +184,7 @@ export const OrynCaseTool = Tool.define(
                 expected: record.expected,
                 repoAlias: record.repoAlias,
                 control: record.control,
+                handoff: OrynService.handoffSummary(record),
                 activeAttemptId: record.activeAttemptId,
                 acceptanceRevision: record.acceptanceRevision,
                 repairRounds: record.repairRounds,
@@ -125,7 +200,10 @@ export const OrynCaseTool = Tool.define(
         }
         if (params.action === "list") {
           const binding = await requireBinding(ctx.sessionID)
-          const records = await OrynStore.listCasesForSource(binding.sourceKey)
+          const records =
+            binding.role === "qa"
+              ? await OrynStore.listCasesForSession(ctx.sessionID)
+              : [await OrynStore.getCaseForSource(binding.caseId!, binding.sourceKey)]
           return {
             title: `${records.length} case(s)`,
             output: JSON.stringify(
@@ -144,8 +222,8 @@ export const OrynCaseTool = Tool.define(
           }
         }
         if (params.action === "amend") {
-          const binding = await requireBinding(ctx.sessionID)
-          await OrynStore.getCaseForSource(params.caseId, binding.sourceKey)
+          const binding = await requireBinding(ctx.sessionID, params.caseId)
+          if (binding.role !== "qa") throw toolError("NOT_AUTHORIZED", "only QA may amend reporter acceptance")
           const record = await OrynStore.amendAcceptance(params.caseId, params.expectedRevision, {
             observed: params.observed,
             expected: params.expected,
@@ -156,9 +234,13 @@ export const OrynCaseTool = Tool.define(
             metadata: { caseId: record.id, revision: record.revision, acceptanceRevision: record.acceptanceRevision },
           }
         }
-        const binding = await requireBinding(ctx.sessionID)
-        await OrynStore.getCaseForSource(params.caseId, binding.sourceKey)
-        const record = await OrynStore.requestHandoff(params.caseId, params.reason)
+        const binding = await requireBinding(ctx.sessionID, params.caseId)
+        if (binding.role === "worker") throw toolError("NOT_AUTHORIZED", "report the blocker to the engineering root")
+        const record = await OrynService.requestHandoff({
+          callerSessionID: ctx.sessionID,
+          caseId: params.caseId,
+          reason: params.reason,
+        })
         return {
           title: "Handed off to human",
           output: `caseId: ${record.id}\ncontrol: ${record.control}\nepoch: ${record.epoch}`,
@@ -197,8 +279,8 @@ export const OrynDispatchTool = Tool.define(
   {
     description:
       "Request the next engineering stage for your case (dispatch), or open a bounded rework round on the frozen candidate when review demands changes (rework). The host picks the agent, workspace, and frozen inputs. Repeated dispatch requestKeys dedupe to the existing worker.",
-    parameters: DispatchParameters,
-    async execute(params, ctx): Promise<Tool.ExecutionResult> {
+    parameters: z.object({ input: DispatchParameters }),
+    async execute({ input: params }, ctx): Promise<Tool.ExecutionResult> {
       return execute(async () => {
         if (params.action === "rework") {
           const result = await OrynService.rework({
@@ -233,7 +315,20 @@ export const OrynDispatchTool = Tool.define(
   },
 )
 
-const ResultParameters = z.discriminatedUnion("kind", [
+export const ResultParameters = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("commit_candidate"),
+    caseId: z.string().min(1),
+    attemptId: z.string().min(1),
+    assignmentId: z.string().min(1),
+    requestKey: z.string().min(1).max(200),
+    title: z.string().min(1).max(200).describe("Single conventional commit title; Host adds provenance"),
+    paths: z
+      .array(z.string().min(1).max(1024))
+      .min(1)
+      .max(128)
+      .describe("Explicit relative source paths to commit in your assigned branch"),
+  }),
   z.object({
     kind: z.literal("get"),
     caseId: z.string().min(1),
@@ -294,33 +389,36 @@ const ResultParameters = z.discriminatedUnion("kind", [
     recommendation: z.enum(["changes_required", "needs_human", "ready_for_human"]),
     limitedScope: z.string().min(1).max(1000).optional(),
   }),
-  z.object({
-    kind: z.literal("review_note"),
-    caseId: z.string().min(1),
-    attemptId: z.string().min(1),
-    assignmentId: z.string().min(1),
-    requestKey: z.string().min(1).max(200),
-    outcome: z.string().min(1).max(64),
-    summary: z.string().min(1).max(4000),
-    limitations: z.array(z.string()).max(16).optional(),
-  }),
 ])
 
 export const OrynResultTool = Tool.define(
   "oryn_result",
   {
     description:
-      "Submit your structured worker outcome for an assignment, or read a previously submitted report. The host validates the assignment belongs to your session; stale-epoch reports are archived but not accepted.",
-    parameters: ResultParameters,
-    async execute(params, ctx): Promise<Tool.ExecutionResult> {
+      "Create a local candidate commit with kind commit_candidate (code worker only), submit your structured worker outcome, or read a previously submitted report. Host commit uses your explicit relative paths and conventional title, returns the candidate SHA and branch, and leaves report submission and independent verification separate. Replay the same request after an interrupted commit; changed inputs or branches are rejected. The host validates the assignment belongs to your session; stale-epoch reports are archived but not accepted.",
+    parameters: z.object({ input: ResultParameters }),
+    async execute({ input: params }, ctx): Promise<Tool.ExecutionResult> {
       return execute(async () => {
+        if (params.kind === "commit_candidate") {
+          const result = await ToolScheduler.trackPhysicalExecution(() =>
+            OrynCandidateCommit.create({ ...params, callerSessionID: ctx.sessionID, abort: ctx.abort }),
+          )
+          return {
+            title: "Candidate committed",
+            output: `candidateSha: ${result.candidateSha}\nlocalBranch: ${result.localBranch}\nreplayed: ${result.replayed}`,
+            metadata: result,
+          }
+        }
         if (params.kind === "get") {
-          const report = await OrynStore.getWorkerReport(params.caseId, params.reportId)
+          await requireBinding(ctx.sessionID, params.caseId)
+          const report =
+            (await OrynStore.getWorkerReport(params.caseId, params.reportId)) ??
+            (await OrynStore.getReview(params.caseId, params.reportId))
           if (!report) throw toolError("NOT_AUTHORIZED", `report ${params.reportId} not found`)
           return {
             title: `Report ${report.id}`,
             output: JSON.stringify(report, null, 2),
-            metadata: { reportId: report.id, reportKind: report.kind },
+            metadata: { reportId: report.id, reportKind: "kind" in report ? report.kind : "review" },
           }
         }
         if (params.kind === "review") {
@@ -358,6 +456,7 @@ export const OrynResultTool = Tool.define(
           localBranch: "localBranch" in params ? params.localBranch : undefined,
           candidateSha: "candidateSha" in params ? params.candidateSha : undefined,
           runIds: "runIds" in params ? params.runIds : undefined,
+          addressedFindings: "addressedFindings" in params ? params.addressedFindings : undefined,
           knownRisks: "knownRisks" in params ? params.knownRisks : undefined,
           limitations: "limitations" in params ? params.limitations : undefined,
         })
@@ -377,19 +476,23 @@ export const OrynResultTool = Tool.define(
 const ReplyParameters = z.object({
   kind: z.enum(["answer", "clarification", "accepted", "needs_human", "ready", "released"]),
   text: z.string().min(1).max(4000).describe("User-facing text; no internal identifiers, paths, or credentials"),
-  caseId: z.string().min(1).optional().describe("Defaults to your bound case when you are an engineering session"),
+  caseId: z.string().min(1).optional().describe("An engineering case already linked to your source"),
 })
 
 export const OrynReplyTool = Tool.define(
   "oryn_reply",
   {
     description:
-      "Deliver a bounded result to the reporter of your bound source. The host resolves the chat from your session binding — you never name an account or chat id. Repeated ready/needs_human replies for the same case dedupe to one delivery.",
+      "Queue a bounded QA reply to your bound reporter source. The host supplies recipient and root turn identity; no account or chat id is accepted. Answers deduplicate within the current turn. Ready replies require an acknowledged publication and reuse the Host-generated notice for that conclusion; your text cannot replace it. Persisted human-handoff replies likewise reuse the Host notice for the handoff epoch. Returns the durable entry id and whether it was newly queued; this does not claim remote delivery.",
     parameters: ReplyParameters,
     async execute(params, ctx): Promise<Tool.ExecutionResult> {
       return execute(async () => {
+        const message = await MessageV2.get({ sessionID: ctx.sessionID, messageID: ctx.messageID })
+        const turnID =
+          message.info.rootID ?? (message.info.role === "assistant" ? message.info.parentID : message.info.id)
         const result = await OrynService.reply({
           callerSessionID: ctx.sessionID,
+          turnID,
           caseId: params.caseId,
           kind: params.kind,
           text: params.text,
@@ -407,7 +510,7 @@ export const OrynReplyTool = Tool.define(
   },
 )
 
-const CheckParameters = z.discriminatedUnion("action", [
+export const CheckParameters = z.discriminatedUnion("action", [
   z
     .object({
       action: z.literal("propose"),
@@ -442,16 +545,31 @@ const CheckParameters = z.discriminatedUnion("action", [
       planId: z.string().min(1),
     })
     .describe("Read a check plan"),
+  z
+    .object({ action: z.literal("get_run"), caseId: z.string().min(1), runId: z.string().min(1) })
+    .describe("Read a persisted execution receipt for independent verification or review"),
 ])
 
 export const OrynCheckTool = Tool.define(
   "oryn_check",
   {
     description:
-      "Verification runs: propose a check plan (scenario, profile, commands, assertions), execute it through the trusted executor in your assigned workspace, or read a plan. Local runs you did with bash are development aid — only receipts from this executor count as evidence.",
-    parameters: CheckParameters,
-    async execute(params, ctx): Promise<Tool.ExecutionResult> {
+      "Verification runs: read repository executionProfiles with oryn_case get, propose a plan (scenario, profile, commands, assertions), and execute it in a disposable checkout of the assigned commit. Commands share only approved writable output directories; tracked source and any configured sealed dependencies remain read-only. Snapshot mismatches are environment gaps. Local bash runs are development aid — only receipts from this executor count as evidence.",
+    parameters: z.object({ input: CheckParameters }),
+    async execute({ input: params }, ctx): Promise<Tool.ExecutionResult> {
       return execute(async () => {
+        if (params.action === "get_run") {
+          const binding = await requireBinding(ctx.sessionID, params.caseId)
+          if (binding.role === "qa")
+            throw toolError("NOT_AUTHORIZED", "raw execution receipts are restricted to engineering")
+          const receipt = await OrynStore.getRun(params.caseId, params.runId)
+          if (!receipt || receipt.caseId !== params.caseId) throw toolError("NOT_AUTHORIZED", "run receipt not found")
+          return {
+            title: `Run ${receipt.id}`,
+            output: JSON.stringify(receipt, null, 2),
+            metadata: { runId: receipt.id, outcome: receipt.outcome },
+          }
+        }
         if (params.action === "propose") {
           const result = await OrynService.proposeCheck({
             callerSessionID: ctx.sessionID,
@@ -543,7 +661,7 @@ export const OrynPublishTool = Tool.define(
   "oryn_publish",
   {
     description:
-      "Publish host-verified artifacts for your case: the tracking issue, a draft PR from the frozen candidate, PR updates, the review comment, or the final ready delivery. The host records every action in the ledger, verifies the frozen candidate and the delivery gate, and holds all credentials — you never touch tokens or endpoints. A timeout leaves the action ambiguous; reconciliation settles it, never a blind retry.",
+      "Publish host-verified artifacts for your case: the tracking issue, a draft PR from the frozen candidate, PR updates, the review comment, or the final ready delivery. The host generates PR scope diagrams and evidence sections from the frozen candidate and accepted reports; body is only your implementation notes, and PR titles must use a conventional prefix. The host records every action in the ledger, verifies the frozen candidate and the delivery gate, and holds all credentials — you never touch tokens or endpoints. A timeout leaves the action ambiguous; reconciliation settles it, never a blind retry.",
     parameters: PublishParameters,
     async execute(params, ctx): Promise<Tool.ExecutionResult> {
       return execute(async () => {
@@ -611,21 +729,23 @@ export const OrynGithubReadTool = Tool.define(
 
 const LearnParameters = z.object({
   caseId: z.string().min(1),
-  lesson: z.string().min(1).max(2000).describe("The reusable engineering lesson, stated as a fact"),
+  lesson: z.string().min(1).max(2000).describe("The proposed engineering lesson, with uncertainty stated explicitly"),
   applicability: z.string().min(1).max(1000).describe("Where this lesson applies (repo, area, versions)"),
   invalidation: z.string().min(1).max(1000).describe("When this lesson stops being true"),
   evidenceRefs: z
     .array(z.string())
     .min(1)
     .max(16)
-    .describe("Record ids from this case that back the lesson (run, review, report, or attempt ids)"),
+    .describe(
+      "Accepted record ids from the current Attempt that back the proposal (run, ready review, report, or Attempt ids)",
+    ),
 })
 
 export const OrynLearnTool = Tool.define(
   "oryn_learn",
   {
     description:
-      "Propose a reusable lesson from this case for host promotion into shared memory. Every claim must cite case records as evidence; raw chat text, private logs, and credentials are rejected. Promotion only happens after the case is delivered and the host has verified-memory promotion enabled, and a wrong lesson can be withdrawn.",
+      "Propose a reusable lesson with accepted evidence from the current Attempt. The Host pins repository, source commits and an evidence digest. Re-propose after candidate freeze or changed evidence; promotion requires that exact candidate and evidence plus current confirmed PR delivery and enabled verified memory. Do not include raw chat, private logs or credentials. The model-authored lesson remains a proposal, not proof of semantic truth or release availability. Returns a learning ID and whether it was created; stale or unaccepted evidence is rejected.",
     parameters: LearnParameters,
     async execute(params, ctx): Promise<Tool.ExecutionResult> {
       return execute(async () => {

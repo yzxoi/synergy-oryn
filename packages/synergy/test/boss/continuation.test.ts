@@ -6,6 +6,7 @@ import { Session } from "../../src/session"
 import { BossContinuationPolicy } from "../../src/boss/boss-continuation"
 import { BossService } from "../../src/boss/boss"
 import { SessionInbox } from "../../src/session/inbox"
+import { SessionManager } from "../../src/session/manager"
 import { SessionWorkflowService } from "../../src/session/workflow"
 import { tmpdir } from "../fixture/fixture"
 
@@ -110,6 +111,28 @@ async function gateFor(sessionID: string, terminalMessageID: string) {
 }
 
 describe("BossContinuationPolicy", () => {
+  test("a host-owned incomplete result cannot be bypassed by a plain Boss report", async () => {
+    await withScope(async () => {
+      const { boss, worker } = await bossAndWorker()
+      const lease = SessionManager.acquire(worker.id)!
+      const key = `host-result-${worker.id}`
+      let complete = false
+      BossService.registerTaskReportProvider(key, async (session) => (session.id === worker.id ? complete : undefined))
+      try {
+        const task = await assignedTaskMaterialized(worker.id, boss.id)
+        const terminal = await terminalAssistant(worker.id, task)
+        await completedBossReport(worker.id, terminal)
+        expect((await BossContinuationPolicy.handle(await gateFor(worker.id, terminal)))?.kind).toBe("inbox")
+        complete = true
+        expect(await BossContinuationPolicy.handle(await gateFor(worker.id, terminal))).toBeUndefined()
+      } finally {
+        BossService.registerTaskReportProvider(key, async () => undefined)
+        await SessionInbox.removeByMode(worker.id, ["task", "steer", "context"])
+        await SessionManager.release(lease, { requestNextWork: false })
+        await Session.remove(boss.id)
+      }
+    })
+  })
   test("worker with an unreported assigned task gets an inbox proposal", async () => {
     await withScope(async () => {
       const { boss, worker } = await bossAndWorker()
@@ -130,23 +153,37 @@ describe("BossContinuationPolicy", () => {
   test("child reports do not restart a worker that already reported its own task", async () => {
     await withScope(async () => {
       const { boss, worker } = await bossAndWorker()
-      const taskUserID = await assignedTaskMaterialized(worker.id, boss.id)
-      const reportedAssistantID = await terminalAssistant(worker.id, taskUserID)
-      await completedBossReport(worker.id, reportedAssistantID)
+      // The fixture materializes both inboxes; background wakes must not consume them.
+      const workerLease = SessionManager.acquire(worker.id)
+      if (!workerLease) throw new Error("expected worker loop lease")
+      const leases = [workerLease]
+      try {
+        const taskUserID = await assignedTaskMaterialized(worker.id, boss.id)
+        const reportedAssistantID = await terminalAssistant(worker.id, taskUserID)
+        await completedBossReport(worker.id, reportedAssistantID)
 
-      const child = await BossService.spawn(worker.id, { role: "test" })
-      await BossService.assign(worker.id, {
-        sessionID: child.id,
-        taskID: "child-task",
-        task: "Check the widget",
-      })
-      await materializeFirstInboxItem(child.id)
-      await BossService.report(child.id, { summary: "Widget checked", status: "completed" })
-      await materializeFirstInboxItem(worker.id, taskUserID)
-      const terminalMessageID = await terminalAssistant(worker.id, taskUserID)
+        const child = await BossService.spawn(worker.id, { role: "test" })
+        const childLease = SessionManager.acquire(child.id)
+        if (!childLease) throw new Error("expected child loop lease")
+        leases.push(childLease)
+        await BossService.assign(worker.id, {
+          sessionID: child.id,
+          taskID: "child-task",
+          task: "Check the widget",
+        })
+        await materializeFirstInboxItem(child.id)
+        await BossService.report(child.id, { summary: "Widget checked", status: "completed" })
+        await materializeFirstInboxItem(worker.id, taskUserID)
+        const terminalMessageID = await terminalAssistant(worker.id, taskUserID)
 
-      const proposal = await BossContinuationPolicy.handle(await gateFor(worker.id, terminalMessageID))
-      expect(proposal).toBeUndefined()
+        const proposal = await BossContinuationPolicy.handle(await gateFor(worker.id, terminalMessageID))
+        expect(proposal).toBeUndefined()
+      } finally {
+        for (const lease of leases.reverse()) {
+          await SessionInbox.removeByMode(lease.sessionID, ["task", "steer"])
+          await SessionManager.finish(lease, { requestNextWork: false })
+        }
+      }
     })
   })
 

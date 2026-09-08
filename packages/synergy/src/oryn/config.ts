@@ -2,13 +2,38 @@ import { Config } from "../config/config"
 
 export namespace OrynConfig {
   export async function info() {
-    const cfg = await Config.current()
+    const cfg = await Config.globalRaw()
     return cfg.oryn
   }
 
   export async function enabled(): Promise<boolean> {
-    const cfg = await Config.current()
-    return cfg.oryn?.enabled === true
+    return (await info())?.enabled === true
+  }
+
+  export function profiles(config: Config.Info["oryn"], repoAlias: string) {
+    const repository = config?.repositories?.[repoAlias]
+    if (!config?.enabled || !repository) return {}
+    return Object.fromEntries(
+      Object.entries(config.executionProfiles ?? {})
+        .filter(([id]) => !repository.testProfiles || repository.testProfiles.includes(id))
+        .map(([id, profile]) => {
+          const ceiling = config.limits?.processResources
+          if (!ceiling) return [id, profile]
+          const limits = profile.resourceLimits ?? ceiling
+          return [
+            id,
+            {
+              ...profile,
+              resourceLimits: {
+                maxSeconds: Math.min(limits.maxSeconds ?? 1800, ceiling.maxSeconds ?? 1800),
+                memoryMiB: Math.min(limits.memoryMiB, ceiling.memoryMiB),
+                cpuQuotaPercent: Math.min(limits.cpuQuotaPercent, ceiling.cpuQuotaPercent),
+                maxProcesses: Math.min(limits.maxProcesses, ceiling.maxProcesses),
+              },
+            },
+          ]
+        }),
+    )
   }
 
   /**

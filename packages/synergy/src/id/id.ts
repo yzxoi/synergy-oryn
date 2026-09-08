@@ -49,6 +49,7 @@ export namespace Identifier {
     oryn_learning: "orl",
     oryn_claim: "orq",
     oryn_check: "ork",
+    rollout_call: "rca",
   } as const
 
   export function schema(prefix: keyof typeof prefixes) {

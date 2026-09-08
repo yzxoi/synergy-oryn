@@ -1,11 +1,10 @@
-import { describe, expect, test, beforeEach } from "bun:test"
+import { describe, expect, test } from "bun:test"
 import { spawn } from "child_process"
 import path from "path"
 import { LSPClient } from "../../src/lsp/client"
 import { LSPServer } from "../../src/lsp/server"
 import { ScopeContext } from "../../src/scope/context"
 import { Scope } from "../../src/scope"
-import { Log } from "../../src/util/log"
 
 // Minimal fake LSP server that speaks JSON-RPC over stdio
 function spawnFakeServer() {
@@ -19,10 +18,6 @@ function spawnFakeServer() {
 }
 
 describe("LSPClient interop", () => {
-  beforeEach(async () => {
-    await Log.init({ print: true })
-  })
-
   test("handles workspace/workspaceFolders request", async () => {
     const handle = spawnFakeServer() as any
 

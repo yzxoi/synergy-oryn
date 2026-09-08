@@ -1,6 +1,7 @@
 import { Log } from "@/util/log"
 import { ContinuationKernel } from "./continuation-kernel"
 import { SessionInbox } from "./inbox"
+import { SessionRunPolicy } from "./run-policy"
 import { SessionManager } from "./manager"
 
 export namespace SessionDrive {
@@ -40,6 +41,8 @@ export namespace SessionDrive {
 
   async function arbitrate(sessionID: string, reason: string): Promise<boolean> {
     if (SessionManager.isRunning(sessionID)) return false
+    const session = await SessionManager.getSession(sessionID)
+    if (!session || !(await SessionRunPolicy.allowed(session))) return false
     if (await SessionInbox.hasRunnableItem(sessionID)) return true
 
     const proposal = await ContinuationKernel.propose(sessionID)

@@ -25,6 +25,8 @@ The `github` provider (`packages/synergy/src/channel/provider/github/`) connects
 
 Preserve these invariants when changing the provider: deterministic per-thread directory resolution, `@synergy-agent` mention gating, comment→chatId reaction registry, and the env-only credential boundary.
 
+For Oryn publication changes, verify actual remote state transitions through a fake HTTP boundary around the production transport, alongside real Host ledger tests. A check-run response does not prove a PR left draft; GraphQL HTTP 200 can contain errors. Include pending/paginated CI, exact App identity, changed head, response loss and replay without duplicate notifications. Keep independent CI separate from the delivery check itself.
+
 ## Preserve Ownership
 
 1. Keep Scope and Session creation in Channel core. A project/task-capable provider reports remote facts through `ChannelHost`; it does not call Scope, Session, or model execution directly.
@@ -56,6 +58,7 @@ Preserve these invariants when changing the provider: deterministic per-thread d
 ## Verify
 
 1. Write the smallest failing behavioral test first. Use real temporary Scope, Storage, Session, inbox, Agenda, and filesystem state; fake only Holos/Clarus network boundaries.
+   For Oryn conversation changes, use `test/oryn/fixtures/feishu.ts` with real `ChannelHost.conversations.receive()`, tool parsing, Inbox and outbound events. A direct service call cannot prove agent selection, per-root reply targeting, or silent foreground/background delivery; include these paths and label synthetic model output separately from a live canary. For Case intake, send a second message in the same topic and submit through the actual tool with its persisted assistant/root context. Verify both the Case source and eventual reply anchor, replay deduplication, same-session get/list and cross-session denial. A test that only submits on the first message misses Session-anchor reuse.
 2. When Channel behavior depends on Scope-local subscriptions, cover both the first account connection and `ScopeRuntime.dispose()` followed by `ScopeRuntime.ensure()`; an active account must rebind its bridges exactly once before startup recovery can terminalize pending Channel messages, so recovery-time events are delivered rather than lost.
 3. Run the focused Channel, Holos native tunnel, Session endpoint/navigation, Agenda guidance, tool, server route, and frontend account/navigation tests affected by the change.
 4. Run `bun test test/channel/` and the relevant Holos, Agenda, Session, tool, and server suites from `packages/synergy`; preserve Feishu compatibility coverage.
@@ -65,3 +68,17 @@ Preserve these invariants when changing the provider: deterministic per-thread d
 ## Handoff
 
 Report provider shape and lifecycle, target identity, Scope/Session ownership, durable state and recovery semantics, routes/SDK/UI wiring, focused and broad checks, isolated runtime evidence, and any environment-only limitation.
+
+## Oryn public evidence
+
+When changing Oryn publication, exercise `test/oryn/publication.test.ts`, `test/oryn/publish.test.ts` and `test/channel/provider/github/oryn-publish.test.ts`. Create a real nonempty candidate commit in successful fixtures; verify that current accepted assignments supply evidence, private context cannot enter public text, and ready refreshes the body before the remote transition. The delivery gate must inspect the generated body that is actually published, not a separate model-authored payload. Distinguish a Git diff scope map from a verified runtime architecture diagram.
+
+Derive mandatory review domains from Host-verified cumulative Case changes, including deleted paths; do not let an engineering agent omit a risk domain by omitting its Assignment. When changing those rules, bump the review policy version and test old Assignment/report rejection plus successful fresh review. Preserve historical records without backfilling their fingerprints. Successful-review fixtures use the current Host fingerprint builder; explicit legacy fingerprints belong in rejection tests. Include a repair whose latest diff is ordinary but whose full PR still changes a sensitive path; run `test/oryn/review-policy.test.ts` and `test/oryn/review-handoff.test.ts` alongside publication and review tests.
+
+For Oryn labels, run `test/oryn/labels.test.ts`, `test/oryn/action-migration.test.ts` and `test/channel/provider/github/oryn-labels.test.ts`. Verify installation opt-in, exact Case/PR identity, paginated human priority preservation, pre-write epoch checks and interrupted-intent reconciliation. Use GitHub add/remove label endpoints; never replace all labels or let labels grant execution authority. Keep label failures out of the engineering pause path.
+
+For model-driven Oryn QA checks, use `test/oryn/fixtures/model.ts` with the product registration and real configured provider. Run `test/oryn/model-pipeline.test.ts` alongside ingress tests. Do not replace Session invocation or tool execution with scripted service calls; only provider/model transport is simulated. Wait for the owning Session to settle before asserting duplicate-event inference counts, and keep auxiliary model requests separate from QA requests.
+
+For Oryn result notification changes, assert captured transport delivery, not only outbox creation. Hold the transport-readiness or observation boundary while changing Case control, acceptance, candidate or policy; validate again before claiming dispatch and do not hold Case locks across network calls. Test renewed conclusions after suppression, legacy delivered/ambiguous identities, current remote head/CI, and model replies reusing Host-generated result intents.
+
+For credential-bearing Oryn Git changes, run `test/channel/provider/github/oryn-push.test.ts` and the Host publication suites. Exercise real Git push/receive-pack with only the HTTPS helper replaced by a test transport. Plant repository hooks, credential helpers and URL rewrites; include ambient Git/startup/credential settings, linked worktrees, actual non-fast-forward rejection and cancellation of the owned process group. Never return raw Git diagnostics or treat an interrupted push as proof that no remote write applied. Keep this isolation separate from the ordinary GitHub Channel credential helper.

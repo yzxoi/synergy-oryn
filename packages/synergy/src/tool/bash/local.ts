@@ -1,3 +1,4 @@
+import type { RolloutProcess } from "@/session/rollout/process"
 import { spawn } from "child_process"
 import * as fs from "node:fs"
 import { fileURLToPath } from "url"
@@ -21,6 +22,7 @@ import { Observability } from "@/observability"
 import { ToolTimeout } from "../timeout"
 import { GitHubProvider } from "@/provider/github"
 import { BashVirtualFile } from "./virtual-file"
+import type { BashExecutionPolicy } from "./policy"
 import type { BashSandboxPrepare } from "./shared"
 import { ObservabilityRedaction } from "@/observability/redaction"
 import { ChildProcessClose } from "@/process/child-process-close"
@@ -194,6 +196,8 @@ export function withLinuxChildOomPreference(command: string, platform = process.
 
 export const LocalBashBackend = {
   async execute(params: BashParams, ctx: BashContext): Promise<BashResult> {
+    ctx.abort.throwIfAborted()
+    const policy = (ctx.extra as { bashExecutionPolicy?: BashExecutionPolicy.Policy } | undefined)?.bashExecutionPolicy
     const shell = Shell.acceptable()
     log.info("bash tool using shell", { shell })
 
@@ -261,7 +265,7 @@ export const LocalBashBackend = {
     })
 
     const detachedRisk = detectDetachedDaemonRisk(params.command)
-    const detachedDaemonAllowed = Boolean(detachedRisk && allowsDetachedDaemons(ctx))
+    const detachedDaemonAllowed = Boolean(detachedRisk && !policy && allowsDetachedDaemons(ctx))
     if (detachedRisk && !detachedDaemonAllowed) {
       await trace(
         "bash.detached_daemon.blocked",
@@ -291,7 +295,9 @@ export const LocalBashBackend = {
       })
     }
 
-    const sandboxFallback = (ctx.extra as any)?.sandboxFallback as "deny" | "warn" | "allow" | undefined
+    const sandboxFallback = policy
+      ? "deny"
+      : ((ctx.extra as any)?.sandboxFallback as "deny" | "warn" | "allow" | undefined)
     let sandboxWarning: string | undefined
     const warnOutput = (base: string) => {
       const notices: string[] = []
@@ -358,7 +364,7 @@ export const LocalBashBackend = {
     // directory. The sandbox writable roots already include this root via the
     // profile (workspace/.synergy/tmp), so the child may create files there.
     const sandboxPreparePresent = (ctx.extra as { sandboxPrepare?: unknown } | undefined)?.sandboxPrepare != null
-    if (sandboxPreparePresent) {
+    if (sandboxPreparePresent && !policy) {
       // Base the controlled root on the session workspace (the sandbox
       // wrapper's writable root), never on a possibly external workdir: the
       // host-side mkdir below must stay inside the workspace boundary.
@@ -425,19 +431,29 @@ export const LocalBashBackend = {
     let windowsProcessJob: WindowsProcessJob.Prepared | undefined
     let windowsProcessOwner: WindowsProcessJob.Owner | undefined
     let ownsUnixProcessGroup = false
-    let artifactsCleaned = false
-    const cleanupExecutionArtifacts = () => {
-      if (artifactsCleaned) return
-      artifactsCleaned = true
-      windowsProcessJob?.cleanup()
-      if (sandboxWrapper?.tempPath) {
-        SandboxBackend.cleanupTemp(sandboxWrapper.tempPath)
-      }
-      materialized.cleanup()
-    }
+    let restricted: BashExecutionPolicy.Prepared | undefined
+    let cleanup: Promise<void> | undefined
+    const cleanupExecutionArtifacts = () =>
+      (cleanup ??= (async () => {
+        windowsProcessJob?.cleanup()
+        if (sandboxWrapper?.tempPath) SandboxBackend.cleanupTemp(sandboxWrapper.tempPath)
+        materialized.cleanup()
+        await restricted?.dispose().catch((error) => log.warn("Host shell scratch cleanup failed", { error }))
+      })())
 
     try {
-      if ((ctx.extra as any)?.shellBypassSandbox !== true) {
+      if (policy) {
+        restricted = await policy.prepare({
+          command: executionCommand,
+          extraReadRoots: materialized.extraReadRoots,
+          cwd,
+        })
+        sandboxWrapper = restricted
+        if (!restricted.sandboxed || restricted.skipReason)
+          throw new Error(`Host shell sandbox unavailable: ${restricted.skipReason ?? "not sandboxed"}`)
+        for (const key of Object.keys(sandboxEnv)) delete sandboxEnv[key]
+        Object.assign(sandboxEnv, restricted.environment)
+      } else if ((ctx.extra as any)?.shellBypassSandbox !== true) {
         sandboxWrapper = await sandboxPrepare?.({
           command: executionCommand,
           extraReadRoots: materialized.extraReadRoots,
@@ -450,22 +466,25 @@ export const LocalBashBackend = {
       })
       sandboxWarning = sandboxWrapper?.skipReason
     } catch (error) {
-      cleanupExecutionArtifacts()
+      await cleanupExecutionArtifacts()
       throw error
     }
 
     // ── ProcessRegistry setup (shared across both paths) ──────────
     try {
       regProc = ProcessRegistry.create({
+        sessionID: ctx.sessionID,
         command: params.command,
         description: params.description,
         cwd,
       })
     } catch (error) {
-      cleanupExecutionArtifacts()
+      await cleanupExecutionArtifacts()
       throw error
     }
+    let evidence: RolloutProcess.Writer | undefined
     try {
+      evidence = await ctx.openProcessEvidence?.(regProc.id)
       await trace("bash.process.registered", {
         processId: regProc.id,
       })
@@ -478,7 +497,7 @@ export const LocalBashBackend = {
       })
     } catch (error) {
       ProcessRegistry.remove(regProc.id)
-      cleanupExecutionArtifacts()
+      await cleanupExecutionArtifacts()
       throw error
     }
 
@@ -521,6 +540,7 @@ export const LocalBashBackend = {
 
     let child: ReturnType<typeof spawn>
     try {
+      ctx.abort.throwIfAborted()
       if (sandboxWrapper && !sandboxWrapper.skipReason) {
         const invocation = detachedDaemonAllowed
           ? { command: sandboxWrapper.command, args: sandboxWrapper.args }
@@ -572,8 +592,9 @@ export const LocalBashBackend = {
         }
       }
     } catch (e: unknown) {
+      await evidence?.finish({ interrupted: true, exitCode: null, signal: null })
       ProcessRegistry.remove(regProc.id)
-      cleanupExecutionArtifacts()
+      await cleanupExecutionArtifacts()
       await trace(
         "bash.child.error",
         {
@@ -594,7 +615,7 @@ export const LocalBashBackend = {
         if (spawnError) throw spawnError
       } catch (error) {
         ProcessRegistry.remove(regProc.id)
-        cleanupExecutionArtifacts()
+        await cleanupExecutionArtifacts()
         throw error
       } finally {
         child.off("error", onSpawnError)
@@ -608,11 +629,15 @@ export const LocalBashBackend = {
     let exited = false
     let finalized = false
     let childError: Error | undefined
-    const backgroundAfterSeconds = params.backgroundAfterSeconds ?? 30
+    const backgroundAfterSeconds = params.background ? 0 : (params.backgroundAfterSeconds ?? 30)
     let resolveChildFinished: (result: "exited" | "error") => void = () => {}
     const childFinished = new Promise<"exited" | "error">((resolve) => {
       resolveChildFinished = resolve
     })
+    ProcessRegistry.setCompletion(
+      regProc,
+      childFinished.then(() => undefined),
+    )
 
     const appendTimeoutMarker = (message: string) => {
       if (timeoutMarkerAdded) return
@@ -663,8 +688,8 @@ export const LocalBashBackend = {
         : `The command was interrupted: command timed out after ${params.timeoutSeconds}s.`
 
     const releaseChildReferences = () => {
-      child.stdout?.off("data", append)
-      child.stderr?.off("data", append)
+      child.stdout?.off("data", appendStdout)
+      child.stderr?.off("data", appendStderr)
       ProcessRegistry.setTerminator(regProc, undefined)
       if (ownsUnixProcessGroup) Shell.releaseOwnedProcessGroup(child)
       if (windowsProcessOwner) {
@@ -678,7 +703,7 @@ export const LocalBashBackend = {
       regProc.stdin = undefined
     }
 
-    const finishError = (error: Error) => {
+    const finishError = async (error: Error) => {
       if (finalized) return
       finalized = true
       childError = error
@@ -691,9 +716,10 @@ export const LocalBashBackend = {
       }
       exited = true
       cleanupAllTimers()
+      if (policy) await ProcessRegistry.terminate(regProc, { allowExitedParent: true })
       ProcessRegistry.remove(regProc.id)
       releaseChildReferences()
-      cleanupExecutionArtifacts()
+      await cleanupExecutionArtifacts()
       void trace(
         "bash.child.error",
         {
@@ -711,10 +737,38 @@ export const LocalBashBackend = {
     if (windowsProcessOwner) {
       ProcessRegistry.setTerminator(regProc, terminateWindowsOwner)
     }
-    child.stdout?.on("data", append)
-    child.stderr?.on("data", append)
+    let outputPending = Promise.resolve()
+    let pendingWrites = 0
+    let recordingFailure: Error | undefined
+    const receive = (channel: RolloutProcess.Channel, chunk: Buffer) => {
+      if (recordingFailure) return
+      if (!evidence) {
+        append(chunk)
+        return
+      }
+      const stream = channel === "stdout" ? child.stdout : child.stderr
+      stream?.pause()
+      pendingWrites++
+      outputPending = outputPending
+        .then(async () => {
+          await evidence!.append(channel, chunk)
+          append(chunk)
+        })
+        .catch((error: unknown) => {
+          recordingFailure ??= error instanceof Error ? error : new Error(String(error))
+          void kill().catch((error) => log.warn("failed to stop process after recording failure", { error }))
+        })
+        .finally(() => {
+          pendingWrites--
+          stream?.resume()
+        })
+    }
+    const appendStdout = (chunk: Buffer) => receive("stdout", chunk)
+    const appendStderr = (chunk: Buffer) => receive("stderr", chunk)
+    child.stdout?.on("data", appendStdout)
+    child.stderr?.on("data", appendStderr)
 
-    const finishClose = (code: number | null, signal: NodeJS.Signals | null, drainTimedOut: boolean) => {
+    const finishClose = async (code: number | null, signal: NodeJS.Signals | null, drainTimedOut: boolean) => {
       if (finalized) return
       finalized = true
       exited = true
@@ -722,6 +776,9 @@ export const LocalBashBackend = {
       if (metadataDirty) flushMetadata()
       const exitSignal = timedOut ? "SIGTERM" : signal
       ProcessRegistry.markStdioClosed(regProc, { drainTimedOut })
+      if (policy) await ProcessRegistry.terminate(regProc, { allowExitedParent: true })
+      releaseChildReferences()
+      await cleanupExecutionArtifacts()
       if (regProc.backgrounded) {
         ProcessRegistry.markExited(regProc, code, exitSignal)
       } else if (backgroundAfterSeconds > 0) {
@@ -731,8 +788,6 @@ export const LocalBashBackend = {
       } else {
         ProcessRegistry.remove(regProc.id)
       }
-      releaseChildReferences()
-      cleanupExecutionArtifacts()
       void trace("bash.child.close", {
         exitCode: code,
         exitSignal: signal,
@@ -743,6 +798,7 @@ export const LocalBashBackend = {
     }
 
     void ChildProcessClose.wait(child, {
+      isBackpressured: () => pendingWrites > 0,
       onExit(code, signal) {
         exited = true
         ProcessRegistry.markExitObserved(regProc, {
@@ -757,13 +813,29 @@ export const LocalBashBackend = {
         })
       },
       onDrainTimeout() {
-        if (regProc.backgrounded || allowsDetachedDaemons(ctx)) return
+        if (!policy && (regProc.backgrounded || allowsDetachedDaemons(ctx))) return
         return ProcessRegistry.terminate(regProc, { allowExitedParent: true })
       },
-    }).then(
-      (result) => finishClose(result.code, result.signal, result.drainTimedOut),
-      (error) => finishError(error instanceof Error ? error : new Error(String(error))),
-    )
+    })
+      .then(
+        async (result) => {
+          await outputPending
+          await evidence?.finish({
+            interrupted: result.drainTimedOut || aborted || timedOut,
+            exitCode: result.code,
+            signal: result.signal,
+            pid: child.pid,
+          })
+          if (recordingFailure) throw recordingFailure
+          await finishClose(result.code, result.signal, result.drainTimedOut)
+        },
+        async (error: unknown) => {
+          await outputPending
+          await evidence?.finish({ interrupted: true, exitCode: null, signal: null, pid: child.pid })
+          throw error
+        },
+      )
+      .catch((error: unknown) => finishError(error instanceof Error ? error : new Error(String(error))))
 
     await trace("process.spawn", {
       processId: regProc.id,
@@ -819,6 +891,10 @@ export const LocalBashBackend = {
     ctx.abort.addEventListener("abort", abortHandler, { once: true })
 
     const autoBackground = new Promise<"background">((resolve) => {
+      if (params.background) {
+        resolve("background")
+        return
+      }
       if (backgroundAfterSeconds <= 0) return
       autoBackgroundTimer = setTimeout(() => {
         if (!exited) resolve("background")
@@ -841,7 +917,7 @@ export const LocalBashBackend = {
       if (!exited) {
         ProcessRegistry.markBackgrounded(regProc)
         return {
-          title: `[Auto-Background] ${params.description}`,
+          title: `[${params.background ? "Background" : "Auto-Background"}] ${params.description}`,
           metadata: {
             output: truncateMetadataOutput(regProc.output),
             description: params.description,
@@ -850,7 +926,9 @@ export const LocalBashBackend = {
             backend: "local",
           },
           output: warnOutput(
-            `Command auto-backgrounded after ${backgroundAfterSeconds}s.\n\n` +
+            (params.background
+              ? "Command running in background.\n\n"
+              : `Command auto-backgrounded after ${backgroundAfterSeconds}s.\n\n`) +
               `Process ID: ${regProc.id}\n` +
               `Command: ${params.command}\n` +
               `Status: running\n\n` +

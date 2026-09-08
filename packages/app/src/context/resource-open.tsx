@@ -1,8 +1,11 @@
+import { usePluginHost } from "@/plugin/host"
+import { toolReviewSource } from "./tool-review-target"
 import { onCleanup, onMount, type ParentProps } from "solid-js"
 import {
   ResourceOpenProvider as BaseResourceOpenProvider,
   type OpenableResource,
   type ResourceOpenOptions,
+  type ToolReviewTarget,
 } from "@ericsanchezok/synergy-ui/context/resource-open"
 import { ImagePreview, type ImagePreviewImage } from "@ericsanchezok/synergy-ui/image-preview"
 import {
@@ -80,6 +83,15 @@ export function ResourceOpenProvider(props: ParentProps) {
   const file = useFile()
   const sdk = useSDK()
   const workbench = useWorkbenchPanels()
+  const plugins = usePluginHost()
+
+  const openToolReview = (target: ToolReviewTarget) => {
+    void workbench.openPanel("session-review", {
+      reuseExisting: true,
+      init: { source: toolReviewSource(target), resourceId: target.path ?? "" },
+    })
+    return true
+  }
 
   const openWorkspaceFile = (path: string) => {
     const normalized = path ? file.normalize(path) : undefined
@@ -151,30 +163,21 @@ export function ResourceOpenProvider(props: ParentProps) {
   }
 
   onMount(() => {
-    const listener = (event: Event) => {
-      const resource = (event as CustomEvent<{ kind: "artifact" | "file"; uri: string }>).detail
-      if (!resource?.uri) return
-      if (resource.kind === "file") {
-        openWorkspaceFile(resource.uri)
-        return
-      }
-      const path = fileUrlPath(resource.uri)
-      if (path) {
-        openWorkspaceFile(path)
-        return
-      }
-      if (/^(https?:|data:|blob:)/i.test(resource.uri)) {
-        openUrl({ url: resource.uri })
-        return
-      }
-      openWorkspaceFile(resource.uri)
-    }
-    window.addEventListener("synergy:plugin-open-resource", listener)
-    onCleanup(() => window.removeEventListener("synergy:plugin-open-resource", listener))
+    onCleanup(
+      plugins.resources.register((resource) => {
+        const path = fileUrlPath(resource.uri)
+        if (path) return openWorkspaceFile(path)
+        if (resource.kind === "file") return openWorkspaceFile(resource.uri)
+        if (/^(https?:|data:|blob:)/i.test(resource.uri)) return openUrl({ url: resource.uri })
+        return openWorkspaceFile(resource.uri)
+      }),
+    )
   })
 
   return (
-    <BaseResourceOpenProvider value={{ open, openAttachment, resolveWorkspacePath, openWorkspaceSource }}>
+    <BaseResourceOpenProvider
+      value={{ open, openAttachment, resolveWorkspacePath, openWorkspaceSource, openToolReview }}
+    >
       {props.children}
     </BaseResourceOpenProvider>
   )

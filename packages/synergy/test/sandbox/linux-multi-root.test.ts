@@ -101,3 +101,42 @@ describe("Linux helper profile multi-root protected paths", () => {
     fs.rmSync(wrapper.tempPath!, { force: true })
   })
 })
+
+describe("Linux helper default runtime mounts", () => {
+  test("optional default read roots must exist before becoming required Bubblewrap mounts", async () => {
+    await using tmp = await tmpdir()
+    const wrapper = prepareLinuxMultiRoot({ workspace: tmp.path, extraRoots: [] })
+    try {
+      const profile = JSON.parse(await Bun.file(wrapper.tempPath!).text())
+      const roots = profile.fileSystem.readableRoots as string[]
+      expect(roots).toContain(tmp.path)
+      expect(roots.filter((root) => !fs.existsSync(root))).toEqual([])
+      for (const library of ["/lib", "/lib64"].filter((root) => fs.existsSync(root))) {
+        expect(roots).toContain(library)
+      }
+    } finally {
+      SandboxBackend.cleanupTemp(wrapper.tempPath!)
+    }
+  })
+
+  test("explicit required read roots stay in the profile even when unavailable", async () => {
+    await using tmp = await tmpdir()
+    const required = path.join(tmp.path, "unavailable-toolchain")
+    const wrapper = SandboxBackend.prepareWrapper({
+      command: "true",
+      args: [],
+      workspace: tmp.path,
+      sandboxMode: "workspace_write",
+      forcePlatform: "linux",
+      forceHelperPath: "/test/synergy-sandbox-linux",
+      forceHelperVerified: true,
+      runtimeReadRoots: [required],
+    })
+    try {
+      const profile = JSON.parse(await Bun.file(wrapper.tempPath!).text())
+      expect(profile.fileSystem.readableRoots).toContain(required)
+    } finally {
+      SandboxBackend.cleanupTemp(wrapper.tempPath!)
+    }
+  })
+})

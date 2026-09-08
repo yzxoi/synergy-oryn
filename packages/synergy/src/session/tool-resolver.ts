@@ -1,3 +1,4 @@
+import { RolloutTool } from "./rollout/tool"
 import Ajv2020 from "ajv/dist/2020"
 import { Global } from "@/global"
 import { type Tool as AITool, tool, jsonSchema, type ToolCallOptions, type JSONSchema7 } from "ai"
@@ -29,6 +30,8 @@ import { Scope } from "@/scope"
 import { ScopeContext } from "@/scope/context"
 import { EnforcementGate, type Capability, type GateOptions } from "@/enforcement/gate"
 import { SandboxBackend } from "@/sandbox/backend"
+import { ProcessAccessPolicy } from "@/tool/process/policy"
+import { BashExecutionPolicy } from "@/tool/bash/policy"
 import type { BashSandboxPrepare } from "@/tool/bash/shared"
 import type { ResolvedProfile } from "@/control-profile/types"
 import { EnforcementError } from "@/enforcement/errors"
@@ -722,6 +725,7 @@ export namespace ToolResolver {
         const context = await smartAllowContext(input, ctx)
         const classification = await SmartAllow.classify({
           sessionID: ctx.sessionID,
+          rootID: input.processor.message.rootID ?? input.processor.message.parentID,
           tool: toolName,
           args,
           capabilities: envelope.capabilities.map((c) => c.class),
@@ -949,6 +953,8 @@ export namespace ToolResolver {
         abort: sessionAbort,
         messageID: input.processor.message.id,
         callID: options.toolCallId,
+        captureResult: RolloutTool.capture,
+        openProcessEvidence: RolloutTool.openProcess,
         extra: {
           model: input.model,
           lookAtAvailable: input.activeToolIDs?.includes("look_at") === true,
@@ -1300,7 +1306,7 @@ export namespace ToolResolver {
           errorClass: diagnostic.code,
           owner: "diagnostic",
         })
-        slot.fail(args, error.message, ToolDiagnostic.metadata(error.diagnostic))
+        RolloutTool.afterCommit(() => slot.fail(args, error.message, ToolDiagnostic.metadata(error.diagnostic)))
         throw error
       },
       toModelOutput(result: { output: string }) {
@@ -1389,11 +1395,13 @@ export namespace ToolResolver {
                 toolTrace = await startToolTrace(runtimeInput, ctx, item.id, args as Record<string, unknown>)
                 await toolTrace.phase("tool.execute.start", "tool.execute")
                 const result = await item.execute(args as Record<string, unknown>)
-                slot.complete(args, {
-                  title: result.title,
-                  output: result.output,
-                  metadata: result.metadata ?? {},
-                })
+                RolloutTool.afterCommit(() =>
+                  slot.complete(args, {
+                    title: result.title,
+                    output: result.output,
+                    metadata: result.metadata ?? {},
+                  }),
+                )
                 await toolTrace.end({ status: "completed" })
                 return {
                   title: result.title,
@@ -1415,7 +1423,7 @@ export namespace ToolResolver {
                   error,
                   owner: "ephemeral",
                 })
-                slot.fail(args, message)
+                RolloutTool.afterCommit(() => slot.fail(args, message))
                 throw error
               } finally {
                 toolTrace?.dispose()
@@ -1541,6 +1549,7 @@ export namespace ToolResolver {
                 })
 
                 const envelope = await gate.evaluateIsolated(item.id, args as Record<string, any>, ctx.abort)
+                await RolloutTool.authorize({ stage: "evaluated", profile: gate.getProfileInfo(), envelope })
                 const modeDiagnostic = SessionModePolicy.evaluateCall({
                   toolName: item.id,
                   args: args as Record<string, any>,
@@ -1549,6 +1558,12 @@ export namespace ToolResolver {
                 })
                 if (modeDiagnostic) throw new ToolDiagnosticError(modeDiagnostic)
                 await applyGateApproval(ctx, gate, envelope, item.id, args as Record<string, any>, runtimeInput)
+                await RolloutTool.authorize({
+                  stage: "authorized",
+                  profile: gate.getProfileInfo(),
+                  envelope,
+                  approval: approvalFromContext(ctx),
+                })
                 await toolTrace.phase("tool.approval.resolved", "approval resolved", {
                   decision: envelope.decision,
                   capabilities: envelope.capabilities.map((cap) => cap.class),
@@ -1570,8 +1585,36 @@ export namespace ToolResolver {
                 const toolCtx = { ...ctx, abort: combinedAbort }
                 using toolTimer = log.time("tool.execute", { tool: item.id, callID: options.toolCallId })
 
+                if (item.id === "process") {
+                  const access = await ProcessAccessPolicy.resolve({
+                    sessionID: ctx.sessionID,
+                    agent: ctx.agent,
+                    workspace,
+                    abort: combinedAbort,
+                    action: (args as { action: string }).action,
+                    processId: (args as { processId?: string }).processId,
+                  })
+                  if (access) {
+                    if (item.source || Object.hasOwn(args, "targetID") || Object.hasOwn(args, "linkID"))
+                      throw new Error("Host process policy requires the built-in local process executor")
+                    Object.assign(toolCtx.extra!, { processAccess: access })
+                  }
+                }
+
                 // ── Sandbox wrapping for bash ──────────────────────────
                 if (item.id === "bash") {
+                  const policy = await BashExecutionPolicy.resolve({
+                    sessionID: ctx.sessionID,
+                    agent: ctx.agent,
+                    workspace,
+                    abort: combinedAbort,
+                  })
+                  if (policy) {
+                    if (item.source || Object.hasOwn(args, "targetID") || Object.hasOwn(args, "linkID"))
+                      throw new Error("Host shell execution policy requires the built-in local bash executor")
+                    ;(toolCtx.extra as { bashExecutionPolicy?: BashExecutionPolicy.Policy }).bashExecutionPolicy =
+                      policy
+                  }
                   const sandbox = gate.getSandbox()
                   if (sandbox.mode !== "none" && !shouldBypassShellSandbox(ctx)) {
                     // Register externally-approved roots into the gate so the
@@ -1639,7 +1682,11 @@ export namespace ToolResolver {
                 )
                 await toolTrace.phase("plugin.runtime.before.end", "plugin before end")
                 await toolTrace.phase("tool.execute.start", "tool execute start")
-                const result = await settleExecutionOnAbort(() => item.execute(args, toolCtx), combinedAbort)
+                const result = await settleExecutionOnAbort(
+                  () => SessionManager.trackExecution(ctx.sessionID, () => item.execute(args, toolCtx)),
+                  combinedAbort,
+                )
+                await RolloutTool.capture(result)
                 Tool.validateAttachmentResult(item.id, result)
                 await toolTrace.phase("tool.execute.end", "tool execute end", {
                   outputChars: result.output.length,
@@ -1657,15 +1704,17 @@ export namespace ToolResolver {
                   combinedAbort,
                 )
                 await toolTrace.phase("plugin.runtime.after.end", "plugin after end")
-                slot.complete(args, {
-                  output: result.output,
-                  title: result.title ?? "",
-                  metadata: approvalFromContext(ctx)
-                    ? { approval: approvalFromContext(ctx), ...(result.metadata ?? {}) }
-                    : (result.metadata ?? {}),
-                  attachments: result.attachments,
-                  afterPersist: item.afterPersist ? () => item.afterPersist!(args, toolCtx, result) : undefined,
-                })
+                RolloutTool.afterCommit(() =>
+                  slot.complete(args, {
+                    output: result.output,
+                    title: result.title ?? "",
+                    metadata: approvalFromContext(ctx)
+                      ? { approval: approvalFromContext(ctx), ...(result.metadata ?? {}) }
+                      : (result.metadata ?? {}),
+                    attachments: result.attachments,
+                    afterPersist: item.afterPersist ? () => item.afterPersist!(args, toolCtx, result) : undefined,
+                  }),
+                )
                 log.info("tool.execute.callback.completed", {
                   tool: item.id,
                   sessionID: ctx.sessionID,
@@ -1705,7 +1754,9 @@ export namespace ToolResolver {
                   error,
                   owner: "builtin",
                 })
-                slot.fail(args, formatErrorForModel(error), metadataForError(error, approvalFromContext(ctx)))
+                RolloutTool.afterCommit(() =>
+                  slot.fail(args, formatErrorForModel(error), metadataForError(error, approvalFromContext(ctx))),
+                )
                 log.warn("tool.execute.callback.failed", {
                   tool: item.id,
                   sessionID: ctx.sessionID,
@@ -1819,6 +1870,7 @@ export namespace ToolResolver {
                     workspaceType: workspaceInfo?.type ?? "scope",
                   })
                   const envelope = await gate.evaluateIsolated(key, args as Record<string, any>, ctx.abort)
+                  await RolloutTool.authorize({ stage: "evaluated", profile: gate.getProfileInfo(), envelope })
                   const modeDiagnostic = SessionModePolicy.evaluateCall({
                     toolName: key,
                     args: args as Record<string, any>,
@@ -1827,6 +1879,12 @@ export namespace ToolResolver {
                   })
                   if (modeDiagnostic) throw new ToolDiagnosticError(modeDiagnostic)
                   await applyGateApproval(ctx, gate, envelope, key, args as Record<string, any>, runtimeInput)
+                  await RolloutTool.authorize({
+                    stage: "authorized",
+                    profile: gate.getProfileInfo(),
+                    envelope,
+                    approval: approvalFromContext(ctx),
+                  })
                   await toolTrace.phase("tool.approval.resolved", "approval resolved", {
                     decision: envelope.decision,
                     capabilities: envelope.capabilities.map((cap) => cap.class),
@@ -1868,6 +1926,7 @@ export namespace ToolResolver {
                     () => execute(args, { ...opts, abortSignal: combinedAbort }) as Promise<CallToolResult>,
                     combinedAbort,
                   )
+                  await RolloutTool.capture(result)
                   await toolTrace.phase("tool.execute.end", "tool execute end", {
                     contentCount: result.content.length,
                   })
@@ -1917,14 +1976,16 @@ export namespace ToolResolver {
                   }
                   Tool.validateAttachmentResult(key, output)
 
-                  slot.complete(args, {
-                    output: output.output,
-                    title: output.title,
-                    metadata: approvalFromContext(ctx)
-                      ? { approval: approvalFromContext(ctx), ...output.metadata }
-                      : output.metadata,
-                    attachments: output.attachments,
-                  })
+                  RolloutTool.afterCommit(() =>
+                    slot.complete(args, {
+                      output: output.output,
+                      title: output.title,
+                      metadata: approvalFromContext(ctx)
+                        ? { approval: approvalFromContext(ctx), ...output.metadata }
+                        : output.metadata,
+                      attachments: output.attachments,
+                    }),
+                  )
                   log.info("tool.execute.callback.completed", {
                     tool: key,
                     sessionID: ctx.sessionID,
@@ -1966,7 +2027,9 @@ export namespace ToolResolver {
                     error,
                     owner: "mcp",
                   })
-                  slot.fail(args, formatErrorForModel(error), metadataForError(error, approvalFromContext(ctx)))
+                  RolloutTool.afterCommit(() =>
+                    slot.fail(args, formatErrorForModel(error), metadataForError(error, approvalFromContext(ctx))),
+                  )
                   log.warn("tool.execute.callback.failed", {
                     tool: key,
                     sessionID: ctx.sessionID,
@@ -2006,7 +2069,7 @@ export namespace ToolResolver {
     return (await availability(input)).visible
   }
 
-  function withExecutionDeduplication(input: Input, runtimeTool: AITool): AITool {
+  function withExecutionDeduplication(input: Input, runtimeTool: AITool, toolName: string): AITool {
     const execute = runtimeTool.execute
     if (!execute) return runtimeTool
     return {
@@ -2019,7 +2082,22 @@ export namespace ToolResolver {
             input.processor.beginExecution(options.toolCallId).fail({}, error)
             throw new Error(error)
           }
-          return execute.call(runtimeTool, args, options)
+          return RolloutTool.execute(
+            {
+              owner: { kind: "session", scopeID: ScopeContext.current.scope.id, sessionID: input.sessionID },
+              runID: input.processor.message.rootID ?? input.processor.message.parentID,
+              messageID: input.processor.message.id,
+              toolCallID: options.toolCallId,
+              tool: toolName,
+              args: JSON.parse(JSON.stringify(toolInput)),
+            },
+            async () => execute.call(runtimeTool, args, options),
+            () => {
+              SessionManager.signalAbort(input.sessionID, {
+                rootID: input.processor.message.rootID ?? input.processor.message.parentID,
+              })
+            },
+          )
         })
       },
     } as AITool
@@ -2036,7 +2114,7 @@ export namespace ToolResolver {
     for (const item of availabilityResult.visible) {
       const runtimeTool = item.createRuntimeTool?.(runtimeInput)
       if (runtimeTool) {
-        executionTools[item.id] = withExecutionDeduplication(runtimeInput, runtimeTool)
+        executionTools[item.id] = withExecutionDeduplication(runtimeInput, runtimeTool, item.id)
         executorKinds[item.id] = item.executor ?? ToolExecutor.classify(item.id, item.source)
       }
     }
@@ -2046,6 +2124,7 @@ export namespace ToolResolver {
       executionTools[diagnostic.toolName] = withExecutionDeduplication(
         runtimeInput,
         diagnosticRuntimeTool(runtimeInput, diagnostic),
+        diagnostic.toolName,
       )
       executorKinds[diagnostic.toolName] =
         availabilityResult.visible.find((item) => item.id === diagnostic.toolName)?.executor ?? "control_plane"
@@ -2119,7 +2198,7 @@ export namespace ToolResolver {
     const runtimeTool = item.createRuntimeTool?.(runtimeInput)
     if (!runtimeTool) return undefined
     return {
-      tool: withExecutionDeduplication(runtimeInput, runtimeTool),
+      tool: withExecutionDeduplication(runtimeInput, runtimeTool, item.id),
       executor: item.executor ?? ToolExecutor.classify(item.id, item.source),
       inputSchema: item.inputSchema,
     }
@@ -2184,7 +2263,7 @@ export namespace ToolResolver {
 
     for (const item of defs) {
       const runtimeTool = item.createRuntimeTool?.(runtimeInput)
-      if (runtimeTool) tools[item.id] = withExecutionDeduplication(runtimeInput, runtimeTool)
+      if (runtimeTool) tools[item.id] = withExecutionDeduplication(runtimeInput, runtimeTool, item.id)
     }
 
     return tools

@@ -44,17 +44,19 @@
     "deps:analyze": "bun script/dep-analyze.ts",
     "deps:snapshot": "bun script/dep-analyze.ts --snapshot",
     "deps:check": "depcruise --config .dependency-cruiser.cjs --no-progress --output-type err packages/synergy/src && bun script/dep-analyze.ts --check",
-    "coverage:check": "bun script/coverage-check.ts",
+    "coverage:check": "bun turbo build --filter=@ericsanchezok/synergy-plugin && bun script/coverage-check.ts",
     "quality:quick": "bun script/gates.ts local",
     "quality": "bun run quality:quick && bun run release:test && bun turbo test",
     "typecheck": "bun turbo typecheck",
     "prepare": "husky",
-    "test": "echo 'Root test is intentionally disabled. Use bun run quality, bun turbo test, or cd packages/synergy && bun test.' && exit 1"
+    "test": "echo 'Root test is intentionally disabled. Use bun run quality, bun turbo test, or cd packages/synergy && bun test.' && exit 1",
+    "plugin-ui:test": "bun script/plugin-ui-test.ts"
   },
   "workspaces": {
     "packages": [
       "packages/app",
       "packages/browser",
+      "packages/computer",
       "packages/desktop",
       "packages/synergy-link-protocol",
       "packages/synergy-link",
@@ -106,7 +108,7 @@
       "@solidjs/router": "0.15.4",
       "@solidjs/start": "https://pkg.pr.new/@solidjs/start@dfb2020",
       "babel-preset-solid": "1.9.10",
-      "solid-js": "1.9.10",
+      "solid-js": "1.9.15",
       "vite-plugin-solid": "2.11.10",
       "@lingui/cli": "6.5.0",
       "@lingui/core": "6.5.0",
@@ -156,6 +158,7 @@
     "prosemirror-view": "1.42.0"
   },
   "patchedDependencies": {
-    "ghostty-web@0.3.0": "patches/ghostty-web@0.3.0.patch"
+    "ghostty-web@0.3.0": "patches/ghostty-web@0.3.0.patch",
+    "@pierre/diffs@1.3.3": "patches/@pierre%2Fdiffs@1.3.3.patch"
   }
 }

@@ -19,10 +19,11 @@ describe("Filesystem.contains", () => {
     expect(Filesystem.contains("/project", "/etc/passwd")).toBe(false)
   })
 
-  test("blocks absolute paths outside project", () => {
+  test("blocks absolute paths outside project", async () => {
+    await using tmp = await tmpdir()
     expect(Filesystem.contains("/project", "/etc/passwd")).toBe(false)
     expect(Filesystem.contains("/project", "/tmp/file")).toBe(false)
-    expect(Filesystem.contains("/home/user/project", "/home/user/other")).toBe(false)
+    expect(Filesystem.contains(path.join(tmp.path, "project"), path.join(tmp.path, "other"))).toBe(false)
   })
 
   test("handles prefix collision edge cases", () => {

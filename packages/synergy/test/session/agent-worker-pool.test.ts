@@ -145,7 +145,219 @@ async function inScope<T>(fn: () => Promise<T>): Promise<T> {
   return ScopeContext.provide({ scope: Scope.home(), fn })
 }
 
+async function expectAdmissionFailure(request: Promise<unknown>, message: string) {
+  const deadline = Promise.withResolvers<never>()
+  const timer = setTimeout(() => deadline.reject(new Error("Admission did not settle")), 1000)
+  try {
+    await expect(Promise.race([request, deadline.promise])).rejects.toThrow(message)
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
 describe("AgentWorkerPool", () => {
+  test("reserves a worker for foreground turns without releasing background capacity at provider completion", async () => {
+    const fake = fakeWorkers()
+    const pool = new AgentWorkerPool({ ...options, size: 2 }, fake.spawn)
+    const pending: Promise<unknown>[] = []
+    const run = (background = false) => {
+      const result = inScope(() => pool.run(input(new AbortController().signal), { background }))
+      pending.push(result.catch(() => undefined))
+      return result
+    }
+    try {
+      const first = run(true)
+      fake.workers[0].ready()
+      const firstTurn = startTurn(fake.workers[0])
+      fake.workers[0].receive({ type: "started", requestId: firstTurn.requestId })
+      await first
+      run(true)
+      fake.workers[1].ready()
+      expect(pool.stats()).toMatchObject({ active: 1, queued: 1 })
+      const foreground = run()
+      const foregroundTurn = startTurn(fake.workers[1])
+      fake.workers[1].receive({ type: "started", requestId: foregroundTurn.requestId })
+      await foreground
+      expect(pool.stats()).toMatchObject({ active: 2, queued: 1 })
+      fake.workers[0].receive({
+        type: "complete",
+        requestId: firstTurn.requestId,
+        usage: undefined,
+        turns: 1,
+        memoryBeforeDispose: workerMemory(),
+        memory: workerMemory(),
+      })
+      expect(pool.stats()).toMatchObject({ active: 2, queued: 1 })
+      releaseTurn(fake.workers[0], firstTurn.requestId)
+      expect(pool.stats()).toMatchObject({ active: 2, queued: 0 })
+      const next = startTurn(fake.workers[0])
+      expect(next.requestId).not.toBe(firstTurn.requestId)
+    } finally {
+      await pool.stop()
+      await Promise.all(pending)
+    }
+  })
+
+  test("reserves queue admission for foreground turns when background backlog is full", async () => {
+    const fake = fakeWorkers()
+    const pool = new AgentWorkerPool({ ...options, size: 2, maxQueued: 1 }, fake.spawn)
+    const pending: Promise<unknown>[] = []
+    const run = (background = false) => {
+      const result = inScope(() => pool.run(input(new AbortController().signal), { background }))
+      pending.push(result.catch(() => undefined))
+      return result
+    }
+    try {
+      run(true)
+      run(true)
+      await expectAdmissionFailure(run(true), "queue is full")
+      run()
+      expect(pool.stats().queued).toBe(3)
+      for (const worker of fake.workers) worker.ready()
+      expect(pool.stats()).toMatchObject({ active: 2, queued: 1 })
+      await expectAdmissionFailure(run(), "queue is full")
+    } finally {
+      await pool.stop()
+      await Promise.all(pending)
+    }
+  })
+
+  test("reserves queued bytes for foreground while keeping the aggregate byte bound", async () => {
+    const fake = fakeWorkers()
+    const pool = new AgentWorkerPool({ ...options, size: 2, maxQueuedBytes: 10_000 }, fake.spawn)
+    const pending: Promise<unknown>[] = []
+    const run = (background: boolean, length: number) => {
+      const result = inScope(() =>
+        pool.run(
+          { ...input(new AbortController().signal), messages: [{ role: "user", content: "x".repeat(length) }] },
+          { background },
+        ),
+      )
+      pending.push(result.catch(() => undefined))
+      return result
+    }
+    try {
+      run(true, 3_000)
+      await expectAdmissionFailure(run(true, 3_000), "bytes of waiting turns")
+      run(false, 3_000)
+      expect(pool.stats().queued).toBe(2)
+      expect(pool.stats().queuedBytes).toBeLessThanOrEqual(10_000)
+      await expectAdmissionFailure(run(false, 6_000), "bytes of waiting turns")
+    } finally {
+      await pool.stop()
+      await Promise.all(pending)
+    }
+  })
+
+  test("releases cancelled background backlog and admits it when the pool grows", async () => {
+    const fake = fakeWorkers()
+    const pool = new AgentWorkerPool({ ...options, size: 1 }, fake.spawn)
+    const pending: Promise<unknown>[] = []
+    const run = (abort = new AbortController().signal) => {
+      const result = inScope(() => pool.run(input(abort), { background: true }))
+      pending.push(result.catch(() => undefined))
+      return result
+    }
+    try {
+      run()
+      fake.workers[0].ready()
+      expect(pool.stats().active).toBe(1)
+      const controller = new AbortController()
+      const cancelled = run(controller.signal)
+      expect(pool.stats().queued).toBe(1)
+      controller.abort(new Error("cancelled queued background"))
+      await expect(cancelled).rejects.toThrow("cancelled queued background")
+      expect(pool.stats()).toMatchObject({ queued: 0, queuedBytes: 0 })
+      run()
+      pool.resize(3)
+      for (const worker of fake.workers.slice(1)) worker.ready()
+      expect(pool.stats()).toMatchObject({ active: 2, queued: 0 })
+    } finally {
+      await pool.stop()
+      await Promise.all(pending)
+    }
+  })
+
+  test("acknowledges rollout chunks only after the owner commits them", async () => {
+    const fake = fakeWorkers()
+    const pool = new AgentWorkerPool(options, fake.spawn)
+    let commit!: () => void
+    const persisted = new Promise<void>((resolve) => {
+      commit = resolve
+    })
+    const streamPromise = inScope(() => pool.run({ ...input(new AbortController().signal), archive: () => persisted }))
+    fake.workers[0].ready()
+    const worker = fake.workers[0]
+    const run = startTurn(worker)
+    worker.receive({
+      type: "archive",
+      requestId: run.requestId,
+      sequence: 1,
+      event: {
+        type: "attempt-start",
+        attemptID: crypto.randomUUID(),
+        url: "https://example.test",
+        method: "POST",
+        mediaType: "application/json",
+      },
+    })
+    await Bun.sleep(0)
+    expect(worker.sent.some((message) => message.type === "archive-ack")).toBe(false)
+    commit()
+    await Bun.sleep(0)
+    expect(worker.sent).toContainEqual({ type: "archive-ack", requestId: run.requestId, sequence: 1 })
+    worker.receive({ type: "started", requestId: run.requestId })
+    const stream = await streamPromise
+    worker.receive({
+      type: "complete",
+      requestId: run.requestId,
+      turns: 1,
+      memoryBeforeDispose: workerMemory(),
+      memory: workerMemory(),
+    })
+    releaseTurn(worker, run.requestId)
+    await stream.dispose()
+    await pool.stop()
+  })
+
+  test("fails the owned stream and cancels the worker when rollout storage rejects", async () => {
+    const fake = fakeWorkers()
+    const pool = new AgentWorkerPool(options, fake.spawn)
+    const streamPromise = inScope(() =>
+      pool.run({
+        ...input(new AbortController().signal),
+        archive: async () => {
+          throw new Error("disk full")
+        },
+      }),
+    )
+    const worker = fake.workers[0]
+    worker.ready()
+    const run = startTurn(worker)
+    worker.receive({ type: "started", requestId: run.requestId })
+    const stream = await streamPromise
+    worker.receive({
+      type: "archive",
+      requestId: run.requestId,
+      sequence: 1,
+      event: {
+        type: "attempt-start",
+        attemptID: crypto.randomUUID(),
+        url: "https://example.test",
+        method: "POST",
+        mediaType: "application/json",
+      },
+    })
+    await expect(stream.fullStream[Symbol.asyncIterator]().next()).rejects.toMatchObject({
+      name: "RolloutRecordingError",
+    })
+    expect(
+      worker.sent.some((message) => message.type === "archive-ack" && message.error?.name === "RolloutRecordingError"),
+    ).toBe(true)
+    expect(worker.sent.some((message) => message.type === "cancel")).toBe(true)
+    await pool.stop()
+  })
+
   test("keeps default hard watermarks at twice the soft recycle watermarks", () => {
     expect(DEFAULT_AGENT_WORKER_POOL_OPTIONS.maxRssBytes).toBe(3 * 1024 * 1024 * 1024)
     expect(DEFAULT_AGENT_WORKER_POOL_OPTIONS.maxHeapBytes).toBe(2 * 1024 * 1024 * 1024)

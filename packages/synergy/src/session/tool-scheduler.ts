@@ -1,5 +1,6 @@
 import type { ModelMessage, Tool as AITool, ToolCallOptions } from "ai"
 import { availableParallelism } from "os"
+import { AsyncLocalStorage } from "node:async_hooks"
 import { Log } from "@/util/log"
 import { ObservabilityMetrics } from "@/observability/metrics"
 import { SessionMemoryPressure } from "./memory-pressure"
@@ -23,6 +24,19 @@ export interface ToolTaskProcessor {
   beginExecution(callID: string): SessionProcessor.ToolExecutionSlot
 }
 
+export interface ToolTaskResource {
+  key: string
+  limit: number
+}
+
+interface ExecutionContext {
+  physical: Set<Promise<unknown>>
+  active: boolean
+  value: Readonly<{ sessionID: string; executor: ToolExecutorKind; resources: readonly Readonly<ToolTaskResource>[] }>
+}
+
+const executionContext = new AsyncLocalStorage<ExecutionContext>()
+
 export interface ToolTaskInput {
   sessionID: string
   generation: number
@@ -31,6 +45,7 @@ export interface ToolTaskInput {
   attempt?: number
   toolName: string
   executor?: ToolExecutorKind
+  resources?: readonly Readonly<ToolTaskResource>[]
   input: unknown
   tool?: AITool
   processor: ToolTaskProcessor
@@ -65,6 +80,7 @@ export class ToolTaskScheduler {
   private readonly terminalTasks: Array<{ key: string; promise: Promise<ToolTaskResult>; completedAt: number }> = []
   private active = 0
   private readonly activeByExecutor = new Map<ToolExecutorKind, number>()
+  private readonly activeResources = new Map<string, number>()
   private stopping = false
 
   constructor(private readonly options: ToolTaskSchedulerOptions) {
@@ -77,6 +93,17 @@ export class ToolTaskScheduler {
   }
 
   dispatch(input: ToolTaskInput): Promise<ToolTaskResult> {
+    const resources = input.resources ?? []
+    if (
+      resources.length > 16 ||
+      new Set(resources.map((resource) => resource.key)).size !== resources.length ||
+      resources.some(
+        (resource) =>
+          !resource.key || resource.key.length > 256 || !Number.isSafeInteger(resource.limit) || resource.limit < 1,
+      )
+    )
+      throw new Error("Tool task resource quotas must have unique bounded keys and positive integer limits")
+    input = { ...input, resources: Object.freeze(resources.map((resource) => Object.freeze({ ...resource }))) }
     this.sweepTerminal()
     const key = this.key(input)
     const existing = this.tasks.get(key)
@@ -123,7 +150,10 @@ export class ToolTaskScheduler {
     }
     const executor = input.executor ?? "control_plane"
     const canStartImmediately =
-      this.active < this.options.maxConcurrent && this.executorAvailable(executor) && this.queue.length === 0
+      this.active < this.options.maxConcurrent &&
+      this.executorAvailable(executor) &&
+      this.resourcesAvailable(input) &&
+      this.queue.length === 0
     if (!canStartImmediately && this.queue.length >= this.options.maxQueued) {
       const error = `Tool execution queue is full (${this.options.maxQueued} waiting)`
       const terminal = this.terminal(input, "failed", queuedAt, undefined, error)
@@ -233,16 +263,25 @@ export class ToolTaskScheduler {
 
   private drain(): void {
     while (!this.stopping && this.active < this.options.maxConcurrent && this.queue.length > 0) {
-      const taskIndex = this.queue.findIndex((task) => this.executorAvailable(task.input.executor ?? "control_plane"))
+      const taskIndex = this.queue.findIndex(
+        (task) => this.executorAvailable(task.input.executor ?? "control_plane") && this.resourcesAvailable(task.input),
+      )
       if (taskIndex === -1) return
       const [task] = this.queue.splice(taskIndex, 1)
       this.queuedBytes -= task.bytes
       task.removeAbortListener()
       this.active++
+      for (const resource of task.input.resources ?? [])
+        this.activeResources.set(resource.key, (this.activeResources.get(resource.key) ?? 0) + 1)
       const executor = task.input.executor ?? "control_plane"
       this.activeByExecutor.set(executor, (this.activeByExecutor.get(executor) ?? 0) + 1)
       void this.run(task).finally(() => {
         this.active--
+        for (const resource of task.input.resources ?? []) {
+          const count = (this.activeResources.get(resource.key) ?? 1) - 1
+          if (count) this.activeResources.set(resource.key, count)
+          else this.activeResources.delete(resource.key)
+        }
         const remaining = (this.activeByExecutor.get(executor) ?? 1) - 1
         if (remaining > 0) this.activeByExecutor.set(executor, remaining)
         else this.activeByExecutor.delete(executor)
@@ -281,7 +320,21 @@ export class ToolTaskScheduler {
         messages: [] as ModelMessage[],
         abortSignal: signal,
       } satisfies ToolCallOptions
-      await execute(task.input.input, options)
+      const context: ExecutionContext = {
+        physical: new Set(),
+        active: true,
+        value: Object.freeze({
+          sessionID: task.input.sessionID,
+          executor: task.input.executor ?? "control_plane",
+          resources: task.input.resources ?? [],
+        }),
+      }
+      try {
+        await executionContext.run(context, () => execute(task.input.input, options))
+      } finally {
+        context.active = false
+        await Promise.allSettled([...context.physical])
+      }
       if (slot.status === "pending") {
         throw new Error(`Tool "${task.input.toolName}" completed without settling its result`)
       }
@@ -370,6 +423,10 @@ export class ToolTaskScheduler {
     ])
   }
 
+  private resourcesAvailable(input: ToolTaskInput): boolean {
+    return (input.resources ?? []).every((resource) => (this.activeResources.get(resource.key) ?? 0) < resource.limit)
+  }
+
   private executorAvailable(executor: ToolExecutorKind): boolean {
     const limit = this.options.executorConcurrency?.[executor] ?? this.options.maxConcurrent
     return (this.activeByExecutor.get(executor) ?? 0) < limit
@@ -405,6 +462,21 @@ export const DEFAULT_TOOL_TASK_SCHEDULER_OPTIONS: ToolTaskSchedulerOptions = {
 }
 
 export namespace ToolScheduler {
+  export function trackPhysicalExecution<T>(execute: () => Promise<T>): Promise<T> {
+    const context = executionContext.getStore()
+    if (!context?.active) throw new Error("Physical execution requires active tool admission")
+    const promise = execute()
+    context.physical.add(promise)
+    const release = () => context.physical.delete(promise)
+    void promise.then(release, release)
+    return promise
+  }
+
+  export function currentExecution() {
+    const context = executionContext.getStore()
+    return context?.active ? context.value : undefined
+  }
+
   let options: ToolTaskSchedulerOptions = DEFAULT_TOOL_TASK_SCHEDULER_OPTIONS
   let scheduler: ToolTaskScheduler | undefined
   let accepting = true

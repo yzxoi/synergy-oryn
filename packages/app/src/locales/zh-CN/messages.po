@@ -1470,19 +1470,7 @@ msgstr "搜索命令"
 msgid "app.command.title"
 msgstr "命令"
 
-#. * Bridge Plugin API 4 host.confirm(Promise<boolean>) onto the App ConfirmDialog.
- *
- * title and message pass through from the plugin — they are plugin author content.
- * confirmLabel and cancelLabel are host chrome; the plugin may override confirmLabel
- * with its own content.
-msgid "app.common.cancel"
-msgstr "取消"
-
-#. * Bridge Plugin API 4 host.confirm(Promise<boolean>) onto the App ConfirmDialog.
- *
- * title and message pass through from the plugin — they are plugin author content.
- * confirmLabel and cancelLabel are host chrome; the plugin may override confirmLabel
- * with its own content.
+#. js-lingui-explicit-id
 msgid "app.common.confirm"
 msgstr "确认"
 
@@ -6698,6 +6686,42 @@ msgid "app.plugin.settings.stateOn"
 msgstr "开启"
 
 #. js-lingui-explicit-id
+msgid "app.plugin.shell.preference.description"
+msgstr "选择此服务器的工作台和页面呈现方式。"
+
+#. js-lingui-explicit-id
+msgid "app.plugin.shell.preference.recovery"
+msgstr "安全界面模式已启用。若插件出现故障，请先选择默认工作台，再正常重启。"
+
+#. js-lingui-explicit-id
+msgid "app.plugin.shell.preference.restart"
+msgstr "正常重启"
+
+#. js-lingui-explicit-id
+msgid "app.plugin.shell.preference.title"
+msgstr "工作台"
+
+#. js-lingui-explicit-id
+msgid "app.plugin.shell.preference.unavailable"
+msgstr "{shell}（不可用）"
+
+#. js-lingui-explicit-id
+msgid "app.plugin.skin.preference.default"
+msgstr "默认外观"
+
+#. js-lingui-explicit-id
+msgid "app.plugin.skin.preference.description"
+msgstr "选择字体、纹理和界面样式。你保存的字体设置优先。"
+
+#. js-lingui-explicit-id
+msgid "app.plugin.skin.preference.title"
+msgstr "皮肤"
+
+#. js-lingui-explicit-id
+msgid "app.plugin.skin.preference.unavailable"
+msgstr "{skin}（不可用）"
+
+#. js-lingui-explicit-id
 msgid "app.plugin.surface.noBuiltinNav"
 msgstr "没有为 {id} 注册内置导航界面。"
 
@@ -6716,6 +6740,34 @@ msgstr "页面不可用"
 #. js-lingui-explicit-id
 msgid "app.plugin.surface.pluginPageUnavailable"
 msgstr "插件页面不可用"
+
+#. js-lingui-explicit-id
+msgid "app.plugin.ui.available"
+msgstr "界面已就绪"
+
+#. js-lingui-explicit-id
+msgid "app.plugin.ui.diagnostics"
+msgstr "插件界面"
+
+#. js-lingui-explicit-id
+msgid "app.plugin.ui.failed"
+msgstr "界面错误"
+
+#. js-lingui-explicit-id
+msgid "app.plugin.ui.incompatible"
+msgstr "界面不兼容"
+
+#. js-lingui-explicit-id
+msgid "app.plugin.ui.loading"
+msgstr "正在加载界面"
+
+#. js-lingui-explicit-id
+msgid "app.plugin.ui.outletMissing"
+msgstr "当前工作台未呈现"
+
+#. js-lingui-explicit-id
+msgid "app.plugin.ui.registered"
+msgstr "界面已注册"
 
 #. js-lingui-explicit-id
 msgid "app.plugin.verified.ariaLabel"
@@ -7016,6 +7068,10 @@ msgstr "选择所有已加载的消息"
 #. js-lingui-explicit-id
 msgid "app.rawMessages.title"
 msgstr "原始消息"
+
+#. js-lingui-explicit-id
+msgid "app.review.toolUnavailable"
+msgstr "此工具结果已不可用。"
 
 #. ── components/scopes/active-zone.tsx ────────────────────────────────
 msgid "app.scopes.activeZone.active"
@@ -7673,6 +7729,16 @@ msgstr "未命名"
 
 #. Runtime Lingui descriptors for stats host labels, UI text, and tooltips.
  *  Translate at use time via `useLocale().i18n._(descriptor)`.
+msgid "app.stats.accounting.detail"
+msgstr "API 估算小计：{api}。订阅 API 等价估算：{subscription}（{unknown, plural, other {# 次调用未知}}）。历史记录金额：{legacy}。这些数值不代表实际账单扣款。"
+
+#. Runtime Lingui descriptors for stats host labels, UI text, and tooltips.
+ *  Translate at use time via `useLocale().i18n._(descriptor)`.
+msgid "app.stats.accounting.unknown"
+msgstr "{count, plural, =0 {API 调用费用估算齐全} other {# 次 API 调用的费用未知}}"
+
+#. Runtime Lingui descriptors for stats host labels, UI text, and tooltips.
+ *  Translate at use time via `useLocale().i18n._(descriptor)`.
 msgid "app.stats.agent.delegatedRuns"
 msgstr "{count} 次委派运行"
 
@@ -7798,7 +7864,7 @@ msgstr "总体变动的组成细分"
 #. Runtime Lingui descriptors for stats host labels, UI text, and tooltips.
  *  Translate at use time via `useLocale().i18n._(descriptor)`.
 msgid "app.stats.daily.axis.cost"
-msgstr "成本 ($)"
+msgstr "已知费用 ($)"
 
 #. Runtime Lingui descriptors for stats host labels, UI text, and tooltips.
  *  Translate at use time via `useLocale().i18n._(descriptor)`.
@@ -7812,7 +7878,7 @@ msgstr "暂无每日活动"
 
 #. ── daily-trend.tsx — chart/legend labels ───────────────────────────
 msgid "app.stats.daily.legend.cost"
-msgstr "成本"
+msgstr "已知费用"
 
 #. Runtime Lingui descriptors for stats host labels, UI text, and tooltips.
  *  Translate at use time via `useLocale().i18n._(descriptor)`.
@@ -7861,7 +7927,7 @@ msgstr "每日趋势"
 #. Runtime Lingui descriptors for stats host labels, UI text, and tooltips.
  *  Translate at use time via `useLocale().i18n._(descriptor)`.
 msgid "app.stats.daily.tooltip.cost"
-msgstr "成本：{value}"
+msgstr "已知费用：{value}"
 
 #. Runtime Lingui descriptors for stats host labels, UI text, and tooltips.
  *  Translate at use time via `useLocale().i18n._(descriptor)`.
@@ -8041,7 +8107,7 @@ msgstr "净增 {count}"
 #. Runtime Lingui descriptors for stats host labels, UI text, and tooltips.
  *  Translate at use time via `useLocale().i18n._(descriptor)`.
 msgid "app.stats.overview.label.cost"
-msgstr "成本"
+msgstr "已知费用"
 
 #. Runtime Lingui descriptors for stats host labels, UI text, and tooltips.
  *  Translate at use time via `useLocale().i18n._(descriptor)`.
@@ -8151,7 +8217,7 @@ msgstr "调用"
 #. Runtime Lingui descriptors for stats host labels, UI text, and tooltips.
  *  Translate at use time via `useLocale().i18n._(descriptor)`.
 msgid "app.stats.rank.metric.cost"
-msgstr "成本"
+msgstr "已知费用"
 
 #. Runtime Lingui descriptors for stats host labels, UI text, and tooltips.
  *  Translate at use time via `useLocale().i18n._(descriptor)`.
@@ -8274,7 +8340,7 @@ msgstr "输入"
 #. Runtime Lingui descriptors for stats host labels, UI text, and tooltips.
  *  Translate at use time via `useLocale().i18n._(descriptor)`.
 msgid "app.stats.token.label.output"
-msgstr "输出"
+msgstr "其他输出"
 
 #. Runtime Lingui descriptors for stats host labels, UI text, and tooltips.
  *  Translate at use time via `useLocale().i18n._(descriptor)`.
@@ -8295,6 +8361,11 @@ msgstr "从缓存复用的提示 Token"
  *  Translate at use time via `useLocale().i18n._(descriptor)`.
 msgid "app.stats.token.note.cacheWrite"
 msgstr "已存储以供复用的提示 Token"
+
+#. Runtime Lingui descriptors for stats host labels, UI text, and tooltips.
+ *  Translate at use time via `useLocale().i18n._(descriptor)`.
+msgid "app.stats.token.note.output"
+msgstr "不包含推理子集的输出"
 
 #. Runtime Lingui descriptors for stats host labels, UI text, and tooltips.
  *  Translate at use time via `useLocale().i18n._(descriptor)`.
@@ -9156,6 +9227,18 @@ msgstr "执行任务"
 #. ── Classifier category labels ──────────────────────────────────────
 msgid "classifier.label.web"
 msgstr "访问网页"
+
+#. ── Tool trigger titles ────────────────────────────────────────────
+msgid "computer.title.action"
+msgstr "操作应用"
+
+#. ── Tool trigger titles ────────────────────────────────────────────
+msgid "computer.title.apps"
+msgstr "查找应用窗口"
+
+#. ── Tool trigger titles ────────────────────────────────────────────
+msgid "computer.title.observe"
+msgstr "观察应用"
 
 #. js-lingui-explicit-id
 msgid "confirm.agendaAction.cancel.confirm"
@@ -12648,6 +12731,10 @@ msgstr "返回最新消息"
 msgid "session.conversation.withdraw"
 msgstr "撤回"
 
+#. js-lingui-explicit-id
+msgid "session.decisions.label"
+msgstr "会话需要确认"
+
 #. Runtime Lingui descriptors for session component strings.
  *  Translate at use time via `useLocale().i18n._(descriptor)`.
 msgid "session.dock.back"
@@ -14554,10 +14641,6 @@ msgid "settings.catalog.general.row.productUpdates"
 msgstr "产品更新"
 
 #. js-lingui-explicit-id
-msgid "settings.catalog.general.row.snapshot"
-msgstr "快照"
-
-#. js-lingui-explicit-id
 msgid "settings.catalog.general.row.toastDuration"
 msgstr "提示时长"
 
@@ -14840,6 +14923,18 @@ msgstr "OpenClaw"
 #. js-lingui-explicit-id
 msgid "settings.catalog.skills.searchTerms"
 msgstr "技能 | skill | claude | codex | openclaw | agents | 兼容性"
+
+#. js-lingui-explicit-id
+msgid "settings.catalog.storage.description"
+msgstr "按项目范围查看文件快照存储占用与快照开关。"
+
+#. js-lingui-explicit-id
+msgid "settings.catalog.storage.label"
+msgstr "存储"
+
+#. js-lingui-explicit-id
+msgid "settings.catalog.storage.searchTerms"
+msgstr "存储 | 快照 | 占用 | 磁盘 | 旧版 | 迁移 | 压缩"
 
 #. js-lingui-explicit-id
 msgid "settings.catalog.synergyLink.description"
@@ -15672,14 +15767,6 @@ msgstr "外观、行为和通知偏好设置。"
 #. js-lingui-explicit-id
 msgid "settings.general.page.title"
 msgstr "常规"
-
-#. js-lingui-explicit-id
-msgid "settings.general.snapshots.description"
-msgstr "Synergy 编辑文件时保留恢复点"
-
-#. js-lingui-explicit-id
-msgid "settings.general.snapshots.title"
-msgstr "文件快照"
 
 #. js-lingui-explicit-id
 msgid "settings.general.theme.description"
@@ -18578,6 +18665,222 @@ msgid "settings.stepScale.customValue"
 msgstr "自定义 {value}"
 
 #. js-lingui-explicit-id
+msgid "settings.storage.clean.action"
+msgstr "回收"
+
+#. js-lingui-explicit-id
+msgid "settings.storage.clean.busy"
+msgstr "正在回收..."
+
+#. js-lingui-explicit-id
+msgid "settings.storage.clean.confirm.description"
+msgstr "{count} 个快照（{bytes}）无所有者记录，将被永久删除。此操作无法撤销。"
+
+#. js-lingui-explicit-id
+msgid "settings.storage.clean.confirm.label"
+msgstr "回收"
+
+#. js-lingui-explicit-id
+msgid "settings.storage.clean.confirm.title"
+msgstr "回收无主快照"
+
+#. js-lingui-explicit-id
+msgid "settings.storage.clean.description"
+msgstr "无会话记录的旧版快照目录（包括已回收的 scope）。删除前会先展示预演结果；实际删除前，每个 scope 还必须通过完整性检查。"
+
+#. js-lingui-explicit-id
+msgid "settings.storage.clean.failed.title"
+msgstr "快照清理失败"
+
+#. js-lingui-explicit-id
+msgid "settings.storage.clean.nothing"
+msgstr "没有可回收的内容"
+
+#. js-lingui-explicit-id
+msgid "settings.storage.clean.partial.description"
+msgstr "{count} 个操作未完成。首个问题：{first}"
+
+#. js-lingui-explicit-id
+msgid "settings.storage.clean.success.description"
+msgstr "已从 {count} 中释放 {bytes}。"
+
+#. js-lingui-explicit-id
+msgid "settings.storage.clean.success.title"
+msgstr "无主快照已回收"
+
+#. js-lingui-explicit-id
+msgid "settings.storage.clean.title"
+msgstr "回收无主快照"
+
+#. js-lingui-explicit-id
+msgid "settings.storage.cleanup.title"
+msgstr "清理"
+
+#. js-lingui-explicit-id
+msgid "settings.storage.compact.action"
+msgstr "打包"
+
+#. js-lingui-explicit-id
+msgid "settings.storage.compact.busy"
+msgstr "正在打包..."
+
+#. js-lingui-explicit-id
+msgid "settings.storage.compact.confirm.description"
+msgstr "共享存储当前占用 {bytes}。将进行重打包；重写前会先运行完整性检查。"
+
+#. js-lingui-explicit-id
+msgid "settings.storage.compact.confirm.label"
+msgstr "打包"
+
+#. js-lingui-explicit-id
+msgid "settings.storage.compact.confirm.title"
+msgstr "打包共享存储"
+
+#. js-lingui-explicit-id
+msgid "settings.storage.compact.description"
+msgstr "重打包共享对象存储以回收空间。删除前会先展示预演结果；重写任何内容之前都会先运行完整性检查。"
+
+#. js-lingui-explicit-id
+msgid "settings.storage.compact.failed.title"
+msgstr "快照打包失败"
+
+#. js-lingui-explicit-id
+msgid "settings.storage.compact.nothing"
+msgstr "没有可打包的共享存储"
+
+#. js-lingui-explicit-id
+msgid "settings.storage.compact.success.description"
+msgstr "共享存储：{before} → {after}。"
+
+#. js-lingui-explicit-id
+msgid "settings.storage.compact.success.title"
+msgstr "共享存储已打包"
+
+#. js-lingui-explicit-id
+msgid "settings.storage.compact.title"
+msgstr "打包共享存储"
+
+#. js-lingui-explicit-id
+msgid "settings.storage.maintenance.description"
+msgstr "inspect 与 check 通过 CLI（synergy data snapshots）执行。migrate 与 compact 也可在此运行，均先展示预演结果；clean 回收无会话拥有的旧版目录。"
+
+#. js-lingui-explicit-id
+msgid "settings.storage.maintenance.title"
+msgstr "维护"
+
+#. js-lingui-explicit-id
+msgid "settings.storage.migrate.action"
+msgstr "迁移"
+
+#. js-lingui-explicit-id
+msgid "settings.storage.migrate.busy"
+msgstr "正在迁移..."
+
+#. js-lingui-explicit-id
+msgid "settings.storage.migrate.confirm.description"
+msgstr "{count} 个旧版仓库将移入共享对象存储。每个仓库都会先验证，然后才移除旧副本。"
+
+#. js-lingui-explicit-id
+msgid "settings.storage.migrate.confirm.label"
+msgstr "迁移"
+
+#. js-lingui-explicit-id
+msgid "settings.storage.migrate.confirm.title"
+msgstr "迁移旧版快照"
+
+#. js-lingui-explicit-id
+msgid "settings.storage.migrate.description"
+msgstr "将仍有会话归属的旧版快照仓库移入共享对象存储。删除前会先展示预演结果；无确认会话记录的仓库会被跳过并保留。"
+
+#. js-lingui-explicit-id
+msgid "settings.storage.migrate.failed.title"
+msgstr "快照迁移失败"
+
+#. js-lingui-explicit-id
+msgid "settings.storage.migrate.nothing"
+msgstr "没有可迁移的旧版快照"
+
+#. js-lingui-explicit-id
+msgid "settings.storage.migrate.success.description"
+msgstr "已迁移 {migrated} 个仓库，跳过 {skipped} 个。"
+
+#. js-lingui-explicit-id
+msgid "settings.storage.migrate.success.title"
+msgstr "旧版快照已迁移"
+
+#. js-lingui-explicit-id
+msgid "settings.storage.migrate.title"
+msgstr "迁移旧版快照"
+
+#. js-lingui-explicit-id
+msgid "settings.storage.page.description"
+msgstr "按项目范围查看文件快照存储占用。"
+
+#. js-lingui-explicit-id
+msgid "settings.storage.page.title"
+msgstr "存储"
+
+#. js-lingui-explicit-id
+msgid "settings.storage.refresh"
+msgstr "刷新"
+
+#. js-lingui-explicit-id
+msgid "settings.storage.snapshots.description"
+msgstr "Synergy 编辑文件时保留还原点"
+
+#. js-lingui-explicit-id
+msgid "settings.storage.snapshots.title"
+msgstr "文件快照"
+
+#. js-lingui-explicit-id
+msgid "settings.storage.usage.empty"
+msgstr "未找到快照存储。"
+
+#. js-lingui-explicit-id
+msgid "settings.storage.usage.failed"
+msgstr "快照扫描失败"
+
+#. js-lingui-explicit-id
+msgid "settings.storage.usage.indexes"
+msgstr "会话工作索引"
+
+#. js-lingui-explicit-id
+msgid "settings.storage.usage.legacy"
+msgstr "旧版仓库"
+
+#. js-lingui-explicit-id
+msgid "settings.storage.usage.loading"
+msgstr "正在扫描快照存储..."
+
+#. js-lingui-explicit-id
+msgid "settings.storage.usage.owners"
+msgstr "会话"
+
+#. js-lingui-explicit-id
+msgid "settings.storage.usage.owners.deleted"
+msgstr "{count} 个待删除"
+
+#. js-lingui-explicit-id
+msgid "settings.storage.usage.owners.legacy"
+msgstr "{count} 个在旧版存储"
+
+#. js-lingui-explicit-id
+msgid "settings.storage.usage.owners.shared"
+msgstr "{count} 个在共享存储"
+
+#. js-lingui-explicit-id
+msgid "settings.storage.usage.retainedLegacy"
+msgstr "{unowned} 个无主、{reclaimed} 个已回收、{sharedBaselines} 个共享基线、{unregistered} 个未注册"
+
+#. js-lingui-explicit-id
+msgid "settings.storage.usage.shared"
+msgstr "共享仓库"
+
+#. js-lingui-explicit-id
+msgid "settings.storage.usage.title"
+msgstr "快照占用"
+
+#. js-lingui-explicit-id
 msgid "settings.synergyLink.add.action"
 msgstr "添加目标"
 
@@ -20386,6 +20689,18 @@ msgid "ui.toast.copyLabel"
 msgstr "复制通知"
 
 #. js-lingui-explicit-id
+msgid "ui.toolContent.openFile"
+msgstr "打开当前文件"
+
+#. js-lingui-explicit-id
+msgid "ui.toolContent.openReview"
+msgstr "在审阅中打开"
+
+#. js-lingui-explicit-id
+msgid "ui.toolContent.truncated"
+msgstr "预览已截短。"
+
+#. js-lingui-explicit-id
 msgid "ui.turnChangeSummary.hideFiles"
 msgstr "隐藏文件"
 
@@ -20420,3 +20735,15 @@ msgstr "最小化"
 #. js-lingui-explicit-id
 msgid "window.restore"
 msgstr "恢复"
+
+#. js-lingui-explicit-id
+msgid "workbench.discard.action"
+msgstr "放弃更改"
+
+#. js-lingui-explicit-id
+msgid "workbench.discard.description"
+msgstr "{title} 中的更改尚未保存。"
+
+#. js-lingui-explicit-id
+msgid "workbench.discard.title"
+msgstr "放弃未保存的更改？"

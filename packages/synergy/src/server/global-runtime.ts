@@ -1,3 +1,7 @@
+import { OrynConfig } from "../oryn/config"
+import { OrynStore } from "../oryn/store"
+import { OrynControl } from "../oryn/control"
+import { OrynBudgetRuntime } from "../oryn/budget-runtime"
 import { Agenda } from "@/agenda"
 import { AgendaBootstrap } from "@/agenda/bootstrap"
 import { ChannelOutbound } from "@/channel/outbound"
@@ -5,7 +9,6 @@ import { registerProviders } from "@/channel/provider"
 import { ResponseCardRuntime } from "@/channel/response-card"
 import { Channel } from "@/channel"
 import { Config } from "@/config/config"
-import { CortexConcurrency } from "@/cortex/concurrency"
 import { HolosRuntime } from "@/holos/runtime"
 import { PluginMarketplaceRegistry } from "@/plugin/marketplace-registry"
 import { MCP } from "@/mcp"
@@ -19,116 +22,29 @@ import { SessionInvoke } from "@/session/invoke"
 import { ActivitySummary } from "@/session/activity-summary"
 import { LatticeRuntime } from "@/lattice/runtime"
 import { PushBridge } from "@/push/bridge"
-import { Embedding } from "@/vector/embedding"
-import { AgentTurn } from "@/session/agent-turn"
-import { DEFAULT_AGENT_WORKER_POOL_OPTIONS } from "@/session/agent-turn/worker-pool"
-import { DEFAULT_TOOL_TASK_SCHEDULER_OPTIONS, ToolScheduler } from "@/session/tool-scheduler"
-import { PolicyWorker, DEFAULT_POLICY_WORKER_POOL_OPTIONS } from "@/enforcement/policy-worker"
-import { resolveRuntimeShutdownTimeoutMs } from "@ericsanchezok/synergy-util/runtime-shutdown"
+import { OrynEngineering } from "@/oryn/engineering"
+import { OrynReports } from "@/oryn/reports"
+import { OrynService } from "@/oryn/service"
 
 export namespace GlobalRuntime {
   const log = Log.create({ service: "global-runtime" })
   let started: Promise<void> | undefined
-  let configuredShutdownTimeoutMs = resolveRuntimeShutdownTimeoutMs(DEFAULT_AGENT_WORKER_POOL_OPTIONS.cancelGraceMs)
   let disposePushBridge: (() => void) | undefined
 
-  export async function start() {
+  export async function start(config: Config.Info) {
     if (!started) {
       started = ScopeContext.provide({
         scope: Scope.home(),
         fn: async () => {
           log.info("starting")
-          await Plugin.init()
-          const config = await Config.globalResolved().catch(async (error) => {
-            // Fuse: a config load failure must never prevent the server from
-            // starting. Fall back to defaults and surface the issue through
-            // the diagnostics registry (visible in the startup banner and
-            // GET /config/diagnostics).
-            const message = error instanceof Error ? error.message : String(error)
-            log.error("config load failed, starting with defaults", { error: message })
-            Config.recordIssue({
-              path: "config",
-              error: message,
-              code: "config.load_failed",
-              quarantined: false,
-              timestamp: Date.now(),
-            })
-            return Config.Info.parse({})
-          })
-          configuredShutdownTimeoutMs = resolveRuntimeShutdownTimeoutMs(
-            Math.max(
-              config.execution?.agentCancelGraceMs ?? DEFAULT_AGENT_WORKER_POOL_OPTIONS.cancelGraceMs,
-              config.execution?.policyCancelGraceMs ?? DEFAULT_POLICY_WORKER_POOL_OPTIONS.cancelGraceMs,
-              config.execution?.toolCancelGraceMs ?? DEFAULT_TOOL_TASK_SCHEDULER_OPTIONS.shutdownGraceMs ?? 0,
-            ),
-          )
-          CortexConcurrency.configure(config.cortex?.maxConcurrentTasks)
-          AgentTurn.configure({
-            size: config.execution?.agentWorkers,
-            minIdle: config.execution?.agentWorkerMinIdle,
-            idleTimeoutMs: config.execution?.agentWorkerIdleTimeoutMs,
-            maxQueued: config.execution?.agentQueueMax,
-            maxQueuedBytes:
-              config.execution?.agentQueueMaxMb === undefined
-                ? undefined
-                : config.execution.agentQueueMaxMb * 1024 * 1024,
-            maxTurns: config.execution?.agentWorkerMaxTurns,
-            maxRssBytes:
-              config.execution?.agentWorkerMaxRssMb === undefined
-                ? undefined
-                : config.execution.agentWorkerMaxRssMb * 1024 * 1024,
-            maxHeapBytes:
-              config.execution?.agentWorkerMaxHeapMb === undefined
-                ? undefined
-                : config.execution.agentWorkerMaxHeapMb * 1024 * 1024,
-            idleBaselineRecycle: config.execution?.agentWorkerIdleBaselineRecycle,
-            idleBaselineRssGrowthBytes:
-              config.execution?.agentWorkerIdleBaselineRssGrowthMb === undefined
-                ? undefined
-                : config.execution.agentWorkerIdleBaselineRssGrowthMb * 1024 * 1024,
-            idleBaselineExternalGrowthBytes:
-              config.execution?.agentWorkerIdleBaselineExternalGrowthMb === undefined
-                ? undefined
-                : config.execution.agentWorkerIdleBaselineExternalGrowthMb * 1024 * 1024,
-            cancelGraceMs: config.execution?.agentCancelGraceMs,
-            heartbeatTimeoutMs: config.execution?.agentHeartbeatTimeoutMs,
-          })
-          PolicyWorker.configure({
-            size: config.execution?.policyWorkers,
-            maxQueued: config.execution?.policyQueueMax,
-            maxQueuedBytes:
-              config.execution?.policyQueueMaxMb === undefined
-                ? undefined
-                : config.execution.policyQueueMaxMb * 1024 * 1024,
-            timeoutMs: config.execution?.policyTimeoutMs,
-            maxRequests: config.execution?.policyWorkerMaxRequests,
-            maxRssBytes:
-              config.execution?.policyWorkerMaxRssMb === undefined
-                ? undefined
-                : config.execution.policyWorkerMaxRssMb * 1024 * 1024,
-            maxHeapBytes:
-              config.execution?.policyWorkerMaxHeapMb === undefined
-                ? undefined
-                : config.execution.policyWorkerMaxHeapMb * 1024 * 1024,
-            cancelGraceMs: config.execution?.policyCancelGraceMs,
-            heartbeatTimeoutMs: config.execution?.policyHeartbeatTimeoutMs,
-          })
-          void PolicyWorker.start().catch((error) => {
-            log.warn("policy worker prewarm failed", { error })
-          })
-          ToolScheduler.configure({
-            maxConcurrent: config.execution?.toolConcurrency,
-            maxQueued: config.execution?.toolQueueMax,
-            maxQueuedBytes:
-              config.execution?.toolQueueMaxMb === undefined
-                ? undefined
-                : config.execution.toolQueueMaxMb * 1024 * 1024,
-            shutdownGraceMs: config.execution?.toolCancelGraceMs,
-            executorConcurrency: config.execution?.toolExecutorConcurrency,
-          })
+          if (await OrynConfig.enabled()) {
+            const transitions = await OrynStore.recoverAttemptTransitions()
+            if (transitions.failed) log.warn("oryn Attempt transition recovery incomplete", transitions)
+          }
           await SessionRecovery.reconcileRuntimeState({ scopeID: Scope.home().id, apply: true }).catch((error) => {
             log.warn("session runtime recovery failed", { scopeID: Scope.home().id, error })
           })
+          if (await OrynConfig.enabled()) await OrynBudgetRuntime.start()
           await LatticeRuntime.init()
           ActivitySummary.init()
           await SessionInvoke.resumePending({ scopeID: Scope.home().id })
@@ -147,6 +63,19 @@ export namespace GlobalRuntime {
           await BossRuntime.ensure().catch((error) => {
             log.warn("runtime boss provisioning failed", { error })
           })
+          const controlRecovery = await OrynControl.recover()
+          if (controlRecovery.failed) log.warn("oryn control recovery incomplete", controlRecovery)
+          const orynRecovery = await OrynEngineering.recover()
+          const workerRecovery = await OrynService.recoverWorkers()
+          const reportRecovery = await OrynReports.recover()
+          const turnRecovery = await OrynService.recoverEngineeringTurns()
+          if (turnRecovery.failed) log.warn("oryn interrupted turn recovery incomplete", turnRecovery)
+          const handoffRecovery = await OrynService.recoverHandoffs()
+          if (handoffRecovery.failed) log.warn("oryn handoff recovery incomplete", handoffRecovery)
+          if (workerRecovery.failed) log.warn("oryn worker recovery incomplete", workerRecovery)
+          if (reportRecovery.failed) log.warn("oryn report recovery incomplete", reportRecovery)
+          if (orynRecovery.failed || orynRecovery.blocked)
+            log.warn("oryn engineering recovery incomplete", orynRecovery)
           log.info("started")
         },
       })
@@ -154,19 +83,8 @@ export namespace GlobalRuntime {
     return started
   }
 
-  export function shutdownTimeoutMs(): number {
-    return configuredShutdownTimeoutMs
-  }
-
-  export function closeAdmission(): void {
-    AgentTurn.closeAdmission()
-    PolicyWorker.closeAdmission()
-    ToolScheduler.closeAdmission()
-  }
-
   export async function stop() {
-    closeAdmission()
-    const executionStop = Promise.all([AgentTurn.stop(), PolicyWorker.stop(), ToolScheduler.stop()])
+    await OrynBudgetRuntime.stop()
     Agenda.stop()
     // Stop accepting new pushes and wait for queued fan-outs before the
     // storage/services they rely on are torn down.
@@ -175,7 +93,6 @@ export namespace GlobalRuntime {
       disposePushBridge = undefined
     }
     await PushBridge.flush().catch(() => undefined)
-    await executionStop
     await Promise.all([
       ScopeContext.provide({
         scope: Scope.home(),
@@ -183,8 +100,6 @@ export namespace GlobalRuntime {
           await Channel.stopAll().catch(() => undefined)
         },
       }),
-      MCP.stop(),
-      Embedding.dispose(),
     ])
     started = undefined
   }

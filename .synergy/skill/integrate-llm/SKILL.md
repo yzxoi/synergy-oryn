@@ -18,7 +18,7 @@ Do not choose by convenience. If users or parent agents must inspect, resume, ca
 
 ## Sessionless Internal-Agent Calls
 
-Text-only sessionless callers use `AgentCall.text()` without creating a durable session or persisting the inference exchange. Title/turn summary, SmartAllow classification, agent generation, GitHub classification, and Experience encoding all use the external `AgentTurn` worker boundary. Product code must not add a direct `LLM.stream()` caller outside `session/agent-turn/runner.ts`; setup/provider bootstrap probes are the only narrow direct AI SDK exception.
+Text-only sessionless callers use `AgentCall.text()` without creating a durable session. The Control Plane records call intent, semantic requests, consumed stream events, and SDK usage under the owning session or a Scope operation. Provider transport attempts are captured separately at the final built-in fetch boundary, with worker chunks committed by the Control Plane before acknowledgement. Preserve explicit completeness status; semantic events alone do not prove transport capture. Title/turn summary, SmartAllow classification, agent generation, GitHub classification, and Experience encoding all use the external `AgentTurn` worker boundary. Product code must not add a direct `LLM.stream()` caller outside `session/agent-turn/runner.ts`; setup/provider bootstrap probes are the only narrow direct AI SDK exception.
 
 For every sessionless call:
 
@@ -32,11 +32,19 @@ For every sessionless call:
 8. Test model-role fallback, timeout/cancellation, stream disposal, parsing, redaction, and failure semantics without making a live provider call.
 9. Treat any `MessageV2.User.variant` on a reused source or root envelope as durable root-execution metadata. A `small: true` sessionless call must neither validate nor apply it; the call uses `ProviderTransform.smallOptions()` for its target model.
 
+Asynchronous derived work must carry the identity of its persisted source task, not resolve whichever task happens to be latest when the queue runs. Keep root-only prompt and model overrides out of attribution-only envelopes. Propagate `RolloutRecordingError` through optional-result fallback paths so the owning task stops and retains its failed recording state. Pass the original root ID to recording-error cancellation; a delayed auxiliary failure must not cancel a newer root in the same session.
+
+Control Plane operations that consume non-streaming results use `RolloutCall.execute()` around the actual provider operation, preserving the same intent, transport-attempt, and terminal commit contract as streaming calls. Drain parallel owned calls before returning and preserve recording failures ahead of secondary cancellation errors.
+
 A sessionless call does not create session history, Cortex progress, completion notices, or Experience lineage. Do not imply those properties in UI or events.
 
 ## Session and Cortex Calls
 
 Use `SessionInvoke` when the caller already owns the target session: direct user/API input, Channel or Agenda execution, workflow continuation, or an in-place loop operation such as compaction.
+
+When extending an existing specialized workflow with structured task reports, preserve its assignment metadata, durable delivery identity, parent wake and completion detection together. Test a persisted report followed by interrupted delivery and replay, plus an idle worker after successful reporting; an extra model-generated natural-language report must not be the only mechanism that closes the task.
+
+When a workflow requires a typed result, completion detection must not let a generic natural-language report bypass it. Provide model tools to retrieve the exact candidate, prior findings and actual execution receipts used for the judgment; an instruction to review evidence is ineffective if only plans or IDs are readable. Quiesce invalidated assignments instead of repeatedly requesting an impossible result.
 
 When an in-place internal operation reuses a root user message only for task identity or attribution while selecting a different model, strip root-owned execution settings that do not belong to the target call. Compaction specifically keeps the persisted root unchanged but clears its `variant` from the ephemeral processor envelope, so the compaction model retains normal provider options without validating or applying another model's variant.
 
@@ -55,6 +63,12 @@ Use Cortex for decisions that must be independently auditable. Choose task visib
 ## Direct AI SDK Calls
 
 `config/setup.ts` uses `generateText()` for a live provider capability probe before normal agent/session orchestration is appropriate. Keep direct AI SDK usage limited to such bootstrap/provider plumbing or the implementation of the shared `LLM` layer. Product inference should not bypass provider transforms, configured roles, plugin hooks, telemetry, timeouts, or output policy. Bootstrap probes that reach a managed-inference endpoint must pass through the same per-request header gate as normal turns (`ProviderSessionHeader.forRequest` with the resolved provider options), because the provider cannot distinguish a probe from a conversation.
+
+For installation-owned model operations, select configuration authority explicitly rather than inheriting a candidate workspace's Scope. Test execution without an ambient Scope and with an effective hostile project override. For cached local models, configuration selection alone is insufficient: verify that the operation cannot reuse an instance initialized by a different configuration owner, and that reload/shutdown releases every owned instance. Serialize libraries with module-global initialization settings across those owners.
+
+## External Model Catalogs
+
+Separate external catalog metadata from explicit user configuration. Allow additive external price fields at nested tier boundaries while retaining numeric validation and raw provenance; preserve the existing configuration acceptance rules, including strict nested rate fields. Exercise damaged individual entries, complete-catalog failure with cache preservation, cold startup, actual CLI exit/output, and the bundled runtime. Pair the pinned snapshot with focused upstream-shape fixtures, since a valid pinned snapshot cannot detect later additive fields. Follow [Service and model directory](../../../docs/reference/configuration-layout.md#service-and-model-directory) for runtime acceptance and refresh behavior.
 
 ## Provider Option Compatibility
 
@@ -84,6 +98,8 @@ Tool-call input has a separate serialized-input bound. Enforce it for incrementa
 
 Treat streamed tool argument deltas as transport/progress data, not canonical tool input. Use them for incremental byte limits, memory accounting, and diagnostics. Once the AI SDK emits `tool-call`, use its final `input` consistently for the final serialized-input bound, persisted tool part, loop guards, permission evaluation, and execution. Test providers that omit deltas and cases where streamed raw arguments differ from the final AI SDK input.
 
+Resolve workload admission from trusted rollout ownership and Host bindings, including derived calls, instead of model-selected agent names. Keep reservations inside the existing worker queue and outside serialized model/worker input. Test foreground admission when background occupancy, queue count and queued bytes are saturated; also exercise physical release, queued cancellation, resize and the one-worker limit. Keep model-turn capacity distinct from durable worker counts and OS job quotas.
+
 ## Verify and Document
 
 1. Test the chosen lifecycle boundary as a behavior: no session for sessionless work; explicit child lineage and output for Cortex work.
@@ -95,3 +111,13 @@ Treat streamed tool argument deltas as transport/progress data, not canonical to
 ## Handoff
 
 Report why the operation is sessionless, existing-session, Cortex, or bootstrap; the agent/model role; timeout/retry/tool/output policy; persistence and visibility; redaction; and verification.
+
+Capture provider service-tier metadata when available; unresolved nonstandard pricing must remain unknown. Preserve live authorization evidence before side effects and inherit task snapshots during request preparation, including independent non-chat operations.
+
+Public task cancellation must return after durable cancellation without waiting on held processors. Use explicit Cortex drainage for rollout finalization and runtime shutdown, and test both boundaries with controlled pending calls instead of timing sleeps.
+
+For Host-owned interrupted task recovery, preserve the existing task root, Session and worktree and steer through the normal Inbox/Session loop. Cover an initial task consumed before inference, a consumed report after an earlier terminal reply, and a second interruption after consuming the recovery instruction. Deduplicate pending recovery while allowing a bounded later retry; derive the budget from canonical durable metadata rather than compacted model context. Verify a resumed model calls the real result tool, and do not treat a queued recovery instruction as proof that the task or external action completed.
+
+When an explicit human control change starts a new ownership epoch's work, give the existing Session a fresh Host-authored task rather than reviving invalidated worker assignments. Gate Session admission until that task is durably queued or materialized, and exercise interruption between Case activation and Inbox delivery. Test that replay preserves the new root, historical evidence and later pending work, while old workers stay denied. A resumed model must still report unresolved acceptance or environment gaps through the ordinary workflow tools.
+
+For Oryn model-driven PR recovery, reuse `test/oryn/fixtures/attachment-scenario.ts` with `runtime-process.ts` and run `test/oryn/pr-restart.test.ts` alongside the success and investigation-restart suites. Derive scripted progress from model-visible tool results; do not retain hidden scenario counters across runtime death. Hold a simulated remote response after its side effect, kill only the fixture process group and reopen its durable home. Assert existing roots/workspaces, actual check receipts, independent review, stable PR identity and no duplicate notification after a further completed-state restart. Keep optional LSP/formatter setup explicit and distinguish mocked transport facts from native candidate execution.

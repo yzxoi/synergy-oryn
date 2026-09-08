@@ -9,6 +9,8 @@
 
 Stable desktop updates use `electron-updater` against the GitHub Release metadata files below. The app stores its desktop update preference under Electron `userData`; `auto` downloads in the background, `notify` reports availability, `manual` waits for an explicit check, and `none` disables checks. Settings and the bottom sidebar update prompt show availability, download progress, install readiness, and errors. Installing an already downloaded update stops the managed local server before calling Electron's updater install action.
 
+On first launch after an upgrade, Desktop displays saved-data migration progress and waits for advancing work before opening the application. Verify both a fresh install and an upgrade that exceeds the ordinary startup deadline; see [startup waiting limits](../reference/development.md#development-modes).
+
 Runtime environment:
 
 - `SYNERGY_DESKTOP_CHANNEL=dev|stable`
@@ -173,3 +175,7 @@ Registry read-after-write checks use cache-busted, no-store requests. A successf
 - Draft GitHub Release contains all expected recommended installer artifacts, portable artifacts, both checksum assets (`Synergy-${version}-checksums.txt` and `Synergy-${version}-cli-checksums.txt`), and all four updater metadata files before finalize
 - Draft GitHub Release contains six Browser Host zips, six exact-version manifests, and six signatures; every manifest executable exists at its exact platform path inside the matching zip, and tampered zip/signature tests pass before finalize
 - Draft GitHub Release contains five exact-version Chromium manifests and five signatures for the supported standalone install targets; signature, target-substitution, and archive-tampering tests pass before finalize.
+
+## Native Computer Driver
+
+macOS Desktop builds run `desktop:prepare-computer` to prepare the Cua release pinned in `packages/desktop/src/computer/release.ts`. Both archive and executable digests must match before packaging. The `mac.extraResources` entry includes the executable and MIT notices from `build/computer`, and `mac.binaries` includes the executable for nested signing. Keep the notices with every distributed copy; the driver runs as a private child of Desktop for host-attributed macOS permissions. Other platforms do not bundle this driver.

@@ -111,6 +111,8 @@ Piped stdin is appended to the prompt. The command subscribes to session events 
 | `synergy mcp add\|list\|auth\|logout\|debug` | Configure, authenticate, and inspect MCP servers                |
 | `synergy embed download`                     | Download the local embedding model assets                       |
 
+`synergy models --refresh` refreshes the shared service/model directory before listing configured models. A failed or disabled refresh exits nonzero and preserves the existing cache; partial results report skipped entries. See [Service and model directory](configuration-layout.md#service-and-model-directory) for validation and fallback behavior.
+
 ### config import
 
 `synergy config import <source>` imports JSON or JSONC configuration from a local file path or an HTTP(S) URL. Sources are limited to 1 MiB; URL fetches time out after 15 seconds and reject redirects. The command produces a domain-aware plan, shows value-level changes, and asks for confirmation before applying.
@@ -208,6 +210,8 @@ See [Knowledge: Embedding Model](../product/knowledge.md#embedding-model) for th
 | `synergy migrate [--target <path>]`                 | Backward-compatible alias for the interactive data-move workflow                                                   |
 | `synergy migration status\|run\|rollback\|generate` | Inspect and manage versioned schema/data migrations                                                                |
 
+`synergy data snapshots inspect` reports logical bytes, filesystem allocation, and storage ownership. `check` validates objects and historical roots. `migrate` imports registered legacy repositories; `compact` packs shared objects while preserving unreachable contents; `clean` reclaims legacy directories that have neither an owner record nor a session record. `migrate`, `compact`, and `clean` default to dry-run and require `--apply` to execute. Non-pruning compaction preserves interrupted import packs under explicit unknown-object refs before releasing their import protection. Only `compact --apply --prune` collects unreferenced objects, after integrity and recovery checks. All five accept `--scope <id>` and `--json`; JSON results contain `ok`, `results`, and an optional structured `error`. Failed checks or execution return a nonzero exit status. Busy maintenance leaves the running instance untouched.
+
 Use the data commands for supported relocation and merge workflows. Copying individual JSON files while the server is running can violate indexes and atomic update assumptions.
 
 `synergy stats --json` emits the complete snapshot; `--recompute` rebuilds its derived digests and buckets, while `--days`, `--tools`, and `--models` change the displayed view. The accepted `--project` option currently recomputes but does not filter the installation-wide result. See [Activity and Statistics](../product/activity-and-statistics.md).
@@ -266,3 +270,7 @@ Local source builds do not have signed release manifests; use an installed relea
 `synergy plugin` includes create, add, remove, retry-install, update, build, sign, pack, list, search, doctor, validate, dev, runtime, test, publish-market, entry, info, permissions, and approval commands. `synergy plugin approve <id>` fetches the server approval review for a configured plugin and submits the opaque `reviewToken` through `POST /api/plugins/approve`; it does not send manifest, capability, source, or path data. `list` and `info` show approval-disabled plugins with their canonical identity and `Needs approval` state. Installed plugins can also contribute their own top-level CLI commands. `synergy plugin retry-install <id>` re-queues a failed or pending `lifecycle.install`; the host delivers it at the next server start or plugin runtime reload. It errors instead when the plugin's lockfile generation no longer matches the installed generation — reinstall or update the plugin to retry in that case.
 
 The canonical authoring and command reference is [Plugin documentation](../plugins/README.md).
+
+## Oryn Dependency Preparation
+
+`synergy oryn seal-dependencies <source> <output> --json` creates an immutable-input snapshot from preinstalled Bun dependencies in a reviewed clean checkout. It does not install packages. See [sealed dependency inputs](../operations/oryn-deployment.md#sealed-dependency-inputs) for preparation, configuration, failure handling and limits.

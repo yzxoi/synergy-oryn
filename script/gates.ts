@@ -24,20 +24,20 @@ export interface Gate {
 }
 
 const LOCAL_GATES: Gate[] = [
-  { id: "format:check", run: "bun run format:check", needs: [] },
+  { id: "format:check", run: "bun run format:check", needs: ["package:check"] },
   { id: "lint", run: "bun run lint", needs: [] },
   { id: "skill:check", run: "bun run skill:check", needs: [] },
   { id: "package-guide:check", run: "bun run package-guide:check", needs: [] },
   { id: "test-layout:check", run: "bun run test-layout:check", needs: [] },
   { id: "localization:check", run: "bun run localization:check", needs: [] },
-  { id: "typecheck", run: "bun run typecheck", needs: [] },
+  { id: "typecheck", run: "bun run typecheck", needs: ["package:check"] },
   { id: "monorepo:check", run: "bun run monorepo:check", needs: [] },
   { id: "package:check", run: "bun run package:check", needs: [] },
   { id: "brand:gen:check", run: "bun run brand:gen:check", needs: [] },
   { id: "doc:check", run: "bun run doc:check", needs: [] },
   { id: "decision:check", run: "bun run decision:check", needs: [] },
   { id: "deps:check", run: "bun run deps:check", needs: [] },
-  { id: "deadcode", run: "bun run deadcode", needs: [] },
+  { id: "deadcode", run: "bun run deadcode", needs: ["package:check"] },
   {
     id: "browser-crypto:check",
     run: "bun test --cwd packages/app test/testing/browser-crypto-contract.test.ts",
@@ -151,7 +151,7 @@ export async function runGateSet(
   await new Promise<void>((resolve, reject) => {
     const pump = () => {
       while (running < limit) {
-        const ready = gates.find((gate) => pending.has(gate.id) && gate.needs.every((need) => !pending.has(need)))
+        const ready = gates.find((gate) => pending.has(gate.id) && gate.needs.every((need) => results.has(need)))
         if (!ready) break
         pending.delete(ready.id)
         running++

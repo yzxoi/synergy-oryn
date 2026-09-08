@@ -17,7 +17,7 @@ description: Add or modify a Synergy CLI command, command group, positional, opt
 2. Add or update a named command in `packages/synergy/src/cli/cmd/` with `cmd()`. Match neighboring yargs builder, positional, alias, and output patterns rather than imposing a parallel style.
 3. Keep domain logic in its owning module. Let the command parse input, establish Scope or server attachment, call the domain API, format output, and set an appropriate exit status.
 4. Give every command, positional, and option useful help text. Support structured output when the adjacent command family already does.
-5. Register a root command in `packages/synergy/src/index.ts`; register a nested command in its owning command-group builder.
+5. Register a root command lazily in `packages/synergy/src/cli/commands.ts`; register a nested command in its owning command-group builder.
 6. Use generated SDK/server helpers for attached commands where the family already does. Preserve auth, directory/Scope, timeout, and error semantics.
 7. Regenerate the SDK with `./script/generate.ts` only if an API route or OpenAPI-visible schema changed.
 
@@ -50,3 +50,7 @@ Update [CLI reference](../../../docs/reference/cli.md) for user-visible syntax o
 ## Handoff
 
 Report the registered command path, domain API called, failure/exit behavior, manual invocation, tests, SDK generation status, and documentation updated.
+
+## Task execution commands
+
+Use the shared `RuntimeHandle` for a local writer and generated SDK methods for attached execution. Subscribe before submission, process interactions during command execution, and always remove signal listeners and drain cancellation in cleanup. Read durable run results instead of treating a session idle event as completion. Keep JSON stdout parseable and report unknown estimates separately from known cost. See [Rollout execution](../../../docs/reference/rollout.md).

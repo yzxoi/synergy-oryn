@@ -135,11 +135,13 @@ Upgrade with `synergy upgrade`, or install a specific version by passing `--vers
 
 `synergy uninstall` keeps its existing defaults and removes data, cache, config, and state unless you pass `--keep-data` or `--keep-config`. To remove only one installation channel while preserving shared data, cache, config, and state, run `synergy uninstall --installation-only --method <channel>`; standalone removal deletes only installer-owned files under `~/.synergy/` and the exact shell PATH entries the installer wrote.
 
-Headless Browser tools require Chromium. Run `synergy browser install` to install the verified managed version and `synergy browser doctor` to check readiness, or set `CHROMIUM_PATH` to a separately installed executable. Desktop Browser presentation uses Electron's bundled Chromium.
+Headless Browser tools require Chromium. Run `synergy browser install` to install the verified managed version and `synergy browser doctor` to check readiness, or set `CHROMIUM_PATH` to a separately installed executable. Desktop Browser presentation uses Electron's bundled Chromium. macOS Desktop also supports native application Computer Use in Full Access mode, with Accessibility and Screen Recording permissions. See [Native Computer Use](docs/architecture/computer-use.md).
 
 Holos is optional. Connect an agent from the Web account surface or run `synergy holos login`.
 
 See the [CLI reference](docs/reference/cli.md), [configuration reference](docs/reference/configuration.md), and [release notes](https://github.com/SII-Holos/synergy/releases) for complete setup and runtime details.
+
+For headless tasks, versioned experiment settings, durable execution evidence and cost comparisons, see [Rollout execution](docs/reference/rollout.md).
 
 ## Product Surfaces
 
@@ -154,9 +156,11 @@ See the [CLI reference](docs/reference/cli.md), [configuration reference](docs/r
 
 This repository hosts **Synergy Oryn**, a product configuration and runtime extension of Synergy that closes the loop from Feishu feedback to reviewable GitHub pull requests: a QA agent answers questions and files cases per chat thread, engineering cases run through reproduction, coding in isolated worktrees, independent verification, and independent review, and only fully gated results are delivered back to the reporter. Humans always perform the merge; Oryn never merges, releases, or force-pushes.
 
-Oryn is dormant until explicitly enabled: set `oryn.enabled` (with routes and repository mappings) in the `120-runtime.jsonc` config domain. While disabled, all Synergy channel, Boss, Feishu, and GitHub behavior is unchanged.
+Oryn is dormant until explicitly enabled: set `oryn.enabled` (with routes and repository mappings) in the installation’s `120-runtime.jsonc` config domain. Project configuration cannot enable Oryn or change its business policy; the built-in Oryn agent identities cannot be replaced by config, plugins or external adapters. While disabled, all Synergy channel, Boss, Feishu, and GitHub behavior is unchanged.
 
-Implementation status: the runtime roles (`oryn`, `oryn-work`, `oryn-repro`, `oryn-code`, `oryn-review`), the controlled `oryn_*` tool surface, case/attempt/evidence persistence, and the GitHub publishing path follow the [implementation proposal](docs/decisions/proposed/architecture/2026-09-07-synergy-oryn.md) with [research background](docs/research/2026-09-07-maintenance-automation-proposal.md) and the [developer handoff](docs/research/2026-09-07-synergy-oryn-handoff.md). Locally verifiable behavior is covered by tests under `packages/synergy/test/oryn/`; live Feishu canary, real GitHub App publishing, and VPS deployment verification remain pending environment acceptance and are not claimed complete.
+The [deployment guide](docs/operations/oryn-deployment.md) documents the Linux setup, installation policy and reusable mock experiments. Tests cover model-driven Feishu intake, independent verification/review, PR delivery and repair, uncertain remote writes, concurrent QA capacity and process-restart recovery. Engineering checks use disposable fixed-commit checkouts with explicitly approved writable output directories and digest-verified dependency snapshots. Optional Linux process scopes bound command memory, CPU, tasks and lifetime. Human merge remains required.
+
+Deployment acceptance is still in progress. Target-specific dependency acceptance, aggregate resource accounting, complete evidence/policy snapshots and the remaining GitHub lifecycle paths require work. Mock results do not establish live Feishu delivery, GitHub App credentials or target-VPS behavior.
 
 ## Develop Synergy
 
@@ -230,6 +234,8 @@ bun install
 synergy-plugin build
 synergy-plugin validate --runtime-discovery
 ```
+
+UI API 5 supports replaceable workbenches, typed frontend services and structured Skins. `synergy-plugin preview` runs an isolated production host for authoring.
 
 Start with the [plugin documentation](docs/plugins/README.md) and the [`@ericsanchezok/synergy-plugin` API reference](packages/plugin/README.md).
 

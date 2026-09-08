@@ -42,6 +42,12 @@ Entries are added only when an incident qualifies; the table stays empty until t
 | 0004   | Scope-scoped theme registry flipped the skin on session switches           | implemented | 2026-08-30 |
 | 0005   | Linux inotify exhaustion stormed the file watcher and degraded the process | implemented | 2026-09-03 |
 | 0006   | Sequential lock-worker spawns consumed the CI test budget                  | implemented | 2026-09-05 |
+| 0007   | Hidden tool renderers retained highlight state                             | implemented | 2026-09-07 |
+| 0008   | Transition cleanup retained disposed frontend pages                        | implemented | 2026-09-07 |
+| 0009   | Rollout cancellation closed an artifact before its pending bytes arrived   | implemented | 2026-09-08 |
+| 0010   | Channel acceptance fixtures left background work after their assertions    | implemented | 2026-09-08 |
+| 0011   | Oryn engineering mock depended on a real embedding model                   | implemented | 2026-09-08 |
+| 0012   | Oryn could edit a candidate but could not commit it                        | implemented | 2026-09-08 |
 
 ## History rules
 

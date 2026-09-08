@@ -714,7 +714,7 @@ describe("SandboxBackend OS execution (skipped unless available)", () => {
 
     const result = executeIfSandboxAvailable(wrapper)
     if (!result) return
-    expect(result.exitCode).toBe(0)
+    expect(result.exitCode, result.stderr).toBe(0)
   })
   test("execute captures stdout in sandbox", () => {
     const wrapper = SandboxBackend.prepareWrapper({
@@ -729,7 +729,7 @@ describe("SandboxBackend OS execution (skipped unless available)", () => {
 
     const result = executeIfSandboxAvailable(wrapper)
     if (!result) return
-    expect(result.stdout).toContain("sandbox-test-output")
+    expect(result.stdout, result.stderr).toContain("sandbox-test-output")
   })
 
   test("sandbox prevents writes to protected system path", () => {

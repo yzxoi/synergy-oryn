@@ -1,4 +1,4 @@
-import { describe, expect, mock, test } from "bun:test"
+import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test"
 import { tmpdir } from "../fixture/fixture"
 import { ScopeContext } from "../../src/scope/context"
 import { Session } from "../../src/session"
@@ -19,12 +19,39 @@ import { ChannelBusyHandoff } from "../../src/channel/busy-handoff"
  * calls, without requiring a live provider connection or LLM.
  */
 describe("Channel conversation acceptance lane", () => {
+  const sessions = new Set<string>()
+  let scheduledWake: ReturnType<typeof spyOn<typeof SessionManager, "scheduleWake">>
+
+  beforeEach(() => {
+    scheduledWake = spyOn(SessionManager, "scheduleWake").mockImplementation(() => {})
+  })
+
+  afterEach(async () => {
+    try {
+      for (const sessionID of sessions) {
+        await SessionInbox.removeByMode(sessionID, ["task", "steer", "context"])
+        expect(await SessionInbox.list(sessionID)).toHaveLength(0)
+        expect(SessionManager.isRunning(sessionID)).toBe(false)
+        SessionManager.unregisterRuntime(sessionID)
+      }
+    } finally {
+      sessions.clear()
+      scheduledWake.mockRestore()
+    }
+  })
+
+  async function createSession() {
+    const session = await Session.create({})
+    sessions.add(session.id)
+    return session
+  }
+
   test("first acceptance resolves while its execution remains pending", async () => {
     await using tmp = await tmpdir({ git: true })
     await ScopeContext.provide({
       scope: await tmp.scope(),
       fn: async () => {
-        const session = await Session.create({})
+        const session = await createSession()
         const execution = Promise.withResolvers<void>()
         const acceptance = await ChannelConversationAcceptance.accept({
           sessionID: session.id,
@@ -69,7 +96,7 @@ describe("Channel conversation acceptance lane", () => {
     await ScopeContext.provide({
       scope: await tmp.scope(),
       fn: async () => {
-        const session = await Session.create({})
+        const session = await createSession()
         const lease = SessionManager.acquire(session.id)
         expect(lease).toBeDefined()
         if (!lease) throw new Error("expected lease")
@@ -105,7 +132,7 @@ describe("Channel conversation acceptance lane", () => {
     await ScopeContext.provide({
       scope: await tmp.scope(),
       fn: async () => {
-        const session = await Session.create({})
+        const session = await createSession()
         const gate = Promise.withResolvers<void>()
         const first = await ChannelConversationAcceptance.accept({
           sessionID: session.id,
@@ -138,6 +165,7 @@ describe("Channel conversation acceptance lane", () => {
 
         gate.resolve()
         if (first.accepted) await first.execution
+        expect(scheduledWake).toHaveBeenCalledWith(session.id, "release")
       },
     })
   })
@@ -147,7 +175,7 @@ describe("Channel conversation acceptance lane", () => {
     await ScopeContext.provide({
       scope: await tmp.scope(),
       fn: async () => {
-        const session = await Session.create({})
+        const session = await createSession()
         await SessionInbox.deliverUnique({
           sessionID: session.id,
           deliveryKey: "channel:feishu:acct:msg_queued_first",
@@ -171,6 +199,7 @@ describe("Channel conversation acceptance lane", () => {
 
         expect(acceptance.accepted).toBe(true)
         expect(executed).toBe(false)
+        expect(scheduledWake).toHaveBeenCalledWith(session.id, "release")
         expect((await SessionInbox.list(session.id)).map((item) => item.deliveryKey)).toEqual([
           "channel:feishu:acct:msg_queued_first",
           "channel:feishu:acct:msg_newer",
@@ -184,7 +213,7 @@ describe("Channel conversation acceptance lane", () => {
     await ScopeContext.provide({
       scope: await tmp.scope(),
       fn: async () => {
-        const session = await Session.create({})
+        const session = await createSession()
         const deliveryKey = "channel:feishu:acct:msg_direct_replay"
         await SessionInbox.deliverUnique({
           sessionID: session.id,
@@ -223,7 +252,7 @@ describe("Channel conversation acceptance lane", () => {
     await ScopeContext.provide({
       scope: await tmp.scope(),
       fn: async () => {
-        const session = await Session.create({})
+        const session = await createSession()
         const lease = SessionManager.acquire(session.id)
         expect(lease).toBeDefined()
         if (!lease) throw new Error("expected lease")
@@ -259,8 +288,8 @@ describe("Channel conversation acceptance lane", () => {
     await ScopeContext.provide({
       scope: await tmp.scope(),
       fn: async () => {
-        const first = await Session.create({})
-        const second = await Session.create({})
+        const first = await createSession()
+        const second = await createSession()
         const gate = Promise.withResolvers<void>()
 
         const firstAcceptance = ChannelConversationAcceptance.accept({
@@ -295,7 +324,7 @@ describe("Channel conversation acceptance lane", () => {
     await ScopeContext.provide({
       scope: await tmp.scope(),
       fn: async () => {
-        const session = await Session.create({})
+        const session = await createSession()
         const failure = new Error("execution boom")
         const gate = Promise.withResolvers<void>()
         const acceptance = await ChannelConversationAcceptance.accept({
@@ -319,7 +348,7 @@ describe("Channel conversation acceptance lane", () => {
     await ScopeContext.provide({
       scope: await tmp.scope(),
       fn: async () => {
-        const session = await Session.create({})
+        const session = await createSession()
         const failure = new Error("streaming unavailable")
         const acceptance = await ChannelConversationAcceptance.accept({
           sessionID: session.id,
@@ -343,6 +372,7 @@ describe("Channel conversation acceptance lane", () => {
     await ScopeContext.provide({
       scope: await tmp.scope(),
       fn: async () => {
+        scheduledWake.mockRestore()
         const { SessionInvoke } = await import("../../src/session/invoke")
         const originalLoop = SessionInvoke.loop
         const wakes: string[] = []
@@ -355,7 +385,7 @@ describe("Channel conversation acceptance lane", () => {
         })
 
         try {
-          const session = await Session.create({})
+          const session = await createSession()
           sessionID = session.id
           const rootID = "msg_acceptance_root"
           await Session.updateMessage({
@@ -401,14 +431,7 @@ describe("Channel conversation acceptance lane", () => {
           await acceptance.execution
 
           // The steer item must not stay stranded after the lease release.
-          expect(
-            await Promise.race([
-              wake.promise,
-              Bun.sleep(1_000).then(() => {
-                throw new Error("Completed execution release did not drive the mid-run steer item")
-              }),
-            ]),
-          ).toBe(sessionID)
+          expect(await wake.promise).toBe(sessionID)
           expect(wakes).toEqual([sessionID])
           expect(await SessionInbox.list(sessionID)).toHaveLength(0)
         } finally {

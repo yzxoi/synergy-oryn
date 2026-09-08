@@ -14,6 +14,7 @@ import {
 } from "./outbound-parts"
 import { ResponseCardRuntime } from "./response-card"
 import type { Provider } from "./types"
+import { ChannelOryn } from "./oryn"
 
 const log = Log.create({ service: "channel.outbound" })
 
@@ -85,6 +86,13 @@ export namespace ChannelOutbound {
 
         const session = await SessionManager.getSession(msg.sessionID).catch(() => undefined)
         if (!session?.endpoint || session.endpoint.kind !== "channel") return
+        if (
+          session.endpoint.channel.scopeKey?.startsWith("oryn:") &&
+          (await ChannelOryn.usesExplicitDelivery(msg.sessionID))
+        ) {
+          await ChannelOryn.drain()
+          return
+        }
 
         // Runtime Boss Mode: boss-role sessions reply only through explicit
         // channel_push tool calls (R6). Never auto-deliver a boss terminal

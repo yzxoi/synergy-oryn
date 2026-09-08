@@ -94,6 +94,7 @@ jobs:
           test/daemon/server-process-lock.test.ts
           test/sandbox/phase3-windows-config.test.ts
           test/session/tool-resolver-bash-profile.test.ts
+          test/global/schema-publish.test.ts
 
       - name: Run util lock tests
         run: bun test --timeout 30000 --cwd packages/util test/fs-lock.test.ts test/process-identity.test.ts
@@ -107,7 +108,7 @@ jobs:
   test:
     name: Test
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
@@ -142,8 +143,14 @@ jobs:
           bun run --cwd packages/app build
           bun packages/app/script/private-http-smoke.ts
 
+      - name: Run plugin UI contracts against the production host
+        run: bun run plugin-ui:test
+
       - name: Run release contract tests
         run: bun run release:test
+
+      - name: Build local Linux sandbox for execution tests
+        run: bash script/prepare-linux-test-sandbox.sh
 
       - name: Run Synergy tests
         run: bun run test:ci
@@ -335,6 +342,9 @@ jobs:
         run: |
           git config --global user.email "ci@synergy.dev"
           git config --global user.name "CI Runner"
+
+      - name: Build local Linux sandbox for execution tests
+        run: bash script/prepare-linux-test-sandbox.sh
 
       - name: Run coverage gate
         run: bun script/gates.ts ci-coverage

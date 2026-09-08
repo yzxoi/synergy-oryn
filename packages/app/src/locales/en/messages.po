@@ -1470,19 +1470,7 @@ msgstr "Search commands"
 msgid "app.command.title"
 msgstr "Commands"
 
-#. * Bridge Plugin API 4 host.confirm(Promise<boolean>) onto the App ConfirmDialog.
- *
- * title and message pass through from the plugin — they are plugin author content.
- * confirmLabel and cancelLabel are host chrome; the plugin may override confirmLabel
- * with its own content.
-msgid "app.common.cancel"
-msgstr "Cancel"
-
-#. * Bridge Plugin API 4 host.confirm(Promise<boolean>) onto the App ConfirmDialog.
- *
- * title and message pass through from the plugin — they are plugin author content.
- * confirmLabel and cancelLabel are host chrome; the plugin may override confirmLabel
- * with its own content.
+#. js-lingui-explicit-id
 msgid "app.common.confirm"
 msgstr "Confirm"
 
@@ -6698,6 +6686,42 @@ msgid "app.plugin.settings.stateOn"
 msgstr "On"
 
 #. js-lingui-explicit-id
+msgid "app.plugin.shell.preference.description"
+msgstr "Choose how this server's workbench and pages are presented."
+
+#. js-lingui-explicit-id
+msgid "app.plugin.shell.preference.recovery"
+msgstr "Safe UI is active. Choose the default workbench before restarting if a plugin failed."
+
+#. js-lingui-explicit-id
+msgid "app.plugin.shell.preference.restart"
+msgstr "Restart normally"
+
+#. js-lingui-explicit-id
+msgid "app.plugin.shell.preference.title"
+msgstr "Workbench"
+
+#. js-lingui-explicit-id
+msgid "app.plugin.shell.preference.unavailable"
+msgstr "{shell} (unavailable)"
+
+#. js-lingui-explicit-id
+msgid "app.plugin.skin.preference.default"
+msgstr "Default appearance"
+
+#. js-lingui-explicit-id
+msgid "app.plugin.skin.preference.description"
+msgstr "Choose fonts, textures and surface styling. Your saved font choices take priority."
+
+#. js-lingui-explicit-id
+msgid "app.plugin.skin.preference.title"
+msgstr "Skin"
+
+#. js-lingui-explicit-id
+msgid "app.plugin.skin.preference.unavailable"
+msgstr "{skin} (unavailable)"
+
+#. js-lingui-explicit-id
 msgid "app.plugin.surface.noBuiltinNav"
 msgstr "No built-in navigation surface is registered for {id}."
 
@@ -6716,6 +6740,34 @@ msgstr "Page unavailable"
 #. js-lingui-explicit-id
 msgid "app.plugin.surface.pluginPageUnavailable"
 msgstr "Plugin page unavailable"
+
+#. js-lingui-explicit-id
+msgid "app.plugin.ui.available"
+msgstr "Interface ready"
+
+#. js-lingui-explicit-id
+msgid "app.plugin.ui.diagnostics"
+msgstr "Plugin interface"
+
+#. js-lingui-explicit-id
+msgid "app.plugin.ui.failed"
+msgstr "Interface error"
+
+#. js-lingui-explicit-id
+msgid "app.plugin.ui.incompatible"
+msgstr "Incompatible interface"
+
+#. js-lingui-explicit-id
+msgid "app.plugin.ui.loading"
+msgstr "Loading interface"
+
+#. js-lingui-explicit-id
+msgid "app.plugin.ui.outletMissing"
+msgstr "Not rendered in the current workbench view"
+
+#. js-lingui-explicit-id
+msgid "app.plugin.ui.registered"
+msgstr "Registered"
 
 #. js-lingui-explicit-id
 msgid "app.plugin.verified.ariaLabel"
@@ -7016,6 +7068,10 @@ msgstr "Select all loaded messages"
 #. js-lingui-explicit-id
 msgid "app.rawMessages.title"
 msgstr "Raw messages"
+
+#. js-lingui-explicit-id
+msgid "app.review.toolUnavailable"
+msgstr "This tool result is no longer available."
 
 #. ── components/scopes/active-zone.tsx ────────────────────────────────
 msgid "app.scopes.activeZone.active"
@@ -7673,6 +7729,16 @@ msgstr "Untitled"
 
 #. Runtime Lingui descriptors for stats host labels, UI text, and tooltips.
  *  Translate at use time via `useLocale().i18n._(descriptor)`.
+msgid "app.stats.accounting.detail"
+msgstr "API estimate subtotal: {api}. Subscription API equivalent: {subscription} ({unknown, plural, one {# unknown call} other {# unknown calls}}). Historical recorded amount: {legacy}. These are not actual billing charges."
+
+#. Runtime Lingui descriptors for stats host labels, UI text, and tooltips.
+ *  Translate at use time via `useLocale().i18n._(descriptor)`.
+msgid "app.stats.accounting.unknown"
+msgstr "{count, plural, =0 {All API estimates available} one {# API call has unknown cost} other {# API calls have unknown cost}}"
+
+#. Runtime Lingui descriptors for stats host labels, UI text, and tooltips.
+ *  Translate at use time via `useLocale().i18n._(descriptor)`.
 msgid "app.stats.agent.delegatedRuns"
 msgstr "{count} delegated runs"
 
@@ -7798,7 +7864,7 @@ msgstr "How the overall movement breaks down"
 #. Runtime Lingui descriptors for stats host labels, UI text, and tooltips.
  *  Translate at use time via `useLocale().i18n._(descriptor)`.
 msgid "app.stats.daily.axis.cost"
-msgstr "Cost ($)"
+msgstr "Known cost ($)"
 
 #. Runtime Lingui descriptors for stats host labels, UI text, and tooltips.
  *  Translate at use time via `useLocale().i18n._(descriptor)`.
@@ -7812,7 +7878,7 @@ msgstr "No daily activity yet"
 
 #. ── daily-trend.tsx — chart/legend labels ───────────────────────────
 msgid "app.stats.daily.legend.cost"
-msgstr "Cost"
+msgstr "Known cost"
 
 #. Runtime Lingui descriptors for stats host labels, UI text, and tooltips.
  *  Translate at use time via `useLocale().i18n._(descriptor)`.
@@ -7861,7 +7927,7 @@ msgstr "Daily Trend"
 #. Runtime Lingui descriptors for stats host labels, UI text, and tooltips.
  *  Translate at use time via `useLocale().i18n._(descriptor)`.
 msgid "app.stats.daily.tooltip.cost"
-msgstr "Cost: {value}"
+msgstr "Known cost: {value}"
 
 #. Runtime Lingui descriptors for stats host labels, UI text, and tooltips.
  *  Translate at use time via `useLocale().i18n._(descriptor)`.
@@ -8041,7 +8107,7 @@ msgstr "{count} net"
 #. Runtime Lingui descriptors for stats host labels, UI text, and tooltips.
  *  Translate at use time via `useLocale().i18n._(descriptor)`.
 msgid "app.stats.overview.label.cost"
-msgstr "Cost"
+msgstr "Known cost"
 
 #. Runtime Lingui descriptors for stats host labels, UI text, and tooltips.
  *  Translate at use time via `useLocale().i18n._(descriptor)`.
@@ -8151,7 +8217,7 @@ msgstr "Calls"
 #. Runtime Lingui descriptors for stats host labels, UI text, and tooltips.
  *  Translate at use time via `useLocale().i18n._(descriptor)`.
 msgid "app.stats.rank.metric.cost"
-msgstr "Cost"
+msgstr "Known cost"
 
 #. Runtime Lingui descriptors for stats host labels, UI text, and tooltips.
  *  Translate at use time via `useLocale().i18n._(descriptor)`.
@@ -8274,7 +8340,7 @@ msgstr "Input"
 #. Runtime Lingui descriptors for stats host labels, UI text, and tooltips.
  *  Translate at use time via `useLocale().i18n._(descriptor)`.
 msgid "app.stats.token.label.output"
-msgstr "Output"
+msgstr "Other output"
 
 #. Runtime Lingui descriptors for stats host labels, UI text, and tooltips.
  *  Translate at use time via `useLocale().i18n._(descriptor)`.
@@ -8295,6 +8361,11 @@ msgstr "Prompt tokens reused from cache"
  *  Translate at use time via `useLocale().i18n._(descriptor)`.
 msgid "app.stats.token.note.cacheWrite"
 msgstr "Prompt tokens stored for reuse"
+
+#. Runtime Lingui descriptors for stats host labels, UI text, and tooltips.
+ *  Translate at use time via `useLocale().i18n._(descriptor)`.
+msgid "app.stats.token.note.output"
+msgstr "Output excluding the reasoning subset"
 
 #. Runtime Lingui descriptors for stats host labels, UI text, and tooltips.
  *  Translate at use time via `useLocale().i18n._(descriptor)`.
@@ -9156,6 +9227,18 @@ msgstr "Execute task"
 #. ── Classifier category labels ──────────────────────────────────────
 msgid "classifier.label.web"
 msgstr "Access web"
+
+#. ── Tool trigger titles ────────────────────────────────────────────
+msgid "computer.title.action"
+msgstr "Act in application"
+
+#. ── Tool trigger titles ────────────────────────────────────────────
+msgid "computer.title.apps"
+msgstr "Find application windows"
+
+#. ── Tool trigger titles ────────────────────────────────────────────
+msgid "computer.title.observe"
+msgstr "Observe application"
 
 #. js-lingui-explicit-id
 msgid "confirm.agendaAction.cancel.confirm"
@@ -12648,6 +12731,10 @@ msgstr "Return to latest"
 msgid "session.conversation.withdraw"
 msgstr "Withdraw"
 
+#. js-lingui-explicit-id
+msgid "session.decisions.label"
+msgstr "Session decision required"
+
 #. Runtime Lingui descriptors for session component strings.
  *  Translate at use time via `useLocale().i18n._(descriptor)`.
 msgid "session.dock.back"
@@ -14554,10 +14641,6 @@ msgid "settings.catalog.general.row.productUpdates"
 msgstr "Product Updates"
 
 #. js-lingui-explicit-id
-msgid "settings.catalog.general.row.snapshot"
-msgstr "Snapshot"
-
-#. js-lingui-explicit-id
 msgid "settings.catalog.general.row.toastDuration"
 msgstr "Toast Duration"
 
@@ -14567,7 +14650,7 @@ msgstr "Interface Zoom"
 
 #. js-lingui-explicit-id
 msgid "settings.catalog.general.searchTerms"
-msgstr "appearance | color | light | dark | auto | language | snapshot | activity | activity display | workspace | worktree | checkout | product update | toast | notification"
+msgstr "appearance | color | light | dark | auto | language | activity | activity display | workspace | worktree | checkout | product update | toast | notification"
 
 #. js-lingui-explicit-id
 msgid "settings.catalog.github.description"
@@ -14840,6 +14923,18 @@ msgstr "OpenClaw"
 #. js-lingui-explicit-id
 msgid "settings.catalog.skills.searchTerms"
 msgstr "skill | skills | claude | codex | openclaw | agents | compatibility"
+
+#. js-lingui-explicit-id
+msgid "settings.catalog.storage.description"
+msgstr "File snapshot storage usage per project scope and the snapshot switch."
+
+#. js-lingui-explicit-id
+msgid "settings.catalog.storage.label"
+msgstr "Storage"
+
+#. js-lingui-explicit-id
+msgid "settings.catalog.storage.searchTerms"
+msgstr "storage | snapshot | usage | disk | legacy | migrate | compact"
 
 #. js-lingui-explicit-id
 msgid "settings.catalog.synergyLink.description"
@@ -15672,14 +15767,6 @@ msgstr "Appearance, behavior, and notification preferences."
 #. js-lingui-explicit-id
 msgid "settings.general.page.title"
 msgstr "General"
-
-#. js-lingui-explicit-id
-msgid "settings.general.snapshots.description"
-msgstr "Keep restore points when Synergy edits files"
-
-#. js-lingui-explicit-id
-msgid "settings.general.snapshots.title"
-msgstr "File snapshots"
 
 #. js-lingui-explicit-id
 msgid "settings.general.theme.description"
@@ -18578,6 +18665,222 @@ msgid "settings.stepScale.customValue"
 msgstr "Custom {value}"
 
 #. js-lingui-explicit-id
+msgid "settings.storage.clean.action"
+msgstr "Reclaim"
+
+#. js-lingui-explicit-id
+msgid "settings.storage.clean.busy"
+msgstr "Reclaiming..."
+
+#. js-lingui-explicit-id
+msgid "settings.storage.clean.confirm.description"
+msgstr "{count} snapshots ({bytes}) have no owner record and will be permanently deleted. This cannot be undone."
+
+#. js-lingui-explicit-id
+msgid "settings.storage.clean.confirm.label"
+msgstr "Reclaim"
+
+#. js-lingui-explicit-id
+msgid "settings.storage.clean.confirm.title"
+msgstr "Reclaim unowned snapshots"
+
+#. js-lingui-explicit-id
+msgid "settings.storage.clean.description"
+msgstr "Legacy snapshot directories with no session record, including reclaimed scopes. A dry run is shown first; before deleting, each scope must also pass an integrity check."
+
+#. js-lingui-explicit-id
+msgid "settings.storage.clean.failed.title"
+msgstr "Snapshot cleanup failed"
+
+#. js-lingui-explicit-id
+msgid "settings.storage.clean.nothing"
+msgstr "Nothing to reclaim"
+
+#. js-lingui-explicit-id
+msgid "settings.storage.clean.partial.description"
+msgstr "{count} operation(s) did not complete. First issue: {first}"
+
+#. js-lingui-explicit-id
+msgid "settings.storage.clean.success.description"
+msgstr "Freed {bytes} from {count}."
+
+#. js-lingui-explicit-id
+msgid "settings.storage.clean.success.title"
+msgstr "Unowned snapshots reclaimed"
+
+#. js-lingui-explicit-id
+msgid "settings.storage.clean.title"
+msgstr "Reclaim unowned snapshots"
+
+#. js-lingui-explicit-id
+msgid "settings.storage.cleanup.title"
+msgstr "Cleanup"
+
+#. js-lingui-explicit-id
+msgid "settings.storage.compact.action"
+msgstr "Pack"
+
+#. js-lingui-explicit-id
+msgid "settings.storage.compact.busy"
+msgstr "Packing..."
+
+#. js-lingui-explicit-id
+msgid "settings.storage.compact.confirm.description"
+msgstr "The shared store currently holds {bytes}. It will be repacked; integrity checks run first."
+
+#. js-lingui-explicit-id
+msgid "settings.storage.compact.confirm.label"
+msgstr "Pack"
+
+#. js-lingui-explicit-id
+msgid "settings.storage.compact.confirm.title"
+msgstr "Pack shared storage"
+
+#. js-lingui-explicit-id
+msgid "settings.storage.compact.description"
+msgstr "Repack the shared object store to reclaim space. A dry run is shown first; integrity checks run before anything is rewritten."
+
+#. js-lingui-explicit-id
+msgid "settings.storage.compact.failed.title"
+msgstr "Snapshot packing failed"
+
+#. js-lingui-explicit-id
+msgid "settings.storage.compact.nothing"
+msgstr "No shared storage to pack"
+
+#. js-lingui-explicit-id
+msgid "settings.storage.compact.success.description"
+msgstr "Shared store: {before} → {after}."
+
+#. js-lingui-explicit-id
+msgid "settings.storage.compact.success.title"
+msgstr "Shared storage packed"
+
+#. js-lingui-explicit-id
+msgid "settings.storage.compact.title"
+msgstr "Pack shared storage"
+
+#. js-lingui-explicit-id
+msgid "settings.storage.maintenance.description"
+msgstr "inspect and check run through the CLI (synergy data snapshots). migrate and compact can also run here, each with a dry run first; clean reclaims legacy directories that no session owns."
+
+#. js-lingui-explicit-id
+msgid "settings.storage.maintenance.title"
+msgstr "Maintenance"
+
+#. js-lingui-explicit-id
+msgid "settings.storage.migrate.action"
+msgstr "Migrate"
+
+#. js-lingui-explicit-id
+msgid "settings.storage.migrate.busy"
+msgstr "Migrating..."
+
+#. js-lingui-explicit-id
+msgid "settings.storage.migrate.confirm.description"
+msgstr "{count} legacy repositories will move into the shared object store. Each is verified before its old copy is removed."
+
+#. js-lingui-explicit-id
+msgid "settings.storage.migrate.confirm.label"
+msgstr "Migrate"
+
+#. js-lingui-explicit-id
+msgid "settings.storage.migrate.confirm.title"
+msgstr "Migrate legacy snapshots"
+
+#. js-lingui-explicit-id
+msgid "settings.storage.migrate.description"
+msgstr "Move legacy snapshot repositories that still have session ownership into the shared object store. A dry run is shown first; repositories without a confirmed session record are skipped and retained."
+
+#. js-lingui-explicit-id
+msgid "settings.storage.migrate.failed.title"
+msgstr "Snapshot migration failed"
+
+#. js-lingui-explicit-id
+msgid "settings.storage.migrate.nothing"
+msgstr "No legacy snapshots to migrate"
+
+#. js-lingui-explicit-id
+msgid "settings.storage.migrate.success.description"
+msgstr "{migrated} repositories migrated, {skipped} skipped."
+
+#. js-lingui-explicit-id
+msgid "settings.storage.migrate.success.title"
+msgstr "Legacy snapshots migrated"
+
+#. js-lingui-explicit-id
+msgid "settings.storage.migrate.title"
+msgstr "Migrate legacy snapshots"
+
+#. js-lingui-explicit-id
+msgid "settings.storage.page.description"
+msgstr "Inspect file snapshot storage usage per project scope."
+
+#. js-lingui-explicit-id
+msgid "settings.storage.page.title"
+msgstr "Storage"
+
+#. js-lingui-explicit-id
+msgid "settings.storage.refresh"
+msgstr "Refresh"
+
+#. js-lingui-explicit-id
+msgid "settings.storage.snapshots.description"
+msgstr "Keep restore points when Synergy edits files"
+
+#. js-lingui-explicit-id
+msgid "settings.storage.snapshots.title"
+msgstr "File snapshots"
+
+#. js-lingui-explicit-id
+msgid "settings.storage.usage.empty"
+msgstr "No snapshot storage found."
+
+#. js-lingui-explicit-id
+msgid "settings.storage.usage.failed"
+msgstr "Snapshot scan failed"
+
+#. js-lingui-explicit-id
+msgid "settings.storage.usage.indexes"
+msgstr "Session work indexes"
+
+#. js-lingui-explicit-id
+msgid "settings.storage.usage.legacy"
+msgstr "Legacy repositories"
+
+#. js-lingui-explicit-id
+msgid "settings.storage.usage.loading"
+msgstr "Scanning snapshot storage..."
+
+#. js-lingui-explicit-id
+msgid "settings.storage.usage.owners"
+msgstr "Sessions"
+
+#. js-lingui-explicit-id
+msgid "settings.storage.usage.owners.deleted"
+msgstr "{count} pending deletion"
+
+#. js-lingui-explicit-id
+msgid "settings.storage.usage.owners.legacy"
+msgstr "{count} on legacy storage"
+
+#. js-lingui-explicit-id
+msgid "settings.storage.usage.owners.shared"
+msgstr "{count} on shared storage"
+
+#. js-lingui-explicit-id
+msgid "settings.storage.usage.retainedLegacy"
+msgstr "{unowned} unowned, {reclaimed} reclaimed, {sharedBaselines} shared baselines, {unregistered} unregistered"
+
+#. js-lingui-explicit-id
+msgid "settings.storage.usage.shared"
+msgstr "Shared repository"
+
+#. js-lingui-explicit-id
+msgid "settings.storage.usage.title"
+msgstr "Snapshot usage"
+
+#. js-lingui-explicit-id
 msgid "settings.synergyLink.add.action"
 msgstr "Add target"
 
@@ -20386,6 +20689,18 @@ msgid "ui.toast.copyLabel"
 msgstr "Copy toast"
 
 #. js-lingui-explicit-id
+msgid "ui.toolContent.openFile"
+msgstr "Open current file"
+
+#. js-lingui-explicit-id
+msgid "ui.toolContent.openReview"
+msgstr "Open in Review"
+
+#. js-lingui-explicit-id
+msgid "ui.toolContent.truncated"
+msgstr "Preview shortened."
+
+#. js-lingui-explicit-id
 msgid "ui.turnChangeSummary.hideFiles"
 msgstr "Hide files"
 
@@ -20420,3 +20735,15 @@ msgstr "Minimize"
 #. js-lingui-explicit-id
 msgid "window.restore"
 msgstr "Restore"
+
+#. js-lingui-explicit-id
+msgid "workbench.discard.action"
+msgstr "Discard changes"
+
+#. js-lingui-explicit-id
+msgid "workbench.discard.description"
+msgstr "Changes in {title} have not been saved."
+
+#. js-lingui-explicit-id
+msgid "workbench.discard.title"
+msgstr "Discard unsaved changes?"

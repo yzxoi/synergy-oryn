@@ -34,6 +34,22 @@ Existing Feishu endpoint records retain the legacy `chatId` / `scopeKey` encodin
 
 Feishu derives an endpoint `scopeKey` from the account's `groupSessionScope`. Topic and sender modes encode the topic or sender into the key; `group_thread` uses the Feishu `thread_id` as the only continuity key and falls back to the inbound `message_id` when no thread exists. A durable `channel/feishu/thread_bindings` record maps a returned `thread_id` back to the `scopeKey`, so later messages in the same thread reuse the same session and the first reply is sent with `reply_in_thread: true`.
 
+## Oryn Conversation Delivery
+
+Explicit Oryn Feishu routes select the QA agent before Runtime Boss aggregation and use a separate endpoint scope-key namespace. Group accounts require `group_thread`. Channel core persists the QA source binding and a per-root reply target before Inbox acceptance. Ordinary routes retain their endpoint keys and delivery behavior.
+
+Case submission derives its source from the persisted calling root, so follow-up feedback keeps its own message anchor. QA Case reads and amendments require either the original bound source or a linked Channel source owned by that exact QA Session and conversation; sharing an account, group or thread name alone does not grant access. Case listing uses the existing per-root source records and deduplicates linked Cases.
+
+Oryn foreground streams, reactions and automatic terminal artifacts are silent. The outbound bridge consumes persisted QA reply intents through the provider transport; connection recovery retries only definitely unsent pending intents. Per-root targets preserve the originating message, provider scope key and chat type, while uncertain sends never replay automatically. See the [ingress decision](../decisions/implemented/architecture/2026-09-08-oryn-feishu-ingress.md) and [notification settlement](../decisions/implemented/architecture/2026-09-08-oryn-notification-settlement.md).
+
+Ready publication queues one Host-generated result per authorized reporter and attempts delivery immediately. QA ready replies reuse this conclusion rather than supplying replacement text. Delivery observes the current remote candidate and CI and reruns the local gate, then checks the conclusion and configuration under Case/Attempt locks before claiming dispatch. Old Case/Attempt conclusions are suppressed; unavailable remote proof stays pending, and ambiguous sends never replay automatically. See [ready publication](../decisions/implemented/bug-fix/2026-09-08-oryn-github-ready-transition.md).
+
+Human handoff persists the reason and Case epoch before writing one outbox intent per authorized linked reporter. Runtime startup repairs interrupted intent creation; QA replies reuse those intents. Delivery suppresses disabled notification kinds, unlinked sources and superseded handoffs. Unknown send outcomes remain ambiguous. The task detail API and Oryn panel expose a public-safe reason; legacy human-owned Cases have no inferred reason. See [handoff outcomes](../decisions/implemented/architecture/2026-09-08-oryn-handoff-outcome.md).
+
+Oryn code workers prepare local commits through `oryn_result` with `input.kind: commit_candidate`. The Host validates explicit paths and the active assignment, stages in a private index, and updates only its assigned branch against the expected baseline. Candidate report acceptance, independent verification and publication remain separate. The generic shell does not gain shared Git metadata access; see [Host candidate commits](../decisions/implemented/bug-fix/2026-09-08-oryn-host-candidate-commit.md).
+
+The Oryn delivery gate derives minimum review domains from the verified Git diff between the original Case baseline and the frozen candidate. General review is mandatory; sensitive paths additionally require security, persistence, Channel or publishing review. Deleted paths participate, and domains requested during earlier Attempts remain required. Engineering and review workers read `reviewRequirements` through `oryn_case get`; unreadable candidate state returns an unavailable result and blocks delivery. Path classification is a minimum, so semantic risks outside those rules need additional review. The policy version participates in review Assignment and report fingerprints; an older policy cannot satisfy the gate or resume its reviewer as current. See [Host review requirements](../decisions/implemented/bug-fix/2026-09-08-oryn-required-review-domains.md).
+
 ## Provider and Transport Lifecycle
 
 Every provider declares one lifecycle:

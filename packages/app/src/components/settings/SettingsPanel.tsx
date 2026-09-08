@@ -104,6 +104,7 @@ import { EmailPanel } from "./panels/EmailPanel"
 import { ImportPanel } from "./panels/ImportPanel"
 import { ConfigFilesPanel, ConfigReferencePanel } from "./panels/ConfigFilesPanel"
 import { ArchivedSessionsPanel } from "./panels/ArchivedSessionsPanel"
+import { StoragePanel } from "./panels/StoragePanel"
 import { WorktreesPanel } from "./panels/WorktreesPanel"
 import { ControlProfilePanel, PermissionsPanel, SandboxPanel } from "./panels/SafetyPanels"
 import { CompactionPanel, QuestionsPanel, TimeoutsPanel, ObservabilityPanel } from "./panels/RuntimePanels"
@@ -1124,6 +1125,13 @@ export function SettingsPanel(props: SettingsPanelProps) {
       />
     ),
     "archived-sessions": () => <ArchivedSessionsPanel popoverLayer={settingsPopoverLayer()} />,
+    storage: () => (
+      <StoragePanel
+        general={settings.general}
+        onGeneralChange={(key, value) => setSettings("general", key, value)}
+        popoverLayer={settingsPopoverLayer()}
+      />
+    ),
     worktrees: WorktreesPanel,
   })
 
@@ -1381,13 +1389,6 @@ export function SettingsPanel(props: SettingsPanelProps) {
   }
 }
 
-// Host-side settings component props: the trusted context is present only for plugin
-// sections (built-in panels do not receive it). The public plugin contract keeps
-// `context` required; this host-side type reflects what the renderer actually passes.
-type SettingsHostComponentProps = Omit<PluginSettingsComponentProps, "context"> & {
-  context?: PluginSettingsSurfaceContext
-}
-
 function SettingsSectionContent(props: {
   section: RegisteredSettingsSection
   drafts: ReturnType<typeof createPluginSettingsDrafts>
@@ -1395,7 +1396,7 @@ function SettingsSectionContent(props: {
 }) {
   const globalSDK = useGlobalSDK()
   const { _ } = useLingui()
-  const componentLoader = createSettingsComponentLoader<Component<SettingsHostComponentProps>>()
+  const componentLoader = createSettingsComponentLoader<Component<PluginSettingsComponentProps>>()
   const comp = componentLoader.component
   const loading = componentLoader.loading
 
@@ -1415,6 +1416,26 @@ function SettingsSectionContent(props: {
     mutate(next)
   }
 
+  const surfaceContext = createMemo(() => section().createContext?.())
+
+  function pluginContext(): PluginSettingsSurfaceContext {
+    const context = surfaceContext()
+    if (!context) throw new Error("Plugin Settings component has no bound context")
+    return {
+      ...context,
+      settings: {
+        ...context.settings,
+        values: () => values() ?? {},
+        change: updateValues,
+        status() {
+          props.draftVersion()
+          const key = pluginSettingsResourceKey(section())
+          return key ? props.drafts.status(key) : "saved"
+        },
+      },
+    }
+  }
+
   createEffect(() => {
     props.draftVersion()
     const key = pluginSettingsResourceKey(section())
@@ -1426,8 +1447,8 @@ function SettingsSectionContent(props: {
   createEffect(() => {
     const current = section()
     void componentLoader.load({
-      component: current.component as Component<SettingsHostComponentProps> | undefined,
-      loader: current.loader as (() => Promise<{ default: Component<SettingsHostComponentProps> }>) | undefined,
+      component: current.component as Component<PluginSettingsComponentProps> | undefined,
+      loader: current.loader as (() => Promise<{ default: Component<PluginSettingsComponentProps> }>) | undefined,
     })
   })
 
@@ -1474,13 +1495,7 @@ function SettingsSectionContent(props: {
                 </div>
               )}
             >
-              <Dynamic
-                component={c()}
-                {...(section().context ? { context: section().context } : {})}
-                pluginId={section().pluginId}
-                values={(values() ?? {}) as Record<string, unknown>}
-                onChange={(next: Record<string, unknown>) => updateValues(next)}
-              />
+              <Dynamic component={c()} context={pluginContext()} />
             </ErrorBoundary>
           )}
         </Show>

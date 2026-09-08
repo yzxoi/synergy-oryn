@@ -257,7 +257,23 @@ export namespace MacOSPolicy {
     lines.push(MacOSSbpl.DENY_DEFAULT_BASE)
 
     // 2. Platform defaults (process-exec, sysctl, IOKit, mach, etc.)
-    lines.push(MacOSSbpl.PLATFORM_DEFAULTS)
+    lines.push(
+      fs.includePlatformDefaults
+        ? MacOSSbpl.PLATFORM_DEFAULTS
+        : `(allow process-exec)
+(allow process-fork)
+(allow signal (target same-sandbox))
+(allow sysctl-read)
+(allow file-read* file-write* (literal "/dev/null"))
+(allow file-read* (literal "/dev/urandom") (literal "/dev/random"))`,
+    )
+
+    if (!fs.includePlatformDefaults) {
+      const ancestors = new Set(
+        [...fs.readableRoots, ...fs.writableRoots].flatMap((root) => ancestorLiterals(canonicalize(root))),
+      )
+      for (const root of ancestors) lines.push(`(allow file-read-metadata (literal "${escapeSbpl(root)}"))`)
+    }
 
     // 3. Readable roots — parameterized allow rules
     for (let i = 0; i < fs.readableRoots.length; i++) {
@@ -279,14 +295,12 @@ export namespace MacOSPolicy {
     //    Uses canonicalized paths for APFS firmlink correctness.
     const homedir = canonicalize(os.homedir())
     const workspace = canonicalize(fs.workspace)
-    for (const rule of buildSiblingDenyRules(workspace, homedir, fs.readableRoots)) {
+    for (const rule of buildSiblingDenyRules(workspace, homedir, [...fs.readableRoots, ...fs.writableRoots])) {
       lines.push(rule)
     }
 
     // 7. Network policy
-    if (fs.includePlatformDefaults || fs.writableRoots.length === 0) {
-      lines.push(MacOSSbpl.networkingPolicy(profile.network.mode))
-    }
+    lines.push(MacOSSbpl.networkingPolicy(profile.network.mode))
 
     // 8. Unix socket policy
     const unixSocketRules = MacOSSbpl.unixSocketPolicy(profile.network.allowedUnixSockets)
@@ -300,6 +314,17 @@ export namespace MacOSPolicy {
       if (name.length > 0) {
         lines.push(metadataDenyRegex(name))
       }
+    }
+
+    if (!fs.includePlatformDefaults) {
+      const filters = (roots: string[]) =>
+        roots.map((root) => `(subpath "${escapeSbpl(canonicalize(root))}")`).join(" ")
+      const writes = filters(fs.writableRoots)
+      // Imported OS rules must not widen an explicit Host policy.
+      lines.push(`(deny file-write* (require-not (require-any (literal "/dev/null") ${writes})))`)
+      if (profile.network.mode === "restricted" && !profile.network.allowLocalBinding) lines.push("(deny network*)")
+      for (const root of fs.dataDenyRoots)
+        lines.push(`(deny file-read* file-write* (subpath "${escapeSbpl(canonicalize(root))}"))`)
     }
 
     // 9. Unreadable globs — deny file-read* and file-read-data via compiled regex

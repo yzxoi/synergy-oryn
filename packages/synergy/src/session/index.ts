@@ -1,4 +1,10 @@
+import { RolloutAttachment } from "./rollout/attachment"
+import { RolloutContext } from "./rollout/context"
+import { SnapshotLifecycle } from "./snapshot-lifecycle"
+import { SnapshotRecords } from "./snapshot-records"
 import { Decimal } from "decimal.js"
+import { RolloutArtifact } from "./rollout/artifact"
+import { record, RolloutRecordingError } from "./rollout/error"
 import z from "zod"
 import { type LanguageModelUsage, type ProviderMetadata } from "ai"
 import { Identifier } from "../id/id"
@@ -482,6 +488,36 @@ export namespace Session {
     return withRuntimeInfo(result)
   }
 
+  export async function recoverCreation(scope: Scope, id: string): Promise<Info | undefined> {
+    using _mutation = await SessionMutation.write(scope.id, id)
+    try {
+      const index = await Storage.read<ReturnType<typeof toIndex>>(StoragePath.sessionIndex(asSessionID(id)))
+      if (index.sessionID !== id || index.scopeID !== scope.id) {
+        throw new Error("Session creation recovery index identity mismatch")
+      }
+    } catch (error) {
+      if (!(error instanceof Storage.NotFoundError)) throw error
+    }
+    let persisted: Info
+    try {
+      persisted = Info.parse(await Storage.read(StoragePath.sessionInfo(asScopeID(scope.id), asSessionID(id))))
+    } catch (error) {
+      if (error instanceof Storage.NotFoundError) return undefined
+      throw error
+    }
+    if (persisted.id !== id || persisted.scope.id !== scope.id)
+      throw new Error("Session creation recovery identity mismatch")
+    await Storage.write(StoragePath.sessionIndex(asSessionID(id)), toIndex(persisted))
+    await upsertPageIndexEntry(scope.id, toPageIndexEntry(persisted))
+    if (persisted.parentID) await upsertChildIndexEntry(scope.id, persisted.parentID, toChildIndexEntry(persisted))
+    await writeEndpointIndex(persisted)
+    await SessionNav.upsertNavEntry(toNavEntry(persisted))
+    if (persisted.agenda) {
+      await Storage.write(StoragePath.agendaSession(persisted.agenda.itemID, id), { sessionID: id, scopeID: scope.id })
+    }
+    return withClientInfo(persisted)
+  }
+
   export async function applyWorkspaceSelection(
     sessionID: string,
     selection?: WorkspaceSelection,
@@ -557,35 +593,62 @@ export namespace Session {
           title: source.title,
         },
       })
-      const messageMap = new Map<string, string>()
-      for (const msg of msgs) {
-        // "before" stops at the target message (exclusive); "through" copies
-        // the target message and stops after it (inclusive).
-        if (forkPoint && msg.info.id === forkPoint && !includeForkPoint) break
-        const id = Identifier.ascending("message")
-        messageMap.set(msg.info.id, id)
-        const cloned = await updateMessage({
-          ...msg.info,
-          sessionID: session.id,
-          id,
-          ...("parentID" in msg.info && typeof msg.info.parentID === "string"
-            ? { parentID: messageMap.get(msg.info.parentID) ?? msg.info.parentID }
-            : {}),
+      const selected = forkPoint
+        ? msgs.slice(0, msgs.findIndex((msg) => msg.info.id === forkPoint) + (includeForkPoint ? 1 : 0))
+        : msgs
+      try {
+        await SnapshotLifecycle.adopt({
+          scopeID: source.scope.id,
+          sourceSessionID: source.id,
+          targetSessionID: session.id,
+          workspace: source.workspace?.path ?? ScopeContext.current.directory,
+          hashes: selected.flatMap((msg) => msg.parts.flatMap(SnapshotRecords.partRoots)),
         })
-
-        for (const part of msg.parts) {
-          await updatePart({
-            ...part,
-            id: Identifier.ascending("part"),
-            messageID: cloned.id,
+        const messageMap = new Map<string, string>()
+        for (const msg of selected) {
+          const id = Identifier.ascending("message")
+          messageMap.set(msg.info.id, id)
+          const cloned = await updateMessage({
+            ...msg.info,
+            ...(msg.info.role === "assistant" ? { accounting: MessageV2.copyAccounting(msg.info, "inherited") } : {}),
             sessionID: session.id,
+            id,
+            ...("parentID" in msg.info && typeof msg.info.parentID === "string"
+              ? { parentID: messageMap.get(msg.info.parentID) ?? msg.info.parentID }
+              : {}),
           })
+
+          for (const part of msg.parts) {
+            const from = { kind: "session" as const, scopeID: source.scope.id, sessionID: source.id }
+            const to = { ...from, sessionID: session.id }
+            const state = part.type === "tool" && part.state.status === "completed" ? { ...part.state } : undefined
+            if (state?.outputArtifact) state.outputArtifact = await RolloutArtifact.copy(from, to, state.outputArtifact)
+            if (state?.attachments) {
+              const attachments = []
+              for (const attachment of state.attachments)
+                attachments.push({
+                  ...attachment,
+                  ...(attachment.artifact
+                    ? { artifact: await RolloutArtifact.copy(from, to, attachment.artifact) }
+                    : {}),
+                })
+              state.attachments = attachments
+            }
+            const artifact =
+              part.type === "attachment" && part.artifact
+                ? await RolloutArtifact.copy(from, to, part.artifact)
+                : undefined
+            await updatePart({
+              ...part,
+              ...(artifact ? { artifact } : {}),
+              ...(state ? { state } : {}),
+              id: Identifier.ascending("part"),
+              messageID: cloned.id,
+              sessionID: session.id,
+            })
+          }
         }
 
-        if (includeForkPoint && forkPoint && msg.info.id === forkPoint) break
-      }
-
-      try {
         session = await applyWorkspaceSelection(session.id, input.workspace)
       } catch (error) {
         await remove(session.id)
@@ -1072,6 +1135,7 @@ export namespace Session {
       for (const child of await children(sessionID)) {
         await removeInternal(child.id, removed)
       }
+      await SnapshotLifecycle.beginDelete(scope.id, sessionID)
       await SessionProjectHealth.detachWorktreeSession(sessionID).catch((error) => {
         log.warn("failed to detach worktree during session removal", { sessionID, error })
       })
@@ -1087,6 +1151,7 @@ export namespace Session {
       if (session.parentID) await removeChildIndexEntry(scope.id, session.parentID, sessionID)
       await SessionSearchIndex.removeRecords(scopeID, canonicalSessionID)
       await removeChildIndex(scope.id, sessionID)
+      await SnapshotLifecycle.completeDelete(scope.id, sessionID)
       removed.push(session)
     } catch (e) {
       log.error(e)
@@ -1368,13 +1433,55 @@ export namespace Session {
     | { part: MessageV2.ReasoningPart; delta: string }
 
   async function updatePartInternal(input: UpdatePartInternalInput) {
-    const part = "delta" in input ? input.part : MessageV2.canonicalPart(input)
+    let part = "delta" in input ? input.part : input
     const delta = "delta" in input ? input.delta : undefined
     // Streaming hot path (issue #350 H1): resolve the scopeID from the permanent
     // sessionID -> scopeID cache instead of loading full session info on every
     // delta. A session's scope is immutable, so this is safe; on a cold cache it
     // reads only the small session-index record.
     const scopeID = asScopeID(await SessionManager.resolveScopeID(part.sessionID))
+    try {
+      const owner = { kind: "session" as const, scopeID, sessionID: part.sessionID }
+      if (part.type === "attachment") part = await RolloutAttachment.capture(owner, part)
+      if (part.type === "tool" && part.state.status === "completed" && part.state.attachments) {
+        const attachments = []
+        for (const attachment of part.state.attachments)
+          attachments.push(await RolloutAttachment.capture(owner, attachment))
+        part = { ...part, state: { ...part.state, attachments } }
+      }
+      if (part.type === "tool" && part.state.status === "completed" && !part.state.outputArtifact) {
+        const outputArtifact = await RolloutArtifact.writeText(
+          { kind: "session", scopeID, sessionID: part.sessionID },
+          part.state.output,
+        )
+        part = { ...part, state: { ...part.state, outputArtifact } }
+      } else if (part.type === "tool" && part.state.status === "completed" && part.state.outputArtifact) {
+        const owner = { kind: "session" as const, scopeID, sessionID: part.sessionID }
+        const ref = part.state.outputArtifact
+        const outputArtifact = await record(async () => {
+          const stored = await RolloutArtifact.get(owner, ref.id)
+          if (stored.status !== "complete" || stored.sha256 !== ref.sha256 || stored.bytes !== ref.bytes) {
+            throw new Error("Tool output artifact does not match its committed evidence")
+          }
+          return stored
+        })
+        part = { ...part, state: { ...part.state, outputArtifact } }
+      }
+    } catch (error) {
+      if (RolloutRecordingError.isInstance(error)) {
+        const causal = RolloutContext.current()
+        const message = await MessageV2.get({ sessionID: part.sessionID, messageID: part.messageID }).catch(
+          () => undefined,
+        )
+        const rootID =
+          causal?.owner.kind === "session" && causal.owner.sessionID === part.sessionID
+            ? causal.runID
+            : (message?.info.rootID ?? (message?.info.role === "user" ? message.info.id : message?.info.parentID))
+        if (rootID) SessionManager.signalAbort(part.sessionID, { rootID })
+      }
+      throw error
+    }
+    if (delta === undefined) part = MessageV2.canonicalPart(part)
     const path = StoragePath.messagePart(
       scopeID,
       asSessionID(part.sessionID),
@@ -1474,9 +1581,15 @@ export namespace Session {
         providerCacheMissTokens ??
         (excludesCachedTokens ? (input.usage.inputTokens ?? 0) : (input.usage.inputTokens ?? 0) - cachedInputTokens)
 
+      // @ai-sdk/google 2.0.49 reports candidatesTokenCount separately from thoughtsTokenCount;
+      // OpenAI 2.0.111 already includes reasoning in output_tokens/completion_tokens.
+      const separateReasoning =
+        (input.model.api.npm === "@ai-sdk/google" || input.model.api.npm === "@ai-sdk/google-vertex") &&
+        input.model.providerID !== "google-vertex-anthropic"
+
       const tokens = {
         input: safe(adjustedInputTokens),
-        output: safe(input.usage.outputTokens ?? 0),
+        output: safe((input.usage.outputTokens ?? 0) + (separateReasoning ? (input.usage.reasoningTokens ?? 0) : 0)),
         reasoning: safe(input.usage?.reasoningTokens ?? 0),
         cache: {
           write: safe(
@@ -1500,7 +1613,6 @@ export namespace Session {
             .add(new Decimal(tokens.output).mul(costInfo?.output ?? 0).div(1_000_000))
             .add(new Decimal(tokens.cache.read).mul(costInfo?.cache?.read ?? 0).div(1_000_000))
             .add(new Decimal(tokens.cache.write).mul(costInfo?.cache?.write ?? 0).div(1_000_000))
-            .add(new Decimal(tokens.reasoning).mul(costInfo?.output ?? 0).div(1_000_000))
             .toNumber(),
         ),
         tokens,

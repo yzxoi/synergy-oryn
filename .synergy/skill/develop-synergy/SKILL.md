@@ -75,6 +75,10 @@ Route main-process broadcasts for the application renderer through `DesktopRende
 4. Restart only the isolated process when server or Desktop main-process code changes; Vite handles Web hot reload.
 5. Run narrow automated tests and `bun run quality:quick` independently of the manual instance.
 
+For managed startup changes, test a fresh home and an isolated upgrade lasting longer than the ordinary health deadline. Verify advancing migration counts renew the wait, a second scan with smaller counts also renews it through a new phase, duplicate counts and ordinary logs do not, stalled work fails with its last progress, and migration completion restores the health deadline. Run `SYNERGY_DESKTOP_RUNTIME_TEST=1 bun test test/startup-progress-runtime.test.ts` from `packages/desktop` to check the actual progress DOM in Electron. Keep startup progress aggregate-only and report it before awaiting long migration work.
+
+For CLI migration progress, exercise both foreground server and local `send --format json` startup. Keep human progress on stderr, display the step before its first await, and preserve stdout for command results or machine protocols. Test TTY updates, redirected output, `NO_COLOR`, `TERM=dumb`, failure cleanup and retry; explicit silent migration callers remain silent. Exercise ACP initialization on fresh and already-migrated homes with the Desktop progress environment flag both unset and inherited; its first stdout line must remain an ACP JSON frame and stderr must contain no migration rendering. Keep Desktop reporter selection in the server command rather than shared network resolution.
+
 ## Clean Up
 
 Terminate only PIDs launched for this isolated home. Verify the PID/port before signaling it. Remove the isolated directory only after its processes have exited and only when no evidence is needed.
@@ -82,3 +86,9 @@ Terminate only PIDs launched for this isolated home. Verify the PID/port before 
 ## Handoff
 
 Report the isolated home label without exposing secrets, chosen mode and ports, reproduction steps, observed result, logs/trace filters used, automated checks, and whether cleanup completed.
+
+## Native Computer Verification
+
+For macOS Computer changes, use an isolated Desktop user-data directory as well as `SYNERGY_HOME`. `SYNERGY_COMPUTER_DRIVER_PATH` may point to a verified development binary; production builds use the pinned driver. Exercise discovery, observation, a background action in a disposable native app, image delivery, profile denial, cancellation, and reconnect. Check the target app state and frontmost app independently; a successful input dispatch alone is insufficient. Never replace a missing OS grant with another application's authority.
+
+For OS permission verification, launch the isolated app through macOS LaunchServices and inspect its actual permission state. A terminal-spawned Electron can inherit the terminal host's TCC responsibility, so a successful preflight does not establish that the standalone Desktop app has its own grants. Use a clearly named isolated app bundle; never modify another app's identity or reuse its grants to make a test pass.

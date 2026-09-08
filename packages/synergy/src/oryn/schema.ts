@@ -42,6 +42,7 @@ export const PublishOperation = z.enum([
   "publish_review",
   "mark_ready",
   "notify_feishu",
+  "sync_labels",
 ])
 export type PublishOperation = z.infer<typeof PublishOperation>
 
@@ -53,6 +54,8 @@ export type FindingSeverity = z.infer<typeof FindingSeverity>
 
 export const FindingDisposition = z.enum(["open", "resolved", "rejected_with_evidence", "still_open"])
 export type FindingDisposition = z.infer<typeof FindingDisposition>
+
+export const REVIEW_POLICY_VERSION = "oryn-review-paths-v1"
 
 export const ReviewDomain = z.enum(["general", "persistence", "security", "channel", "publishing"])
 export type ReviewDomain = z.infer<typeof ReviewDomain>
@@ -87,6 +90,17 @@ export const SourceLink = z
   .strict()
 export type SourceLink = z.infer<typeof SourceLink>
 
+export const ChannelSource = z
+  .object({
+    schemaVersion: z.literal(1),
+    qaSessionId: z.string().min(1),
+    identity: SourceIdentity,
+    chatType: z.enum(["dm", "group"]),
+    scopeKey: z.string().optional(),
+  })
+  .strict()
+export type ChannelSource = z.infer<typeof ChannelSource>
+
 export const IntakeClaim = z
   .object({
     schemaVersion: z.literal(1),
@@ -101,6 +115,22 @@ export const IntakeClaim = z
   })
   .strict()
 export type IntakeClaim = z.infer<typeof IntakeClaim>
+
+export const EngineeringStart = z
+  .object({
+    schemaVersion: z.literal(1),
+    caseId: z.string().min(1),
+    sessionId: z.string().startsWith("ses_"),
+    state: z.enum(["pending", "blocked", "started"]),
+    reason: z.string().optional(),
+    directory: z.string().optional(),
+    scopeId: z.string().optional(),
+    baselineSha: z.string().optional(),
+    attemptId: z.string().optional(),
+    updatedAt: z.number().int().positive(),
+  })
+  .strict()
+export type EngineeringStart = z.infer<typeof EngineeringStart>
 
 export const HumanDecision = z
   .object({
@@ -119,7 +149,7 @@ export type HumanDecision = z.infer<typeof HumanDecision>
 
 export const Case = z
   .object({
-    schemaVersion: z.literal(1),
+    schemaVersion: z.literal(2),
     id: z.string().min(1),
     revision: z.number().int().nonnegative(),
     kind: CaseKind,
@@ -143,6 +173,14 @@ export const Case = z
     repairRounds: z.number().int().nonnegative().default(0),
     noProgressRounds: z.number().int().nonnegative().default(0),
     humanDecisions: z.array(z.string()).default([]),
+    handoff: z
+      .object({
+        reason: z.string().min(1).max(2000),
+        epoch: z.number().int().nonnegative(),
+        requestedAt: z.number().int().positive(),
+      })
+      .strict()
+      .optional(),
     createdAt: z.number().int().positive(),
     updatedAt: z.number().int().positive(),
   })
@@ -169,6 +207,31 @@ export const Attempt = z
   })
   .strict()
 export type Attempt = z.infer<typeof Attempt>
+
+export const AttemptTransition = z
+  .object({
+    schemaVersion: z.literal(2),
+    kind: z.enum(["rework", "resume"]),
+    expectedControl: CaseControl,
+    input: z
+      .object({
+        caseId: z.string(),
+        fromAttemptId: z.string(),
+        invalidationReason: z.string(),
+        nextBaselineSha: z.string(),
+        countRepair: z.boolean(),
+        countNoProgress: z.boolean(),
+      })
+      .strict(),
+    epoch: z.number().int().nonnegative(),
+    expectedRevision: z.number().int().nonnegative(),
+    repairRounds: z.number().int().nonnegative(),
+    noProgressRounds: z.number().int().nonnegative(),
+    next: Attempt,
+  })
+  .strict()
+
+export type AttemptTransition = z.infer<typeof AttemptTransition>
 
 export const Assignment = z
   .object({
@@ -257,14 +320,59 @@ export const ReviewReport = z
   .strict()
 export type ReviewReport = z.infer<typeof ReviewReport>
 
+export const OrynLabel = z.enum([
+  "oryn:type/bug",
+  "oryn:type/feature",
+  "oryn:type/question",
+  "oryn:type/performance",
+  "oryn:type/usage",
+  "oryn:status/triage",
+  "oryn:status/reproducing",
+  "oryn:status/coding",
+  "oryn:status/verifying",
+  "oryn:status/reviewing",
+  "oryn:status/needs-human",
+  "oryn:status/ready",
+  "oryn:priority/untriaged",
+  "oryn:priority/p0",
+  "oryn:priority/p1",
+  "oryn:priority/p2",
+  "oryn:priority/p3",
+])
+export type OrynLabel = z.infer<typeof OrynLabel>
+
+export const LabelTarget = z
+  .object({
+    repository: z.string().regex(/^[\w.-]+\/[\w.-]+$/),
+    number: z.number().int().positive(),
+    kind: z.enum(["issue", "pull"]),
+    labels: z.array(OrynLabel).min(2).max(3),
+    candidateSha: z.string().optional(),
+    baseBranch: z.string().min(1),
+  })
+  .strict()
+export type LabelTarget = z.infer<typeof LabelTarget>
+
 export const ActionReceipt = z
   .object({
-    schemaVersion: z.literal(1),
+    schemaVersion: z.literal(4),
+    labelTarget: LabelTarget.optional(),
     id: z.string().min(1),
     caseId: z.string().min(1),
     operation: PublishOperation,
     payloadDigest: z.string().min(1),
     expectedHead: z.string().optional(),
+    readyTarget: z
+      .object({
+        attemptId: z.string().min(1),
+        repository: z.string().min(1),
+        branch: z.string().min(1),
+        baseBranch: z.string().min(1),
+        deliveryCheck: z.boolean(),
+        notificationKey: z.string().min(1).optional(),
+      })
+      .strict()
+      .optional(),
     expectedRevision: z.number().int().nonnegative(),
     epoch: z.number().int().nonnegative(),
     requestKey: z.string().min(1),
@@ -288,16 +396,30 @@ export const ActionReceipt = z
   .strict()
 export type ActionReceipt = z.infer<typeof ActionReceipt>
 
+export const LearningSource = z
+  .object({
+    repository: z.string().min(1),
+    attemptId: z.string().min(1),
+    epoch: z.number().int().nonnegative(),
+    acceptanceDigest: z.string().min(1),
+    baselineSha: z.string().min(1),
+    candidateSha: z.string().optional(),
+    evidenceDigest: z.string().min(1),
+  })
+  .strict()
+export type LearningSource = z.infer<typeof LearningSource>
+
 export const LearningCandidate = z
   .object({
-    schemaVersion: z.literal(1),
+    schemaVersion: z.literal(2),
     id: z.string().min(1),
     caseId: z.string().min(1),
-    outcomeVersion: z.string().min(1),
+    source: LearningSource.optional(),
+    memory: z.object({ title: z.string().min(1), content: z.string().min(1) }).strict(),
     lesson: z.string().min(1),
     applicability: z.string().min(1),
     invalidation: z.string().min(1),
-    evidenceRefs: z.array(z.string()).min(1),
+    evidenceRefs: z.array(z.string()),
     promotionState: z.enum(["proposed", "verified", "promoted", "rejected"]),
     memoryRef: z.string().optional(),
     createdAt: z.number().int().positive(),
@@ -350,15 +472,16 @@ export type ReplyKind = z.infer<typeof ReplyKind>
 
 export const OutboxEntry = z
   .object({
-    schemaVersion: z.literal(1),
+    schemaVersion: z.literal(2),
     id: z.string().min(1),
     caseId: z.string().optional(),
     sourceKey: z.string().min(1),
     kind: ReplyKind,
     text: z.string().min(1),
-    state: z.enum(["pending", "delivered", "suppressed"]).default("pending"),
+    state: z.enum(["pending", "ambiguous", "delivered", "suppressed"]).default("pending"),
     dedupKey: z.string().min(1),
     createdAt: z.number().int().positive(),
+    attemptedAt: z.number().int().positive().optional(),
     deliveredAt: z.number().int().positive().optional(),
   })
   .strict()

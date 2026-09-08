@@ -3,6 +3,7 @@ import { Session } from "../session/index"
 import { ContinuationKernel } from "../session/continuation-kernel"
 import { SessionInbox } from "../session/inbox"
 import { bossAssignmentMetadata } from "./boss-message"
+import { BossService } from "./boss"
 
 const BOSS_REPORT_TOOL = "boss_report"
 
@@ -30,7 +31,9 @@ export const BossContinuationPolicy: ContinuationKernel.Policy = {
     const messages = await Session.messages({ sessionID: gate.sessionID, limit: 50 }).catch(() => [])
     const latestTask = latestTaskUserMessage(messages, gate.session)
     if (!latestTask) return undefined
-    if (hasReported(messages, latestTask.info.id)) return undefined
+    const assignment = bossAssignmentMetadata(latestTask.info, gate.session)
+    const hostReported = assignment ? await BossService.hasTaskReport(gate.session, assignment.taskID) : undefined
+    if (hostReported ?? hasReported(messages, latestTask.info.id)) return undefined
 
     return {
       kind: "inbox",
@@ -42,7 +45,10 @@ export const BossContinuationPolicy: ContinuationKernel.Policy = {
         parts: [
           {
             type: "text",
-            text: `Your assigned task is still waiting for a report.\n\nIf the task is not complete, continue working on it now.\nIf the task is complete or blocked, call boss_report with a summary and a status ("completed", "blocked", or "needs_input").`,
+            text:
+              hostReported === false
+                ? "Your assigned task still requires its workflow-owned structured result. Continue the task or submit a structured blocked result through the workflow result tool. A plain boss_report does not satisfy this requirement."
+                : `Your assigned task is still waiting for a report.\n\nIf the task is not complete, continue working on it now.\nIf the task is complete or blocked, call boss_report with a summary and a status ("completed", "blocked", or "needs_input").`,
             origin: "system",
           },
         ],

@@ -157,6 +157,35 @@ describe("tool.bash", () => {
     ).toBe(false)
   })
 
+  test("explicit background returns a tracked local process without waiting for yieldSeconds", async () => {
+    await withProjectScope(async () => {
+      const bash = await BashTool.init()
+      const result = await bash.execute(
+        {
+          command: sleepCommand(10000),
+          description: "Start tracked background probe",
+          background: true,
+          yieldSeconds: 30,
+        },
+        ctx,
+      )
+      try {
+        expect(result.metadata.background).toBe(true)
+        expect(result.output).toContain("Command running in background.")
+        expect(ProcessRegistry.get(result.metadata.processId!)?.backgrounded).toBe(true)
+      } finally {
+        const id = result.metadata.processId
+        if (id) {
+          const proc = ProcessRegistry.get(id)
+          if (proc) await ProcessRegistry.terminate(proc)
+          const deadline = Date.now() + 3000
+          while (!ProcessRegistry.getFinished(id) && Date.now() < deadline) await Bun.sleep(10)
+          ProcessRegistry.remove(id)
+        }
+      }
+    })
+  }, 5000)
+
   test("auto-backgrounds long commands after yieldSeconds", async () => {
     await withProjectScope(async () => {
       const bash = await BashTool.init()

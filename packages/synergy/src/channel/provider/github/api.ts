@@ -244,18 +244,22 @@ export namespace GitHubChannelAuth {
     export function listRepositoryIssues(input: {
       owner: string
       repo: string
-      since: string
-      pageSize: number
+      since?: string
+      creator?: string
+      page?: number
+      pageSize?: number
       installationToken: string
     }) {
       const query = new URLSearchParams({
         filter: "all",
         state: "all",
-        since: input.since,
         sort: "updated",
         direction: "asc",
-        per_page: String(input.pageSize),
+        per_page: String(input.pageSize ?? 100),
       })
+      if (input.since) query.set("since", input.since)
+      if (input.creator) query.set("creator", input.creator)
+      if (input.page) query.set("page", String(input.page))
       return request({
         path: `/repos/${input.owner}/${input.repo}/issues?${query.toString()}`,
         installationToken: input.installationToken,
@@ -343,6 +347,48 @@ export namespace GitHubChannelAuth {
       })
     }
 
+    export function listIssueLabels(input: {
+      owner: string
+      repo: string
+      issueNumber: number
+      page: number
+      installationToken: string
+    }) {
+      return request({
+        path: `/repos/${input.owner}/${input.repo}/issues/${input.issueNumber}/labels?per_page=100&page=${input.page}`,
+        installationToken: input.installationToken,
+      })
+    }
+
+    export function addIssueLabels(input: {
+      owner: string
+      repo: string
+      issueNumber: number
+      labels: string[]
+      installationToken: string
+    }) {
+      return request({
+        path: `/repos/${input.owner}/${input.repo}/issues/${input.issueNumber}/labels`,
+        method: "POST",
+        body: { labels: input.labels },
+        installationToken: input.installationToken,
+      })
+    }
+
+    export function removeIssueLabel(input: {
+      owner: string
+      repo: string
+      issueNumber: number
+      name: string
+      installationToken: string
+    }) {
+      return request({
+        path: `/repos/${input.owner}/${input.repo}/issues/${input.issueNumber}/labels/${encodeURIComponent(input.name)}`,
+        method: "DELETE",
+        installationToken: input.installationToken,
+      })
+    }
+
     export function createIssue(input: {
       owner: string
       repo: string
@@ -375,6 +421,24 @@ export namespace GitHubChannelAuth {
           ...(input.title === undefined ? {} : { title: input.title }),
           ...(input.body === undefined ? {} : { body: input.body }),
           ...(input.draft === undefined ? {} : { draft: input.draft }),
+        },
+      })
+    }
+
+    // GitHub exposes the draft transition through GraphQL, without expectedHeadOid.
+    // https://docs.github.com/en/graphql/reference/pulls#markpullrequestreadyforreview
+    export function markPullRequestReadyForReview(input: { pullRequestId: string; installationToken: string }) {
+      return request({
+        path: "/graphql",
+        method: "POST",
+        installationToken: input.installationToken,
+        body: {
+          query: `mutation OrynReady($input: MarkPullRequestReadyForReviewInput!) {
+            markPullRequestReadyForReview(input: $input) {
+              pullRequest { id number isDraft state headRefOid headRefName baseRefName url }
+            }
+          }`,
+          variables: { input: { pullRequestId: requireNonEmpty(input.pullRequestId, "pull request node ID") } },
         },
       })
     }
@@ -434,10 +498,11 @@ export namespace GitHubChannelAuth {
       owner: string
       repo: string
       ref: string
+      page?: number
       installationToken: string
     }) {
       return request({
-        path: `/repos/${input.owner}/${input.repo}/commits/${input.ref}/check-runs`,
+        path: `/repos/${input.owner}/${input.repo}/commits/${input.ref}/check-runs${input.page ? `?per_page=100&filter=latest&page=${input.page}` : ""}`,
         installationToken: input.installationToken,
       })
     }

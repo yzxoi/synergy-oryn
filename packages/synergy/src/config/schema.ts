@@ -13,11 +13,13 @@ import {
 } from "@ericsanchezok/synergy-plugin"
 import { DEFAULT_PLUGIN_RUNTIME_LIMITS } from "@ericsanchezok/synergy-util/plugin-policy"
 import { MAX_EXECUTION_CANCEL_GRACE_MS } from "@ericsanchezok/synergy-util/runtime-shutdown"
+import { ProviderPricing } from "../provider/pricing"
 import { ModelsDev } from "../provider/models-schemas"
 import { ConfigLspCatalog } from "./lsp-catalog"
 import { ModelRole } from "../provider/model-role"
 import { normalizePublicHttpsOrigin } from "../util/public-https-origin"
 import { validateHolosEndpoint, validateHolosPortalUrl } from "../util/holos"
+import { OrynProcessResources } from "../oryn/resource-policy"
 
 export const McpRetry = McpRetryConfig
 export type McpRetry = McpRetryConfig
@@ -279,6 +281,7 @@ export type SandboxConfig = z.infer<typeof SandboxConfig>
 
 export const ObservabilityConfig = z
   .object({
+    modelSpans: z.boolean().optional().describe("Record AI SDK model spans (default: false)"),
     enabled: z
       .boolean()
       .optional()
@@ -551,8 +554,27 @@ export type OrynPublishOperation = z.infer<typeof OrynPublishOperation>
 
 export const OrynRepository = z
   .object({
+    labels: z
+      .boolean()
+      .optional()
+      .describe(
+        "Synchronize Oryn-owned type/progress labels on bound issues and PRs; preserve existing priorities (default: false)",
+      ),
+    defaultPriority: z
+      .enum(["p0", "p1", "p2", "p3"])
+      .optional()
+      .describe(
+        "Initial label priority when none is present; unset means untriaged. Existing priorities are never overwritten",
+      ),
     owner: z.string().min(1).describe("GitHub owner (user or organization)"),
     repo: z.string().min(1).describe("Repository name"),
+    directory: z
+      .string()
+      .min(1)
+      .optional()
+      .describe(
+        "Absolute path of the trusted, pre-fetched repository checkout used for engineering startup; distinct from workRoot",
+      ),
     baseBranch: z.string().min(1).optional().describe("Base branch automated pull requests target (default: dev)"),
     githubAccount: z.string().min(1).optional().describe("GitHub channel account ID used for publishing"),
     workRoot: z
@@ -572,7 +594,7 @@ export const OrynRepository = z
       .boolean()
       .optional()
       .describe(
-        "Allow the controlled App identity to write oryn/delivery check runs on this repository (default: false). Only enable after the deployment has verified the check live; never register it as a required check before that",
+        "Allow the controlled App identity to write oryn/delivery check runs on this repository (default: false). Enable first on an authorized test repository to verify the check live; only then register it as a required check",
       ),
   })
   .strict()
@@ -600,6 +622,9 @@ export type OrynReview = z.infer<typeof OrynReview>
 
 export const OrynLimits = z
   .object({
+    processResources: OrynProcessResources.optional().describe(
+      "Linux cgroup ceilings for every Oryn check and worker Bash command",
+    ),
     maxActiveCases: z.number().int().min(1).optional().describe("Maximum concurrently active cases (default: 4)"),
     maxConcurrentWorkers: z
       .number()
@@ -643,7 +668,34 @@ export type OrynIsolationMode = z.infer<typeof OrynIsolationMode>
 
 export const OrynExecutionProfile = z
   .object({
+    resourceLimits: OrynProcessResources.optional().describe(
+      "Per-command Linux cgroup limits; installation processResources remain the upper ceiling",
+    ),
     description: z.string().optional().describe("What this profile is for, e.g. server-side unit tests"),
+    writableDirectories: z
+      .array(z.string().min(1).max(240))
+      .max(32)
+      .optional()
+      .describe(
+        "Relative build-output directories in a disposable check checkout (for example dist, coverage). Must not overlap tracked source, symlink ancestors or Git/agent metadata; all other source remains read-only",
+      ),
+    dependencySnapshots: z
+      .array(
+        z
+          .object({
+            directory: z.string().min(1).describe("Installation-owned sealed dependency snapshot directory"),
+            digest: z
+              .string()
+              .regex(/^[a-f0-9]{64}$/)
+              .describe("SHA-256 of the sealed dependency manifest"),
+          })
+          .strict(),
+      )
+      .max(16)
+      .optional()
+      .describe(
+        "Pre-provisioned Bun dependencies; exactly one snapshot must match the commit's dependency inputs and Host platform/runtime",
+      ),
     requiredCapabilities: z
       .array(z.enum(["uid", "namespace", "seccomp", "cgroup", "browser", "network_egress"]))
       .optional()
@@ -1353,6 +1405,9 @@ export type LocalEmbeddingConfig = z.infer<typeof LocalEmbeddingConfig>
 
 export const EmbeddingConfig = z
   .object({
+    cost: ProviderPricing.Cost.optional().describe(
+      "Explicit model prices in USD: token rates per million, unit rates per declared quantity",
+    ),
     baseURL: z.string().optional().describe("Base URL for the embedding API"),
     apiKey: z.string().optional().describe("API key for the embedding service"),
     model: z.string().optional().describe("Embedding model name"),
@@ -1366,6 +1421,9 @@ export type EmbeddingConfig = z.infer<typeof EmbeddingConfig>
 
 export const RerankConfig = z
   .object({
+    cost: ProviderPricing.Cost.optional().describe(
+      "Explicit model prices in USD: token rates per million, unit rates per declared quantity",
+    ),
     baseURL: z.string().optional().describe("Base URL for the rerank API"),
     apiKey: z.string().optional().describe("API key for the rerank service"),
     model: z.string().optional().describe("Rerank model name"),
@@ -1377,6 +1435,9 @@ export const RerankConfig = z
 export type RerankConfig = z.infer<typeof RerankConfig>
 export const VoiceSttConfig = z
   .object({
+    cost: ProviderPricing.Cost.optional().describe(
+      "Explicit model prices in USD: token rates per million, unit rates per declared quantity",
+    ),
     baseURL: z.string().optional().describe("Base URL for the speech-to-text API (OpenAI-compatible)"),
     apiKey: z.string().optional().describe("API key for the speech-to-text service"),
     model: z.string().optional().describe("Speech-to-text model name. Voice input is disabled when not set."),
@@ -1392,6 +1453,9 @@ export type VoiceSttConfig = z.infer<typeof VoiceSttConfig>
 
 export const VoiceTtsConfig = z
   .object({
+    cost: ProviderPricing.Cost.optional().describe(
+      "Explicit model prices in USD: token rates per million, unit rates per declared quantity",
+    ),
     baseURL: z.string().optional().describe("Base URL for the text-to-speech API (OpenAI-compatible)"),
     apiKey: z.string().optional().describe("API key for the text-to-speech service"),
     model: z.string().optional().describe("Text-to-speech model name. The speak tool is disabled when not set."),
@@ -1524,6 +1588,7 @@ export const Provider = ModelsDev.Provider.partial()
       .record(
         z.string(),
         ModelsDev.Model.partial().extend({
+          cost: ProviderPricing.ModelConfigCost.optional(),
           variants: z
             .record(
               z.string(),
@@ -1812,6 +1877,7 @@ export const Info = z
       .describe("Timeout configuration for assistant steps, provider requests, tool execution, and permission prompts"),
     cortex: z
       .object({
+        primaryOnlyTools: z.array(z.string()).optional().describe("Tools excluded from delegated agents"),
         maxConcurrentTasks: z
           .number()
           .int()
@@ -1824,6 +1890,9 @@ export const Info = z
       .describe("Cortex task scheduling configuration"),
     execution: z
       .object({
+        continueOnDeny: z.boolean().optional().describe("Continue the loop after a denied tool call (default: false)"),
+        messageCache: z.object({ enabled: z.boolean().optional(), verify: z.boolean().optional() }).strict().optional(),
+        lspIdleReap: z.boolean().optional().describe("Reap idle language servers (default: true)"),
         agentWorkers: z
           .number()
           .int()
@@ -2199,7 +2268,7 @@ export const Info = z
               disabled: z.literal(true),
             }),
             z.object({
-              command: z.array(z.string()),
+              command: z.array(z.string()).min(1).optional(),
               extensions: z.array(z.string()).optional(),
               disabled: z.boolean().optional(),
               env: z.record(z.string(), z.string()).optional(),
@@ -2215,12 +2284,13 @@ export const Info = z
           if (typeof data === "boolean") return true
           return Object.entries(data).every(([id, config]) => {
             if (config.disabled) return true
-            if (ConfigLspCatalog.isKnownServer(id)) return true
-            return Boolean(config.extensions)
+            if (ConfigLspCatalog.isKnownServer(id)) return !config.env || Boolean(config.command?.length)
+            return Boolean(config.extensions && "command" in config && config.command?.length)
           })
         },
         {
-          error: "For custom LSP servers, 'extensions' array is required.",
+          error:
+            "Custom LSP servers require command and extensions; environment overrides require an explicit command.",
         },
       ),
     lspWriteDiagnostics: z
@@ -2295,47 +2365,27 @@ export const Info = z
           ),
       })
       .optional(),
-    experimental: z
+    boss: z
       .object({
-        batch_tool: z.boolean().optional().describe("Enable the batch tool"),
-        coauthor_reminder: z
-          .boolean()
-          .optional()
-          .describe("Include the git commit Co-authored-by footer reminder in agent prompts"),
-        openTelemetry: z
-          .boolean()
-          .optional()
-          .describe("Enable OpenTelemetry spans for AI SDK calls (using the 'experimental_telemetry' flag)"),
-        primary_tools: z
-          .array(z.string())
-          .optional()
-          .describe("Tools that should only be available to primary agents."),
-        continue_loop_on_deny: z.boolean().optional().describe("Continue the agent loop when a tool call is denied"),
-        mcp_timeout: z
-          .number()
-          .int()
-          .positive()
-          .optional()
-          .describe("Timeout in milliseconds for model context protocol (MCP) requests"),
-        boss_mode: z
+        enabled: z
           .boolean()
           .optional()
           .describe(
             "Enable Runtime Boss Mode: auto-provision a home-scope runtime boss session and route all Feishu messages to it",
           ),
-        boss_identity_text: z
+        identityText: z
           .string()
           .nullable()
           .optional()
           .describe("Optional colleague identity description injected into the runtime boss session"),
-        boss_briefing_interval_days: z
+        briefingIntervalDays: z
           .number()
           .int()
           .positive()
           .nullable()
           .optional()
           .describe("Re-inject the versioned world-overview briefing every N days (default: disabled)"),
-        boss_persona: z
+        persona: z
           .discriminatedUnion("preset", [
             z.object({
               preset: z.literal("project_manager"),
@@ -2354,9 +2404,25 @@ export const Info = z
           .nullable()
           .optional()
           .describe(
-            "Colleague persona preset for the runtime boss: a built-in personality (project_manager or ops_assistant) or a custom blend of four 0..1 traits. Pass null to clear. When unset, boss_identity_text (legacy) or the default colleague identity is used.",
+            "Colleague persona preset for the runtime boss: a built-in personality (project_manager or ops_assistant) or a custom blend of four 0..1 traits. Pass null to clear. When unset, identityText (legacy) or the default colleague identity is used.",
           ),
       })
+      .strict()
+      .optional(),
+    prompt: z
+      .object({
+        coauthorReminder: z
+          .boolean()
+          .optional()
+          .describe("Include the git coauthor reminder in agent prompts (default: true)"),
+      })
+      .strict()
+      .optional(),
+    toolExposure: z
+      .object({
+        lsp: z.boolean().optional().describe("Expose the LSP tool; permission checks still apply (default: false)"),
+      })
+      .strict()
       .optional(),
     pluginConfig: z
       .record(z.string(), z.record(z.string(), z.any()))

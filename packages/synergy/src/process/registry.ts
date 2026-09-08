@@ -136,6 +136,7 @@ export namespace ProcessRegistry {
 
   export interface Process {
     id: string
+    readonly sessionID?: string
     command: string
     description?: string
     cwd?: string
@@ -165,6 +166,7 @@ export namespace ProcessRegistry {
 
   export interface FinishedProcess {
     id: string
+    readonly sessionID?: string
     command: string
     description?: string
     cwd?: string
@@ -219,6 +221,8 @@ export namespace ProcessRegistry {
   const finished = new Map<string, FinishedProcess>()
   const outputBuffers = new WeakMap<Process, BoundedTextBuffer>()
   const terminators = new WeakMap<Process, () => void | Promise<void>>()
+  const completions = new WeakMap<Process, Promise<void>>()
+  const pendingCompletions = new WeakSet<Process>()
   let sweeper: Timer | null = null
   let ttlMs = DEFAULT_TTL_MS
   let processInspector: ProcessInspector = defaultProcessInspector
@@ -235,6 +239,7 @@ export namespace ProcessRegistry {
     | undefined
 
   export function create(opts: {
+    sessionID?: string
     command: string
     description?: string
     cwd?: string
@@ -245,6 +250,7 @@ export namespace ProcessRegistry {
     const outputBuffer = new BoundedTextBuffer()
     const proc: Process = {
       id,
+      ...(opts.sessionID ? { sessionID: opts.sessionID } : {}),
       command: opts.command,
       description: opts.description,
       cwd: opts.cwd,
@@ -286,6 +292,19 @@ export namespace ProcessRegistry {
 
   export function getFinished(id: string): FinishedProcess | undefined {
     return finished.get(id)
+  }
+
+  export function setCompletion(proc: Process, completion: Promise<void>) {
+    completions.set(proc, completion)
+    pendingCompletions.add(proc)
+    const settled = () => {
+      if (completions.get(proc) === completion) pendingCompletions.delete(proc)
+    }
+    void completion.then(settled, settled)
+  }
+
+  export function completion(proc: Process) {
+    return completions.get(proc)
   }
 
   export function setTerminator(proc: Process, terminate: (() => void | Promise<void>) | undefined) {
@@ -364,6 +383,7 @@ export namespace ProcessRegistry {
     running.delete(proc.id)
     finished.set(proc.id, {
       id: proc.id,
+      ...(proc.sessionID ? { sessionID: proc.sessionID } : {}),
       command: proc.command,
       description: proc.description,
       cwd: proc.cwd,
@@ -468,7 +488,7 @@ export namespace ProcessRegistry {
             : Math.min(proc.baselineRssBytes, inspection.rssBytes)
         proc.peakRssBytes = Math.max(proc.peakRssBytes ?? 0, inspection.rssBytes)
       }
-      if (opts.settleStale && proc.pid !== undefined && inspection.alive === false) {
+      if (opts.settleStale && proc.pid !== undefined && inspection.alive === false && !pendingCompletions.has(proc)) {
         markStale(proc)
         continue
       }

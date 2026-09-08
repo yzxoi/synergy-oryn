@@ -114,15 +114,17 @@ export namespace MacBackend {
         ...(opts.extraReadRoots ?? []),
       ]
       const writableRoots = [...(opts.writableRoots ?? [workspace]), ...(opts.extraWritableRoots ?? [])]
-      const policyProfile = buildPermissionProfile({
-        workspace,
-        executionCwd: opts.executionCwd ?? workspace,
-        sandboxMode,
-        approvedReadPaths: [...runtimeReadRoots, ...macosPlatformReadRoots()],
-        approvedWritePaths: writableRoots,
-        approvedNetwork: opts.networkMode === "full",
-        approvedUnixSockets: [],
-      })
+      const policyProfile =
+        opts.permissionProfile ??
+        buildPermissionProfile({
+          workspace,
+          executionCwd: opts.executionCwd ?? workspace,
+          sandboxMode,
+          approvedReadPaths: [...runtimeReadRoots, ...macosPlatformReadRoots()],
+          approvedWritePaths: writableRoots,
+          approvedNetwork: opts.networkMode === "full",
+          approvedUnixSockets: [],
+        })
       const sbplContent = MacOSPolicy.compileProfile(policyProfile)
       const params = MacOSPolicy.generateParams(policyProfile)
       const tempPath = writeTempString(sbplContent)

@@ -1,5 +1,17 @@
+import { SessionRunPolicy } from "../session/run-policy"
+import { OrynControl } from "./control"
+import { ProcessAccessPolicy } from "../tool/process/policy"
+import { BashExecutionPolicy } from "../tool/bash/policy"
+import { OrynShell } from "./shell"
 import { ToolRegistry } from "../tool/registry"
-import { registerOrynTools } from "./tools"
+import { BossService } from "../boss/boss"
+import { OrynStore } from "./store"
+import { registerOrynTools, CheckParameters, ResultParameters } from "./tools"
+import { ToolExecutor } from "../session/tool-executor"
+import { OrynExecutor } from "./executor"
+import { OrynEvidence } from "./evidence"
+import { AgentTurnAdmission } from "../session/agent-turn/admission"
+import { OrynConfig } from "./config"
 import "./migration"
 
 /**
@@ -20,6 +32,53 @@ let registered = false
 export function registerOrynDomain(): void {
   if (registered) return
   registered = true
+  SessionRunPolicy.register("oryn", OrynControl.canRun)
+  AgentTurnAdmission.register("oryn", async (owner) => {
+    if (owner.kind !== "session" || !(await OrynConfig.enabled())) return false
+    const binding = await OrynStore.sessionSourceBinding(owner.sessionID)
+    return binding?.role === "engineering" || binding?.role === "worker"
+  })
+  BashExecutionPolicy.register("oryn", OrynShell.resolve)
+  ProcessAccessPolicy.register("oryn", OrynShell.processAccess)
 
   ToolRegistry.registerToolProvider("oryn", registerOrynTools)
+  ToolExecutor.registerAdmissionProvider("oryn_check", async (input) => {
+    const params = CheckParameters.parse((input.input as { input?: unknown } | null)?.input)
+    if (params.action !== "run") return { executor: "control_plane" }
+    return OrynExecutor.admission({ ...params, callerSessionID: input.sessionID, abort: input.signal })
+  })
+  ToolExecutor.registerAdmissionProvider("oryn_result", async (input) => {
+    const params = ResultParameters.parse((input.input as { input?: unknown } | null)?.input)
+    return params.kind === "commit_candidate"
+      ? { executor: "local_process", resources: [{ key: `oryn:commit:${params.caseId}`, limit: 1 }] }
+      : { executor: "control_plane" }
+  })
+  BossService.registerTaskReportProvider("oryn", async (session, taskID) => {
+    if (!["oryn-repro", "oryn-code", "oryn-review"].includes(session.agentOverride ?? "")) return undefined
+    const sessionID = session.id
+    const binding = await OrynStore.sessionSourceBinding(sessionID)
+    if (binding?.role !== "worker" || !binding.caseId) return false
+    const assignment = await OrynStore.getAssignment(binding.caseId, taskID)
+    if (!assignment || assignment.sessionId !== sessionID) return false
+    const record = await OrynStore.getCase(binding.caseId)
+    if (
+      !record ||
+      record.control !== "active" ||
+      record.epoch !== assignment.epoch ||
+      record.activeAttemptId !== assignment.attemptId
+    )
+      return true
+    const attempt = await OrynStore.getAttempt(binding.caseId, assignment.attemptId)
+    if (!attempt || ["superseded", "failed", "handed_off", "ready"].includes(attempt.disposition)) return true
+    if (
+      assignment.stage === "review" &&
+      assignment.frozenInputsDigest !== OrynEvidence.assignmentDigest(record, attempt, "review")
+    )
+      return true
+    if (assignment.stage === "review")
+      return Boolean(
+        assignment.acceptedReportId && (await OrynStore.getReview(binding.caseId, assignment.acceptedReportId)),
+      )
+    return Boolean(assignment.acceptedReportId)
+  })
 }

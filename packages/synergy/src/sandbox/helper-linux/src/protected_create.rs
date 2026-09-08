@@ -267,11 +267,19 @@ mod tests {
         use std::io::Write;
 
         fn tmp_dir() -> std::path::PathBuf {
-            let dir = std::env::temp_dir()
-                .join(format!("synergy-protected-create-{}", std::process::id()));
-            let _ = fs::remove_dir_all(&dir);
-            fs::create_dir_all(&dir).unwrap();
-            dir
+            use std::sync::atomic::{AtomicUsize, Ordering};
+            static NEXT: AtomicUsize = AtomicUsize::new(0);
+            loop {
+                let serial = NEXT.fetch_add(1, Ordering::Relaxed);
+                let dir = std::env::temp_dir().join(format!(
+                    "synergy-protected-create-{}-{serial}", std::process::id()
+                ));
+                match fs::create_dir(&dir) {
+                    Ok(()) => return dir,
+                    Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                    Err(error) => panic!("create isolated test directory: {error}"),
+                }
+            }
         }
 
         #[test]

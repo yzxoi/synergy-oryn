@@ -579,6 +579,11 @@ export namespace Worktree {
     return { items: result, repoRoot }
   }
 
+  export async function ownedBySession(sessionID: string): Promise<Info[]> {
+    const { items } = await inventory()
+    return items.filter((item) => item.managed && item.owner?.type === "session" && item.owner.sessionID === sessionID)
+  }
+
   export async function list(): Promise<Info[]> {
     const { items, repoRoot } = await inventory()
     return mapConcurrent(items, 4, async (item) => {

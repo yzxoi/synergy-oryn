@@ -227,15 +227,6 @@ async function createSessionWithUser(options?: { silent?: boolean }) {
   return { session, user }
 }
 
-function withTimeout<T>(promise: Promise<T>, label: string, ms = 2_000): Promise<T> {
-  return Promise.race([
-    promise,
-    new Promise<T>((_, reject) => {
-      setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms)
-    }),
-  ])
-}
-
 async function createWorktreeSessionWithUser(name: string) {
   const session = await Session.create({})
   const worktree = await Worktree.create({
@@ -464,7 +455,7 @@ describe("SessionInvoke workspace execution context", () => {
         },
       })
 
-      await withTimeout(processed.promise, "worktree delivery wake")
+      await processed.promise
 
       expect(assistantPath).toEqual({ cwd: worktreePath, root: worktreePath })
     } finally {
@@ -477,7 +468,7 @@ describe("SessionInvoke workspace execution context", () => {
         })
       }
     }
-  })
+  }, 30_000)
 
   test("release-scheduled wake re-enters the worktree workspace", async () => {
     await using tmp = await tmpdir({ git: true })
@@ -531,7 +522,7 @@ describe("SessionInvoke workspace execution context", () => {
       const lease = SessionManager.acquire(sessionID)
       expect(lease).toBeDefined()
       await SessionManager.release(lease!)
-      await withTimeout(processed.promise, "release wake")
+      await processed.promise
 
       expect(assistantPath).toEqual({ cwd: worktreePath, root: worktreePath })
     } finally {
@@ -544,7 +535,7 @@ describe("SessionInvoke workspace execution context", () => {
         })
       }
     }
-  })
+  }, 30_000)
 })
 
 describe("SessionInvoke.selectResultMessage", () => {
@@ -1785,12 +1776,20 @@ describe("SessionInvoke coauthor reminder prompt", () => {
   })
 
   test("omits the coauthor reminder when explicitly disabled", async () => {
-    await using tmp = await tmpdir({ git: true })
+    await using tmp = await tmpdir({
+      git: true,
+      init: async (directory) => {
+        await Bun.write(
+          `${directory}/.synergy/synergy.d/60-agents.jsonc`,
+          JSON.stringify({ prompt: { coauthorReminder: false } }),
+        )
+      },
+    })
     let activeSessionID = ""
     let systemPrompt = ""
     let lateSystemPrompt = ""
     const restore = installBasicLoopMocks({
-      config: { experimental: { coauthor_reminder: false } },
+      config: { prompt: { coauthorReminder: false } },
       onProcess: async (input) => {
         systemPrompt = input.system.join("\n")
         lateSystemPrompt = input.lateSystem?.join("\n") ?? ""

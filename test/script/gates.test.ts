@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { detectCycles, runGateSet, validateGateGraph, type Gate } from "../../script/gates"
+import { detectCycles, gatesForMode, runGateSet, validateGateGraph, type Gate } from "../../script/gates"
 
 function gate(id: string, needs: string[] = []): Gate {
   return { id, run: `echo ${id}`, needs }
@@ -26,6 +26,21 @@ describe("gate graph validation", () => {
 })
 
 describe("gate scheduling", () => {
+  test("SDK consumers wait for package generation to finish", async () => {
+    for (const mode of ["local", "ci-static"]) {
+      let built = false
+      const premature: string[] = []
+      await runGateSet(gatesForMode(mode), "/tmp", async (current) => {
+        if (current.id === "package:check") {
+          await Bun.sleep(10)
+          built = true
+        }
+        if (["format:check", "typecheck", "deadcode"].includes(current.id) && !built) premature.push(current.id)
+        return null
+      })
+      expect(premature).toEqual([])
+    }
+  })
   test("runs every gate exactly once in dependency order", async () => {
     const order: string[] = []
     const gates: Gate[] = [gate("a"), gate("b", ["a"]), gate("c", ["a"])]
