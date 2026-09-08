@@ -1,3 +1,5 @@
+import { OrynConfig } from "../oryn/config"
+import { OrynStore } from "../oryn/store"
 import { OrynControl } from "../oryn/control"
 import { Agenda } from "@/agenda"
 import { AgendaBootstrap } from "@/agenda/bootstrap"
@@ -34,6 +36,10 @@ export namespace GlobalRuntime {
         scope: Scope.home(),
         fn: async () => {
           log.info("starting")
+          if (await OrynConfig.enabled()) {
+            const transitions = await OrynStore.recoverAttemptTransitions()
+            if (transitions.failed) log.warn("oryn Attempt transition recovery incomplete", transitions)
+          }
           await SessionRecovery.reconcileRuntimeState({ scopeID: Scope.home().id, apply: true }).catch((error) => {
             log.warn("session runtime recovery failed", { scopeID: Scope.home().id, error })
           })

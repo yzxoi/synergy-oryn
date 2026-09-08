@@ -84,6 +84,27 @@ function now(): number {
   return Date.now()
 }
 
+const AttemptTransition = z
+  .object({
+    schemaVersion: z.literal(1),
+    input: z
+      .object({
+        caseId: z.string(),
+        fromAttemptId: z.string(),
+        invalidationReason: z.string(),
+        nextBaselineSha: z.string(),
+        countRepair: z.boolean(),
+        countNoProgress: z.boolean(),
+      })
+      .strict(),
+    epoch: z.number().int().nonnegative(),
+    expectedRevision: z.number().int().nonnegative(),
+    repairRounds: z.number().int().nonnegative(),
+    noProgressRounds: z.number().int().nonnegative(),
+    next: Attempt,
+  })
+  .strict()
+
 export namespace OrynStore {
   /**
    * Claim a source for intake. Idempotent per (source, requestKey): replayed
@@ -1126,40 +1147,119 @@ export namespace OrynStore {
     using _lock = await Lock.write(`oryn-case:${input.caseId}`)
     const record = await getCase(input.caseId)
     if (!record) throw storeError("NOT_AUTHORIZED", `case ${input.caseId} not found`)
-    if (record.activeAttemptId !== input.fromAttemptId) {
-      throw storeError("INVALID_STAGE", "rotation targets a non-active attempt", { caseId: input.caseId })
+    const key = OrynPath.attemptTransition(input.caseId, input.fromAttemptId)
+    let transition: z.infer<typeof AttemptTransition> | undefined
+    try {
+      transition = AttemptTransition.parse(await Storage.read(key))
+    } catch (error) {
+      if (!(error instanceof Storage.NotFoundError)) throw error
     }
+    if (
+      transition &&
+      Object.entries(input).some(([key, value]) => transition!.input[key as keyof typeof input] !== value)
+    )
+      throw storeError("INVALID_STAGE", "Attempt transition input changed")
+    if (record.control !== "active" || (transition && transition.epoch !== record.epoch))
+      throw storeError("HUMAN_OWNED", "Attempt transition ownership changed")
+    if (transition && record.activeAttemptId === transition.next.id) {
+      const previous = await getAttempt(input.caseId, input.fromAttemptId)
+      const next = await getAttempt(input.caseId, transition.next.id)
+      if (!previous || !next) throw storeError("INVALID_STAGE", "Completed Attempt transition is missing its records")
+      await writeCase(record)
+      return { previous, next, case: record }
+    }
+    if (record.activeAttemptId !== input.fromAttemptId)
+      throw storeError("INVALID_STAGE", "rotation targets a non-active attempt", { caseId: input.caseId })
     const previous = await getAttempt(input.caseId, input.fromAttemptId)
     if (!previous) throw storeError("NOT_AUTHORIZED", `attempt ${input.fromAttemptId} not found`)
-    const superseded = await mutateAttempt(input.caseId, input.fromAttemptId, (draft) => ({
-      ...draft,
-      disposition: "superseded" as const,
-      invalidationReason: input.invalidationReason,
-    }))
-    const ts = now()
-    const next: Attempt = {
-      schemaVersion: 1,
-      id: Identifier.ascending("oryn_attempt"),
-      caseId: input.caseId,
-      revision: 0,
-      baselineSha: input.nextBaselineSha,
-      ...(previous.baseBranchSha ? { baseBranchSha: previous.baseBranchSha } : {}),
-      assignmentIds: [],
-      evidenceRunIds: [],
-      reviewIds: [],
-      disposition: "open",
-      createdAt: ts,
-      updatedAt: ts,
+    if (!transition) {
+      const ts = now()
+      transition = {
+        schemaVersion: 1,
+        input,
+        epoch: record.epoch,
+        expectedRevision: record.revision,
+        repairRounds: record.repairRounds + (input.countRepair ? 1 : 0),
+        noProgressRounds: input.countNoProgress ? record.noProgressRounds + 1 : 0,
+        next: {
+          schemaVersion: 1,
+          id: Identifier.ascending("oryn_attempt"),
+          caseId: input.caseId,
+          revision: 0,
+          baselineSha: input.nextBaselineSha,
+          ...(previous.baseBranchSha ? { baseBranchSha: previous.baseBranchSha } : {}),
+          assignmentIds: [],
+          evidenceRunIds: [],
+          reviewIds: [],
+          disposition: "open",
+          createdAt: ts,
+          updatedAt: ts,
+        },
+      }
+      await Storage.write(key, transition)
     }
-    await Storage.write(OrynPath.attempt(input.caseId, next.id), next)
+    if (record.revision !== transition.expectedRevision)
+      throw storeError("STALE_REVISION", "Case changed during Attempt transition")
+    let next: Attempt | undefined
+    try {
+      next = Attempt.parse(await Storage.read(OrynPath.attempt(input.caseId, transition.next.id)))
+    } catch (error) {
+      if (!(error instanceof Storage.NotFoundError)) throw error
+    }
+    if (next && JSON.stringify(next) !== JSON.stringify(transition.next))
+      throw storeError("INVALID_STAGE", "Reserved Attempt changed before activation")
+    if (!next) {
+      next = transition.next
+      await Storage.write(OrynPath.attempt(input.caseId, next.id), next)
+    }
+    const superseded =
+      previous.disposition === "superseded" && previous.invalidationReason === input.invalidationReason
+        ? previous
+        : await mutateAttempt(input.caseId, input.fromAttemptId, (draft) => ({
+            ...draft,
+            disposition: "superseded",
+            invalidationReason: input.invalidationReason,
+          }))
     const updated: Case = {
       ...record,
+      revision: record.revision + 1,
       activeAttemptId: next.id,
-      repairRounds: record.repairRounds + (input.countRepair ? 1 : 0),
-      noProgressRounds: input.countNoProgress ? record.noProgressRounds + 1 : 0,
+      repairRounds: transition.repairRounds,
+      noProgressRounds: transition.noProgressRounds,
       updatedAt: now(),
     }
     await writeCase(updated)
     return { previous: superseded, next, case: updated }
+  }
+
+  export async function recoverAttemptTransitions() {
+    const result = { recovered: 0, failed: 0 }
+    for (const record of await listCases({ control: "active" })) {
+      for (const fromId of await Storage.scan(OrynPath.attemptTransitionsRoot(record.id))) {
+        try {
+          const transition = AttemptTransition.parse(await Storage.read(OrynPath.attemptTransition(record.id, fromId)))
+          if (
+            transition.input.caseId !== record.id ||
+            transition.input.fromAttemptId !== fromId ||
+            transition.next.caseId !== record.id
+          )
+            throw storeError("INVALID_STAGE", "Attempt transition does not belong to its storage key")
+          const current = await getCase(record.id)
+          if (!current || current.control !== "active") break
+          if (
+            transition.epoch !== current.epoch ||
+            ![fromId, transition.next.id].includes(current.activeAttemptId ?? "")
+          )
+            continue
+          await rotateAttempt(transition.input)
+          result.recovered++
+        } catch {
+          result.failed++
+          const current = await getCase(record.id)
+          if (current?.control === "active") await control(current.id, current.revision, "pause")
+        }
+      }
+    }
+    return result
   }
 }

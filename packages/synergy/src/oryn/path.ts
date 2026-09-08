@@ -37,6 +37,12 @@ export namespace OrynPath {
   export const attemptsRoot = (caseId: string) => [...caseRoot(caseId), "attempts"]
   export const attempt = (caseId: string, attemptId: string) => [...attemptsRoot(caseId), attemptId]
 
+  export const attemptTransitionsRoot = (caseId: string) => [...caseRoot(caseId), "attempt_transitions"]
+  export const attemptTransition = (caseId: string, fromAttemptId: string) => [
+    ...attemptTransitionsRoot(caseId),
+    fromAttemptId,
+  ]
+
   /** Host-bound worker task identities (recovery anchor for spawned sessions). */
   export const assignmentsRoot = (caseId: string) => [...caseRoot(caseId), "assignments"]
   export const assignment = (caseId: string, assignmentId: string) => [...assignmentsRoot(caseId), assignmentId]
