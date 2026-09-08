@@ -5,6 +5,8 @@ import { globalConfig } from "../oryn/fixture"
 import { scriptedModel } from "../oryn/fixtures/model"
 import { tmpdir } from "../fixture/fixture"
 import { Scope } from "../../src/scope"
+import { Embedding } from "../../src/vector/embedding"
+import { Config } from "../../src/config/config"
 import { ScopeContext } from "../../src/scope/context"
 
 const commit = async (write: () => string) => write()
@@ -131,4 +133,114 @@ test("Library preparation cannot insert when the Host refuses commit", async () 
       }
     },
   })
+})
+
+test.each(["absent", "candidate"] as const)(
+  "Oryn embedding uses installation configuration with %s Scope",
+  async (context) => {
+    await using host = scriptedModel(() => {
+      throw new Error("chat is not used")
+    })
+    await using candidate = scriptedModel(() => {
+      throw new Error("chat is not used")
+    })
+    await using global = await globalConfig({
+      embedding: { apiKey: "host-fixture", model: "host-embedding", baseURL: host.config.api },
+    })
+    await using tmp = await tmpdir({
+      git: true,
+      config: {
+        embedding: { apiKey: "candidate-fixture", model: "candidate-embedding", baseURL: candidate.config.api },
+      },
+    })
+    const scope = (await Scope.fromDirectory(tmp.path)).scope
+    const input = {
+      id: `mem_oryn_${crypto.randomUUID()}`,
+      title: "Host lesson",
+      content: "Installation-owned embedding",
+    }
+    const promote = async () => {
+      if (context === "candidate") expect((await Config.current()).embedding?.baseURL).toBe(candidate.config.api)
+      expect(await OrynMemory.promote(input, commit)).toBe(input.id)
+    }
+    try {
+      if (context === "candidate") await ScopeContext.provide({ scope, fn: promote })
+      else {
+        expect(ScopeContext.tryScope()).toBeUndefined()
+        await promote()
+      }
+      expect(host.embeddings).toHaveLength(1)
+      expect(candidate.embeddings).toEqual([])
+      expect(LibraryDB.Memory.get(input.id)?.content).toBe(input.content)
+    } finally {
+      LibraryDB.Memory.remove(input.id)
+    }
+  },
+)
+
+test("Oryn local embedding does not reuse a candidate's initialized extractor", async () => {
+  await using global = await globalConfig({
+    embedding: { local: { source: "custom", remoteHost: "https://host-models.example" } },
+  })
+  await using tmp = await tmpdir({
+    git: true,
+    config: { embedding: { local: { source: "custom", remoteHost: "https://candidate-models.example" } } },
+  })
+  const scope = (await Scope.fromDirectory(tmp.path)).scope
+  const observed: string[] = []
+  const disposed: string[] = []
+  let selected = ""
+  await Embedding.dispose()
+  Embedding.setLocalRuntimeControlsForTest({
+    async loadRuntime() {
+      return {
+        configure({ remoteHost }) {
+          selected = remoteHost
+        },
+        async isCached() {
+          return true
+        },
+        async pipeline() {
+          const origin = selected
+          return Object.assign(
+            async () => {
+              observed.push(origin)
+              return { data: new Float32Array([1, 0, 0, 0, 0, 0, 0, 0]) }
+            },
+            {
+              async dispose() {
+                disposed.push(origin)
+              },
+            },
+          )
+        },
+      }
+    },
+  })
+  const input = { id: `mem_oryn_${crypto.randomUUID()}`, title: "Local lesson", content: "Host local model" }
+  const recovered = { ...input, id: `mem_oryn_${crypto.randomUUID()}` }
+  try {
+    await ScopeContext.provide({
+      scope,
+      fn: async () => {
+        await Embedding.generate({ id: "candidate-query", text: "candidate" })
+        await OrynMemory.promote(input, commit)
+      },
+    })
+    expect(ScopeContext.tryScope()).toBeUndefined()
+    await OrynMemory.promote(recovered, commit)
+    await ScopeContext.provide({ scope, fn: () => Embedding.generate({ id: "candidate-again", text: "candidate" }) })
+    expect(observed).toEqual([
+      "https://candidate-models.example/",
+      "https://host-models.example/",
+      "https://host-models.example/",
+      "https://candidate-models.example/",
+    ])
+    await Embedding.dispose()
+    expect(disposed.sort()).toEqual(["https://candidate-models.example/", "https://host-models.example/"])
+  } finally {
+    await Embedding.resetForTest()
+    LibraryDB.Memory.remove(input.id)
+    LibraryDB.Memory.remove(recovered.id)
+  }
 })

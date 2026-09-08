@@ -23,7 +23,7 @@ export const OrynMemory = {
     using _lock = await Lock.write(`oryn-library-memory:${input.id}`)
     const embedding = existing(input.id, input)
       ? undefined
-      : await Embedding.generate({ id: input.id, text: `${input.title}\n${input.content}` })
+      : await Embedding.generateInstallation({ id: input.id, text: `${input.title}\n${input.content}` })
     return await commit(() => {
       if (!existing(input.id, input)) {
         if (!embedding) throw new Error("Oryn memory disappeared before commit; retry is required")
