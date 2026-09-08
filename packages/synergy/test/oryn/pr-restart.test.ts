@@ -133,9 +133,10 @@ for (const interruption of ["ensure_draft", "mark_ready", "refresh_pr"] as const
       try {
         await using first = await runtimeProcess({ home: `${storage.path}/home`, boot })
         expect((await first.receive(message)).accepted).toBe(true)
-        const reached = Date.now() + 90000
+        const reached = Date.now() + 180000
         while ((!held || replies.length < 1) && !errors.length && !model.errors.length && Date.now() < reached)
           await Bun.sleep(50)
+        const pending = held ? undefined : await first.snapshot()
         expect({
           held,
           errors,
@@ -143,7 +144,21 @@ for (const interruption of ["ensure_draft", "mark_ready", "refresh_pr"] as const
           logs: held
             ? ""
             : JSON.stringify({
-                snapshot: await first.snapshot(),
+                snapshot: pending && {
+                  cases: pending.cases.map((record) => ({
+                    id: record.id,
+                    control: record.control,
+                    activeAttemptId: record.activeAttemptId,
+                  })),
+                  attempts: pending.attempts.map((attempt) => ({ id: attempt.id, disposition: attempt.disposition })),
+                  assignments: pending.assignments.map((assignment) => ({
+                    attemptId: assignment.attemptId,
+                    stage: assignment.stage,
+                    accepted: !!assignment.acceptedReportId,
+                  })),
+                  actions: pending.actions.map((action) => ({ operation: action.operation, state: action.state })),
+                  sessions: pending.sessions.map((session) => ({ id: session.id, running: session.running })),
+                },
                 steps: model.steps.slice(-5),
                 log: first.output().slice(-1000),
               }),
@@ -160,7 +175,7 @@ for (const interruption of ["ensure_draft", "mark_ready", "refresh_pr"] as const
         await using second = await runtimeProcess({ home: `${storage.path}/home`, boot })
         expect(second.pid).not.toBe(first.pid)
         let after = await second.snapshot()
-        const finish = Date.now() + 90000
+        const finish = Date.now() + 180000
         while (
           (!after.attempts.some((attempt) => attempt.disposition === "ready") ||
             replies.length < 2 ||
@@ -257,5 +272,5 @@ for (const interruption of ["ensure_draft", "mark_ready", "refresh_pr"] as const
         await broker.stop(true)
       }
     },
-    240000,
+    420000,
   )

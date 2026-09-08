@@ -16,6 +16,8 @@ The repair scenario rejects a candidate that aliases the caller's attachment arr
 
 The snapshot protocol exposes existing Attempts, execution receipts, reviews and worker reports alongside Cases and Sessions. This is test inspection over IPC, not a new product API or persistence owner. Linux child homes receive only the source-built sandbox helper when available; no credentials or general parent environment are copied. The PR scenario disables optional LSP diagnostics and formatter startup, while retaining actual code editing, contained Bun execution, Host commits and independent evidence gates.
 
+Both same-process PR scenarios and separate-process PR recovery disable optional LSP/formatter work. Same-process completion has a four-minute bound; each pre-crash or resumed process phase has a three-minute bound, within its outer test timeout. These are experiment deadlines rather than product execution limits. Timeout diagnostics retain the recent model steps, active worker phases and compact durable state instead of filling the error with the beginning of the conversation. This preserves evidence when loaded Linux CI runners reach later repair stages more slowly than the local runner.
+
 ## Alternatives considered
 
 **Reset modules in the existing test process.** This preserves process-local runtime state and cannot exercise server startup, Agent worker creation or process death.

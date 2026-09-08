@@ -253,10 +253,33 @@ describe("Oryn worker handoff", () => {
       const record = await OrynStore.getCase(input.caseId)
       const taken = await OrynStore.control(input.caseId, record!.revision, "takeover")
       await OrynStore.control(input.caseId, taken.revision, "resume")
+      const fresh = await OrynService.dispatch({
+        callerSessionID: input.rootId,
+        caseId: input.caseId,
+        stage: "repro",
+        requestKey: "dispatch",
+      })
+      expect(fresh.assignmentId).not.toBe(input.assignmentId)
+      expect(fresh.workerSessionId).not.toBe(input.workerId)
+      expect((await OrynStore.getAssignment(input.caseId, fresh.assignmentId))?.attemptId).not.toBe(input.attemptId)
+      await expect(
+        OrynService.submitResult({
+          callerSessionID: input.workerId,
+          caseId: input.caseId,
+          attemptId: input.attemptId,
+          assignmentId: input.assignmentId,
+          requestKey: "late-old-epoch",
+          kind: "repro",
+          outcome: "not_reproduced",
+          summary: "Old worker cannot resume",
+        }),
+      ).resolves.toMatchObject({ accepted: false, stale: true })
+      expect((await OrynStore.getAssignment(input.caseId, input.assignmentId))?.acceptedReportId).toBeUndefined()
       await expect(
         OrynService.dispatch({
           callerSessionID: input.rootId,
           caseId: input.caseId,
+          attemptId: input.attemptId,
           stage: "repro",
           requestKey: "dispatch",
         }),

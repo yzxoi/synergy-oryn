@@ -59,6 +59,9 @@ test.each(["direct", "repair"] as const)(
     )
     await using config = await globalConfig(
       Config.Info.parse({
+        lsp: false,
+        lspWriteDiagnostics: false,
+        formatter: false,
         model: "oryn-fixture/qa",
         mid_model: "oryn-fixture/qa",
         thinking_model: "oryn-fixture/qa",
@@ -109,7 +112,7 @@ test.each(["direct", "repair"] as const)(
             ).accepted,
           ).toBe(true)
           let record: Awaited<ReturnType<typeof OrynStore.getCase>>
-          const deadline = Date.now() + 120000
+          const deadline = Date.now() + 240000
           while (!model.errors.length && Date.now() < deadline) {
             for await (const session of Session.listAll()) {
               if (session.endpoint?.channel.accountId !== accountId) continue
@@ -152,19 +155,25 @@ test.each(["direct", "repair"] as const)(
                 loopPhase: SessionManager.getRuntime(id)?.owner?.phase,
                 aborted: SessionManager.getRuntime(id)?.owner?.lease.signal.aborted,
                 inbox: await SessionInbox.list(id),
-                messages: (await Session.messages({ sessionID: id })).map((m) => ({
+                messages: (await Session.messages({ sessionID: id })).slice(-3).map((m) => ({
                   role: m.info.role,
                   root: m.info.rootID,
                   parts: m.parts.flatMap((p) =>
                     p.type === "text"
                       ? [p.text.slice(-1000)]
                       : p.type === "tool"
-                        ? [JSON.stringify({ tool: p.tool, state: p.state })]
+                        ? [
+                            JSON.stringify({
+                              tool: p.tool,
+                              status: p.state.status,
+                              error: p.state.status === "error" ? p.state.error : undefined,
+                            }),
+                          ]
                         : [],
                   ),
                 })),
               })
-            throw new Error(JSON.stringify({ record, steps: model.steps, diagnostics }).slice(0, 30000))
+            throw new Error(JSON.stringify({ record, steps: model.steps.slice(-5), diagnostics }))
           }
           expect(model.embeddings.length).toBeGreaterThan(0)
           const assignments = await OrynStore.listAssignments(record.id)
@@ -263,5 +272,5 @@ test.each(["direct", "repair"] as const)(
       },
     })
   },
-  { timeout: 140000 },
+  { timeout: 270000 },
 )
