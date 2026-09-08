@@ -60,6 +60,8 @@ export namespace GlobalRuntime {
           const orynRecovery = await OrynEngineering.recover()
           const workerRecovery = await OrynService.recoverWorkers()
           const reportRecovery = await OrynReports.recover()
+          const turnRecovery = await OrynService.recoverEngineeringTurns()
+          if (turnRecovery.failed) log.warn("oryn interrupted turn recovery incomplete", turnRecovery)
           const handoffRecovery = await OrynService.recoverHandoffs()
           if (handoffRecovery.failed) log.warn("oryn handoff recovery incomplete", handoffRecovery)
           if (workerRecovery.failed) log.warn("oryn worker recovery incomplete", workerRecovery)

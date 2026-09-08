@@ -1,15 +1,20 @@
+import "../../src/product-registration"
 import { expect, spyOn, test } from "bun:test"
 import { Worktree } from "../../src/project/worktree"
 import { Storage } from "../../src/storage/storage"
 import { ConfigDomain } from "../../src/config/domain"
 import { Config } from "../../src/config/config"
 import { BossService } from "../../src/boss/boss"
+import { OrynControl } from "../../src/oryn/control"
+import { OrynEngineering } from "../../src/oryn/engineering"
+import { scriptedModel } from "./fixtures/model"
 import { OrynService } from "../../src/oryn/service"
 import { OrynPath } from "../../src/oryn/path"
 import { OrynStore } from "../../src/oryn/store"
 import { Scope } from "../../src/scope"
 import { ScopeContext } from "../../src/scope/context"
 import { Session } from "../../src/session"
+import { SessionInvoke } from "../../src/session/invoke"
 import { SessionInbox } from "../../src/session/inbox"
 import { SessionManager } from "../../src/session/manager"
 import { globalConfig, tmpdir } from "./fixture"
@@ -21,9 +26,11 @@ async function fixture(
     attemptId: string
     dispatch: () => ReturnType<typeof OrynService.dispatch>
   }) => Promise<void>,
+  modelConfig?: Partial<Config.Info>,
 ) {
   await using repo = await tmpdir({ git: true })
   await using config = await globalConfig({
+    ...modelConfig,
     oryn: {
       enabled: true,
       routes: [{ feishuAccount: "test", repoAlias: "fixture" }],
@@ -279,14 +286,18 @@ test("startup recovery honors changed repository ownership before spawning", asy
   })
 })
 
-test("startup recovery preserves consumed task identity without delivering it again", async () => {
+test("startup recovery continues a consumed task without replacing its root", async () => {
   await fixture(async (input) => {
     const initial = await input.dispatch()
     const item = (await SessionInbox.list(initial.workerSessionId))[0]
     await SessionInbox.materializeItem(item)
     await SessionInbox.commitReady(initial.workerSessionId, [item.id])
     await OrynService.recoverWorkers()
-    expect(await SessionInbox.list(initial.workerSessionId)).toHaveLength(0)
+    const queued = await SessionInbox.list(initial.workerSessionId)
+    expect(queued).toHaveLength(1)
+    expect(queued[0].mode).toBe("steer")
+    await OrynService.recoverWorkers()
+    expect(await SessionInbox.list(initial.workerSessionId)).toHaveLength(1)
     const messages = await Session.messages({ sessionID: initial.workerSessionId })
     expect(messages.filter((message) => message.info.role === "user")).toHaveLength(1)
     expect(await Session.children(input.rootId)).toHaveLength(1)
@@ -312,5 +323,204 @@ test("dispatch refuses to replace a changed Assignment workspace reference", asy
     await expect(input.dispatch()).rejects.toMatchObject({ data: { code: "INVALID_STAGE" } })
     expect((await OrynStore.getAssignment(input.caseId, initial.assignmentId))?.workspaceRef).toBe(changed)
     expect(await Session.children(input.rootId)).toHaveLength(1)
+  })
+})
+
+test("consumed recovery instructions remain bounded across repeated interruptions", async () => {
+  await fixture(async (input) => {
+    const initial = await input.dispatch()
+    const task = (await SessionInbox.list(initial.workerSessionId))[0]
+    await SessionInbox.materializeItem(task)
+    await SessionInbox.commitReady(initial.workerSessionId, [task.id])
+    for (let attempt = 0; attempt < 3; attempt++) {
+      await OrynService.recoverWorkers()
+      const queued = await SessionInbox.list(initial.workerSessionId)
+      expect(queued).toHaveLength(1)
+      expect(queued[0].mode).toBe("steer")
+      await SessionInbox.materializeItem(queued[0], task.messageID)
+      await SessionInbox.commitReady(initial.workerSessionId, [queued[0].id])
+    }
+    for (const message of await Session.messages({ sessionID: initial.workerSessionId })) {
+      if (message.info.role === "user" && message.info.origin?.detail === "oryn_resume")
+        await Session.updateMessage({ ...message.info, includeInContext: false })
+    }
+    await OrynService.recoverWorkers()
+    expect((await OrynStore.getCase(input.caseId))?.control).toBe("human_owned")
+    expect((await OrynStore.getCase(input.caseId))?.handoff?.reason).toContain("three recovery attempts")
+    expect(await SessionInbox.list(initial.workerSessionId)).toHaveLength(0)
+    const roots = (await Session.messages({ sessionID: initial.workerSessionId })).filter(
+      (m) => m.info.role === "user" && m.info.isRoot,
+    )
+    expect(roots.map((m) => m.info.id)).toEqual([task.messageID])
+    expect(await Session.children(input.rootId)).toHaveLength(1)
+  })
+})
+
+test("explicit resume restores a consumed worker task after pause", async () => {
+  await fixture(async (input) => {
+    const initial = await input.dispatch()
+    const task = (await SessionInbox.list(initial.workerSessionId))[0]
+    await SessionInbox.materializeItem(task)
+    await SessionInbox.commitReady(initial.workerSessionId, [task.id])
+    const record = (await OrynStore.getCase(input.caseId))!
+    const paused = await OrynControl.change({
+      caseId: input.caseId,
+      expectedRevision: record.revision,
+      action: "pause",
+    })
+    await OrynControl.change({ caseId: input.caseId, expectedRevision: paused.revision, action: "resume" })
+    expect((await SessionInbox.list(initial.workerSessionId)).map((item) => item.mode)).toEqual(["steer"])
+    expect(await Session.children(input.rootId)).toHaveLength(1)
+  })
+})
+
+test("engineering recovery resumes its consumed root without launching another Session", async () => {
+  await fixture(async (input) => {
+    await OrynEngineering.start(input.caseId)
+    const task = (await SessionInbox.list(input.rootId))[0]
+    expect(task).toBeDefined()
+    await SessionInbox.materializeItem(task)
+    await SessionInbox.commitReady(input.rootId, [task.id])
+    await OrynService.recoverEngineeringTurns({ caseId: input.caseId })
+    await OrynService.recoverEngineeringTurns({ caseId: input.caseId })
+    expect((await SessionInbox.list(input.rootId)).map((item) => item.mode)).toEqual(["steer"])
+    expect((await OrynStore.getCase(input.caseId))?.engineeringSessionId).toBe(input.rootId)
+    expect(
+      (await Session.messages({ sessionID: input.rootId }))
+        .filter((m) => m.info.role === "user" && m.info.isRoot)
+        .map((m) => m.info.id),
+    ).toEqual([task.messageID])
+  })
+})
+
+test("a recovered worker completes through the actual scripted model and result tool", async () => {
+  let ids: { caseId: string; attemptId: string; assignmentId: string } | undefined
+  let reportRequested = false
+  await using model = scriptedModel((request) => {
+    if (!ids) throw new Error("worker identity is unavailable")
+    if (!reportRequested) {
+      reportRequested = true
+      expect(
+        request.messages.some((message) =>
+          JSON.stringify(message.content).includes("previous execution was interrupted"),
+        ),
+      ).toBe(true)
+      return {
+        tool: "oryn_result",
+        input: {
+          input: {
+            ...ids,
+            kind: "repro",
+            requestKey: "resumed-result",
+            outcome: "needs_human",
+            summary: "The saved task was recovered, but its platform is unavailable.",
+            limitations: ["Requires the reporter platform"],
+          },
+        },
+      }
+    }
+    return { text: "Structured result submitted." }
+  })
+  await fixture(
+    async (input) => {
+      const initial = await input.dispatch()
+      ids = { caseId: input.caseId, attemptId: input.attemptId, assignmentId: initial.assignmentId }
+      const task = (await SessionInbox.list(initial.workerSessionId))[0]
+      await SessionInbox.materializeItem(task)
+      await SessionInbox.commitReady(initial.workerSessionId, [task.id])
+      await OrynService.recoverWorkers()
+      await SessionManager.wake(initial.workerSessionId)
+      const reportID = (await OrynStore.getAssignment(input.caseId, initial.assignmentId))?.acceptedReportId
+      expect(model.errors).toEqual([])
+      expect(reportID).toBeDefined()
+      expect(model.errors).toEqual([])
+      expect(model.steps.filter((step) => "tool" in step && step.tool === "oryn_result")).toHaveLength(1)
+      await OrynService.recoverWorkers()
+      expect(await SessionInbox.list(initial.workerSessionId)).toHaveLength(0)
+      const history = await Session.messages({ sessionID: initial.workerSessionId })
+      const interrupted = history.find(
+        (message) => message.info.role === "assistant" && message.info.error?.name === "MessageAbortedError",
+      )
+      if (interrupted?.info.role !== "assistant") throw new Error("missing interrupted assistant")
+      expect(interrupted.info.path.cwd).toBe((await Session.get(initial.workerSessionId)).workspace!.path)
+      expect(history.filter((m) => m.info.role === "user" && m.info.isRoot).map((m) => m.info.id)).toEqual([
+        task.messageID,
+      ])
+      expect(await Session.children(input.rootId)).toHaveLength(1)
+    },
+    Config.Info.parse({
+      model: "oryn-fixture/qa",
+      mid_model: "oryn-fixture/qa",
+      thinking_model: "oryn-fixture/qa",
+      mini_model: "oryn-fixture/qa",
+      nano_model: "oryn-fixture/qa",
+      enabled_providers: ["oryn-fixture"],
+      provider: { "oryn-fixture": model.config },
+      embedding: { apiKey: "fixture-only", model: "fixture-embedding", baseURL: model.config.api },
+    }),
+  )
+}, 30000)
+
+test("Host recovery handoff stops a running engineering root before completing", async () => {
+  await fixture(async (input) => {
+    const entered = Promise.withResolvers<SessionManager.LoopLease>()
+    const release = Promise.withResolvers<void>()
+    const run = SessionManager.run(input.rootId, async (lease) => {
+      entered.resolve(lease)
+      await release.promise
+    })
+    let handoff: Promise<unknown> | undefined
+    try {
+      const lease = await entered.promise
+      let completed = false
+      handoff = OrynService.requestHandoff({
+        callerSessionID: input.rootId,
+        caseId: input.caseId,
+        reason: "Recovery budget exhausted",
+      }).then((result) => {
+        completed = true
+        return result
+      })
+      const deadline = Date.now() + 1000
+      while (!lease.signal.aborted && !completed && Date.now() < deadline) await Bun.sleep(10)
+      expect(lease.signal.aborted).toBe(true)
+      expect(completed).toBe(false)
+      release.resolve()
+      await handoff
+      expect((await OrynStore.getCase(input.caseId))?.control).toBe("human_owned")
+    } finally {
+      release.resolve()
+      await Promise.allSettled([run, ...(handoff ? [handoff] : [])])
+    }
+  })
+}, 10000)
+
+test("engineering recovery continues an unanswered report after an earlier terminal reply", async () => {
+  await fixture(async (input) => {
+    await OrynEngineering.start(input.caseId)
+    const task = (await SessionInbox.list(input.rootId))[0]
+    await SessionInbox.materializeItem(task)
+    await SessionInbox.commitReady(input.rootId, [task.id])
+    await SessionInvoke.repairAfterAbort(input.rootId)
+    const reply = (await Session.messages({ sessionID: input.rootId })).findLast((m) => m.info.role === "assistant")!
+    if (reply.info.role !== "assistant") throw new Error("missing assistant")
+    await Session.updateMessage({ ...reply.info, error: undefined, finish: "stop" })
+    await OrynService.recoverEngineeringTurns({ caseId: input.caseId })
+    expect(await SessionInbox.list(input.rootId)).toHaveLength(0)
+    const report = await SessionInbox.deliverUnique({
+      sessionID: input.rootId,
+      deliveryKey: "worker-report-fixture",
+      mode: "steer",
+      message: {
+        role: "user",
+        origin: { type: "system" },
+        parts: [{ type: "text", text: "A worker report is ready for inspection." }],
+      },
+    })
+    const item = (await SessionInbox.list(input.rootId)).find((item) => item.id === report.itemID)!
+    await SessionInbox.materializeItem(item, task.messageID)
+    await SessionInbox.commitReady(input.rootId, [item.id])
+    await OrynService.recoverEngineeringTurns({ caseId: input.caseId })
+    expect((await SessionInbox.list(input.rootId)).map((item) => item.mode)).toEqual(["steer"])
   })
 })

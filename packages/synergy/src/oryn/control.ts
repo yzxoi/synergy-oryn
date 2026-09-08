@@ -72,12 +72,21 @@ export namespace OrynControl {
     expectedRevision: number
     action: "pause" | "resume" | "takeover" | "cancel"
   }) {
-    using _lock = await Lock.tryAcquireWrite(`oryn-control:${input.caseId}`)
-    if (!_lock) throw storeError("INVALID_STAGE", "Case control is in progress; retry after cleanup")
-    const record = await OrynStore.control(input.caseId, input.expectedRevision, input.action)
-    if (record.control === "active") {
-      for (const id of await sessions(record)) await SessionDrive.request(id, "oryn-resume")
-    } else await stop(record)
+    let record: Case
+    {
+      using _lock = await Lock.tryAcquireWrite(`oryn-control:${input.caseId}`)
+      if (!_lock) throw storeError("INVALID_STAGE", "Case control is in progress; retry after cleanup")
+      record = await OrynStore.control(input.caseId, input.expectedRevision, input.action)
+      if (record.control === "active") {
+        for (const id of await sessions(record)) await SessionDrive.request(id, "oryn-resume")
+      } else await stop(record)
+    }
+    if (input.action === "resume") {
+      const { OrynService } = await import("./service")
+      await OrynService.recoverWorkers({ caseId: input.caseId })
+      await OrynService.recoverEngineeringTurns({ caseId: input.caseId })
+      record = (await OrynStore.getCase(input.caseId)) ?? record
+    }
     return record
   }
 
@@ -85,7 +94,7 @@ export namespace OrynControl {
     using _lock = await Lock.tryAcquireWrite(`oryn-control:${input.caseId}`)
     if (!_lock) throw storeError("INVALID_STAGE", "Case control is in progress; retry after cleanup")
     const record = await OrynStore.requestHandoff(input.caseId, input.reason)
-    await stop(record, input.callerSessionID)
+    await stop(record)
     return record
   }
 

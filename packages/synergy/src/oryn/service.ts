@@ -9,6 +9,7 @@ import { BossService } from "../boss/boss"
 import { OrynStore, sourceKey, storeError } from "./store"
 import { OrynCandidate } from "./candidate"
 import { OrynControl } from "./control"
+import { OrynResume } from "./resume"
 import { OrynConfig } from "./config"
 import { OrynEngineering } from "./engineering"
 import { OrynReports } from "./reports"
@@ -443,12 +444,16 @@ export namespace OrynService {
     return { assignmentId: assignment.id, workerSessionId: worker.id, deduped: existing !== undefined }
   }
 
-  export async function recoverWorkers() {
+  export async function recoverWorkers(input?: { caseId?: string }) {
     const log = Log.create({ service: "oryn.workers" })
     const result = { recovered: 0, failed: 0 }
     const config = await OrynConfig.info()
     if (!config?.enabled) return result
-    for (const record of await OrynStore.listCases({ control: "active" })) {
+    const records = input?.caseId
+      ? [await OrynStore.getCase(input.caseId)]
+      : await OrynStore.listCases({ control: "active" })
+    for (const record of records) {
+      if (!record || record.control !== "active") continue
       if (!record.engineeringSessionId || !config.repositories?.[record.repoAlias]) continue
       for (const assignment of await OrynStore.listAssignments(record.id)) {
         if (
@@ -463,7 +468,7 @@ export namespace OrynService {
             throw storeError("NOT_AUTHORIZED", "engineering startup policy blocks worker recovery")
           const root = await Session.get(record.engineeringSessionId)
           if (root.time.archived) throw storeError("NOT_AUTHORIZED", "engineering root is archived")
-          await ScopeContext.provide({
+          const dispatched = await ScopeContext.provide({
             scope: root.scope,
             workspace: root.workspace,
             fn: () =>
@@ -476,11 +481,47 @@ export namespace OrynService {
                 reviewDomain: assignment.reviewDomain,
               }),
           })
+          if ((await OrynResume.request(dispatched.workerSessionId)) === "exhausted") {
+            await requestHandoff({
+              callerSessionID: root.id,
+              caseId: record.id,
+              reason:
+                "Worker execution was interrupted after three recovery attempts; inspect its preserved workspace and action receipts.",
+            })
+          }
           result.recovered++
         } catch (error) {
           result.failed++
           log.warn("worker recovery failed", { caseId: record.id, assignmentId: assignment.id, error })
         }
+      }
+    }
+    return result
+  }
+
+  export async function recoverEngineeringTurns(input?: { caseId?: string }) {
+    const result = { recovered: 0, failed: 0 }
+    if (!(await OrynConfig.enabled())) return result
+    const records = input?.caseId
+      ? [await OrynStore.getCase(input.caseId)]
+      : await OrynStore.listCases({ control: "active" })
+    for (const record of records) {
+      if (!record || record.control !== "active") continue
+      try {
+        const started = await OrynEngineering.start(record.id)
+        if (started.state !== "started" || !started.sessionID) continue
+        const recovery = await OrynResume.request(started.sessionID)
+        if (recovery === "exhausted")
+          await requestHandoff({
+            callerSessionID: started.sessionID,
+            caseId: record.id,
+            reason:
+              "Engineering execution was interrupted after three recovery attempts; inspect the preserved action receipts before continuing.",
+          })
+        if (recovery === "recovered") result.recovered++
+      } catch (error) {
+        result.failed++
+        Log.create({ service: "oryn.recovery" }).warn("engineering turn recovery failed", { caseId: record.id, error })
       }
     }
     return result
