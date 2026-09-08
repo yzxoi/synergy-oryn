@@ -472,6 +472,7 @@ export const LocalBashBackend = {
     // ── ProcessRegistry setup (shared across both paths) ──────────
     try {
       regProc = ProcessRegistry.create({
+        sessionID: ctx.sessionID,
         command: params.command,
         description: params.description,
         cwd,
@@ -631,6 +632,10 @@ export const LocalBashBackend = {
     const childFinished = new Promise<"exited" | "error">((resolve) => {
       resolveChildFinished = resolve
     })
+    ProcessRegistry.setCompletion(
+      regProc,
+      childFinished.then(() => undefined),
+    )
 
     const appendTimeoutMarker = (message: string) => {
       if (timeoutMarkerAdded) return

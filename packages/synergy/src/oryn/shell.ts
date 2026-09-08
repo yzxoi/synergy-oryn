@@ -5,6 +5,7 @@ import { isAbsolute, join, relative, sep } from "node:path"
 import { isOrynAgent } from "../agent/builtin-oryn"
 import { Session } from "../session"
 import { SandboxBackend } from "../sandbox/backend"
+import type { ProcessAccessPolicy } from "../tool/process/policy"
 import type { BashExecutionPolicy } from "../tool/bash/policy"
 import { OrynConfig } from "./config"
 import { OrynGit } from "./git"
@@ -58,6 +59,27 @@ export namespace OrynShell {
     await OrynGit.read(directory, ["check-ref-format", `refs/heads/${branch}`])
     const writable = !attempt.candidateSha && ["code", "repro"].includes(assignment.stage)
     return { directory, common, branch, writable }
+  }
+
+  export async function processAccess(
+    input: ProcessAccessPolicy.Input,
+  ): Promise<ProcessAccessPolicy.Access | undefined> {
+    input.abort.throwIfAborted()
+    const binding = await OrynStore.sessionSourceBinding(input.sessionID)
+    if (!binding && !isOrynAgent(input.agent)) return
+    if (!binding || binding.role !== "worker" || !binding.caseId)
+      throw storeError("NOT_AUTHORIZED", "process access requires an Oryn worker assignment")
+    const assignment = (await OrynStore.listAssignments(binding.caseId)).find(
+      (item) => item.sessionId === input.sessionID,
+    )
+    const session = await Session.get(input.sessionID)
+    if (!assignment || input.agent !== assignment.agentId || session.agentOverride !== assignment.agentId)
+      throw storeError("NOT_AUTHORIZED", "process assignment identity changed")
+    if (input.action === "write" || input.action === "send-keys") {
+      const work = await owner(input)
+      if (!work?.writable) throw storeError("INVALID_STAGE", "process input requires an active writable assignment")
+    }
+    return { sessionID: input.sessionID }
   }
 
   export async function resolve(input: BashExecutionPolicy.Input): Promise<BashExecutionPolicy.Policy | undefined> {

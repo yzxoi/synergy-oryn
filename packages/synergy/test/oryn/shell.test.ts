@@ -97,6 +97,10 @@ async function execute(
   background = false,
   extra: { workdir?: string; targetID?: string; linkID?: string } = {},
 ) {
+  return executeTool(sessionID, "bash", { command, description: "Probe coder shell execution", background, ...extra })
+}
+
+async function executeTool(sessionID: string, toolName: "bash" | "process", args: Record<string, unknown>) {
   const session = await Session.get(sessionID)
   const catalog = await Bun.file(new URL("../tool/fixtures/models-api.json", import.meta.url)).json()
   const model = Provider.fromModelsDevProvider(ModelsDev.Provider.parse(catalog.openai)).models["gpt-4o"]
@@ -127,15 +131,12 @@ async function execute(
       model,
       agent,
       processor,
-      userTools: { bash: true },
+      userTools: { bash: true, process: true },
       includeMCP: false,
     })
-    const bash = resolved.executionTools.bash
-    if (!bash?.execute) throw new Error("coder has no bash execution tool")
-    const result = await bash.execute(
-      { command, description: "Probe coder shell execution", background, ...extra },
-      { toolCallId: crypto.randomUUID(), messages: [] },
-    )
+    const bash = resolved.executionTools[toolName]
+    if (!bash?.execute) throw new Error(`coder has no ${toolName} execution tool`)
+    const result = await bash.execute(args, { toolCallId: crypto.randomUUID(), messages: [] })
     return z
       .object({
         output: z.string(),
@@ -278,7 +279,11 @@ native(
         const home = await Bun.file(`${directory}/home-path`).text()
         expect(await Bun.file(`${home}/git/HEAD`).exists()).toBe(true)
         const proc = ProcessRegistry.get(id)!
-        await ProcessRegistry.terminate(proc)
+        expect(proc.sessionID).toBe(sessionID)
+        const listing = await executeTool(sessionID, "process", { action: "list" })
+        expect(listing.output).toContain(id)
+        await executeTool(sessionID, "process", { action: "kill", processId: id })
+        expect(await Bun.file(`${home}/git/HEAD`).exists()).toBe(false)
         const closed = Date.now() + 5000
         while (!ProcessRegistry.getFinished(id) && Date.now() < closed) await Bun.sleep(10)
         expect(ProcessRegistry.getFinished(id)).toBeDefined()
@@ -395,5 +400,107 @@ native("a similarly named unbound agent does not acquire Oryn shell restrictions
         abort: new AbortController().signal,
       }),
     ).toBeUndefined()
+  })
+})
+
+native("worker process list excludes foreign and unowned running and finished records", async () => {
+  await fixture(async ({ sessionID }) => {
+    const foreign = ProcessRegistry.create({ sessionID: "another-worker", command: "foreign-private-process" })
+    const finished = ProcessRegistry.create({
+      sessionID: "another-worker",
+      command: "foreign-finished-private-process",
+    })
+    ProcessRegistry.markExited(finished, 0, null)
+    const unowned = ProcessRegistry.create({ command: "unowned-host-process" })
+    try {
+      const result = await executeTool(sessionID, "process", { action: "list" })
+      expect(result.output).not.toContain(foreign.id)
+      expect(result.output).not.toContain(unowned.id)
+      expect(result.output).not.toContain(finished.id)
+      expect(result.output).not.toContain("foreign-private")
+    } finally {
+      ProcessRegistry.remove(foreign.id)
+      ProcessRegistry.remove(finished.id)
+      ProcessRegistry.remove(unowned.id)
+    }
+  })
+})
+
+native("worker cannot inspect, write, kill or remove another process by identifier", async () => {
+  await fixture(async ({ sessionID }) => {
+    let writes = 0
+    const foreign = ProcessRegistry.create({
+      sessionID: "another-worker",
+      command: "foreign-process",
+      stdin: {
+        write: (_data, cb) => {
+          writes++
+          cb?.()
+        },
+        end: () => {},
+      },
+    })
+    ProcessRegistry.markBackgrounded(foreign)
+    try {
+      for (const action of ["log", "poll", "write", "send-keys", "kill", "remove", "clear"])
+        await expect(
+          executeTool(sessionID, "process", { action, processId: foreign.id, data: "mutate", keys: ["ENTER"] }),
+        ).rejects.toThrow("Process is not owned by this Session")
+      expect(writes).toBe(0)
+      expect(ProcessRegistry.get(foreign.id)).toBe(foreign)
+    } finally {
+      ProcessRegistry.remove(foreign.id)
+    }
+  })
+})
+
+native("worker process input stops on freeze while owned cleanup remains available", async () => {
+  await fixture(async ({ sessionID, caseId, attemptId }) => {
+    let writes = 0
+    const own = ProcessRegistry.create({
+      sessionID,
+      command: "own-input",
+      stdin: {
+        write: (_data, cb) => {
+          writes++
+          cb?.()
+        },
+        end: () => {},
+      },
+    })
+    ProcessRegistry.markBackgrounded(own)
+    try {
+      await executeTool(sessionID, "process", { action: "write", processId: own.id, data: "before" })
+      expect(writes).toBe(1)
+      await OrynStore.mutateAttempt(caseId, attemptId, (attempt) => ({
+        ...attempt,
+        candidateSha: attempt.baselineSha,
+        disposition: "candidate_frozen",
+      }))
+      for (const action of ["write", "send-keys"])
+        await expect(
+          executeTool(sessionID, "process", { action, processId: own.id, data: "after", keys: ["ENTER"] }),
+        ).rejects.toThrow("process input requires an active writable assignment")
+      expect(writes).toBe(1)
+      await OrynStore.requestHandoff(caseId, "inspect manually")
+      await executeTool(sessionID, "process", { action: "kill", processId: own.id })
+      expect(ProcessRegistry.getFinished(own.id)?.sessionID).toBe(sessionID)
+      const result = await executeTool(sessionID, "process", { action: "list" })
+      expect(result.output).toContain(own.id)
+      await executeTool(sessionID, "process", { action: "clear", processId: own.id })
+      expect(ProcessRegistry.getFinished(own.id)).toBeUndefined()
+    } finally {
+      ProcessRegistry.remove(own.id)
+    }
+  })
+})
+
+native("worker process policy rejects remote targets before execution", async () => {
+  await fixture(async ({ sessionID }) => {
+    await Session.updateControlProfile(sessionID, "full_access")
+    for (const remote of [{ targetID: "remote-fixture" }, { linkID: "remote-fixture" }])
+      await expect(executeTool(sessionID, "process", { action: "list", ...remote })).rejects.toThrow(
+        "requires the built-in local process executor",
+      )
   })
 })

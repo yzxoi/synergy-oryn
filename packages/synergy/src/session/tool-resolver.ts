@@ -30,6 +30,7 @@ import { Scope } from "@/scope"
 import { ScopeContext } from "@/scope/context"
 import { EnforcementGate, type Capability, type GateOptions } from "@/enforcement/gate"
 import { SandboxBackend } from "@/sandbox/backend"
+import { ProcessAccessPolicy } from "@/tool/process/policy"
 import { BashExecutionPolicy } from "@/tool/bash/policy"
 import type { BashSandboxPrepare } from "@/tool/bash/shared"
 import type { ResolvedProfile } from "@/control-profile/types"
@@ -1583,6 +1584,22 @@ export namespace ToolResolver {
                 })
                 const toolCtx = { ...ctx, abort: combinedAbort }
                 using toolTimer = log.time("tool.execute", { tool: item.id, callID: options.toolCallId })
+
+                if (item.id === "process") {
+                  const access = await ProcessAccessPolicy.resolve({
+                    sessionID: ctx.sessionID,
+                    agent: ctx.agent,
+                    workspace,
+                    abort: combinedAbort,
+                    action: (args as { action: string }).action,
+                    processId: (args as { processId?: string }).processId,
+                  })
+                  if (access) {
+                    if (item.source || Object.hasOwn(args, "targetID") || Object.hasOwn(args, "linkID"))
+                      throw new Error("Host process policy requires the built-in local process executor")
+                    Object.assign(toolCtx.extra!, { processAccess: access })
+                  }
+                }
 
                 // ── Sandbox wrapping for bash ──────────────────────────
                 if (item.id === "bash") {

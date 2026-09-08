@@ -1,3 +1,4 @@
+import { ProcessAccessPolicy } from "../tool/process/policy"
 import { BashExecutionPolicy } from "../tool/bash/policy"
 import { OrynShell } from "./shell"
 import { ToolRegistry } from "../tool/registry"
@@ -28,6 +29,7 @@ export function registerOrynDomain(): void {
   if (registered) return
   registered = true
   BashExecutionPolicy.register("oryn", OrynShell.resolve)
+  ProcessAccessPolicy.register("oryn", OrynShell.processAccess)
 
   ToolRegistry.registerToolProvider("oryn", registerOrynTools)
   ToolExecutor.registerAdmissionProvider("oryn_check", async (input) => {

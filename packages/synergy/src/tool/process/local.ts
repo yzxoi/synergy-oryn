@@ -1,3 +1,4 @@
+import type { ProcessAccessPolicy } from "./policy"
 import { ProcessRegistry } from "../../process/registry"
 import { Shell } from "../../util/shell"
 import { encodeKeySequence } from "../../util/pty-keys"
@@ -11,6 +12,9 @@ import { ToolTimeout } from "../timeout"
 export namespace LocalProcessBackend {
   export async function execute(params: ProcessParams, ctx?: Tool.Context): Promise<ProcessResult> {
     const { action, processId } = params
+    const access = ctx?.extra?.processAccess as ProcessAccessPolicy.Access | undefined
+    const owns = (proc: ProcessRegistry.Process | ProcessRegistry.FinishedProcess) =>
+      !access || proc.sessionID === access.sessionID
     const withAttachments = async (
       result: ProcessResult,
       output: string,
@@ -35,7 +39,7 @@ export namespace LocalProcessBackend {
 
     if (action === "list") {
       ProcessRegistry.settleStaleProcesses()
-      const all = ProcessRegistry.listAll()
+      const all = ProcessRegistry.listAll().filter(owns)
       const processes = all.map((p) => ({
         processId: p.id,
         status: "exited" in p ? (p.exited ? toFinishedStatus(p.exitCode, p.exitSignal) : "running") : p.status,
@@ -64,6 +68,7 @@ export namespace LocalProcessBackend {
     const proc = ProcessRegistry.get(processId)
     const finished = ProcessRegistry.getFinished(processId)
     const target = proc || finished
+    if (target && !owns(target)) throw new Error("Process is not owned by this Session")
     const procInfo = target ? { command: target.command, description: target.description } : {}
 
     switch (action) {
@@ -291,8 +296,7 @@ export namespace LocalProcessBackend {
           }
         }
 
-        await ProcessRegistry.terminate(proc)
-        ProcessRegistry.markExited(proc, null, "SIGKILL")
+        await stop(proc)
 
         return {
           title: `Killed ${processId}`,
@@ -326,10 +330,7 @@ export namespace LocalProcessBackend {
       }
 
       case "remove": {
-        if (proc) {
-          if (proc.backgrounded) await ProcessRegistry.terminate(proc)
-          ProcessRegistry.markExited(proc, null, "SIGKILL")
-        }
+        if (proc) await stop(proc)
         ProcessRegistry.remove(processId)
 
         return {
@@ -375,4 +376,11 @@ function toFinishedStatus(
     return "killed"
   }
   return (exitCode ?? 0) === 0 ? "completed" : "failed"
+}
+
+async function stop(proc: ProcessRegistry.Process) {
+  await ProcessRegistry.terminate(proc, { allowExitedParent: true })
+  const completion = ProcessRegistry.completion(proc)
+  if (completion) await completion
+  else ProcessRegistry.markExited(proc, null, "SIGKILL")
 }
