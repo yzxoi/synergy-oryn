@@ -1,5 +1,11 @@
 import { z } from "zod"
 import { mkdir, symlink } from "node:fs/promises"
+import { BashExecutionPolicy } from "../../src/tool/bash/policy"
+import { OrynControl } from "../../src/oryn/control"
+import { OrynRoute } from "../../src/server/oryn"
+import { SessionManager } from "../../src/session/manager"
+import { SessionInbox } from "../../src/session/inbox"
+import { SessionDrive } from "../../src/session/drive"
 import { ProcessRegistry } from "../../src/process/registry"
 import { SandboxBackend } from "../../src/sandbox/backend"
 import { OrynShell } from "../../src/oryn/shell"
@@ -100,7 +106,12 @@ async function execute(
   return executeTool(sessionID, "bash", { command, description: "Probe coder shell execution", background, ...extra })
 }
 
-async function executeTool(sessionID: string, toolName: "bash" | "process", args: Record<string, unknown>) {
+async function executeTool(
+  sessionID: string,
+  toolName: "bash" | "process",
+  args: Record<string, unknown>,
+  abort = new AbortController().signal,
+) {
   const session = await Session.get(sessionID)
   const catalog = await Bun.file(new URL("../tool/fixtures/models-api.json", import.meta.url)).json()
   const model = Provider.fromModelsDevProvider(ModelsDev.Provider.parse(catalog.openai)).models["gpt-4o"]
@@ -108,7 +119,7 @@ async function executeTool(sessionID: string, toolName: "bash" | "process", args
   const processor = SessionProcessor.create({
     sessionID,
     model,
-    abort: new AbortController().signal,
+    abort,
     assistantMessage: {
       id: `msg_${crypto.randomUUID()}`,
       sessionID,
@@ -136,7 +147,7 @@ async function executeTool(sessionID: string, toolName: "bash" | "process", args
     })
     const bash = resolved.executionTools[toolName]
     if (!bash?.execute) throw new Error(`coder has no ${toolName} execution tool`)
-    const result = await bash.execute(args, { toolCallId: crypto.randomUUID(), messages: [] })
+    const result = await bash.execute(args, { toolCallId: crypto.randomUUID(), messages: [], abortSignal: abort })
     return z
       .object({
         output: z.string(),
@@ -504,3 +515,263 @@ native("worker process policy rejects remote targets before execution", async ()
       )
   })
 })
+
+native.each(["pause", "takeover", "cancel"] as const)(
+  "Case %s stops its actual background worker before returning",
+  async (action) => {
+    await fixture(async ({ sessionID, directory, caseId }) => {
+      await Bun.write(
+        `${directory}/control-background.ts`,
+        "await Bun.write('control-started','yes');await Bun.sleep(30000)",
+      )
+      const result = await execute(sessionID, "bun control-background.ts", true)
+      const id = result.metadata.processId!
+      try {
+        const deadline = Date.now() + 5000
+        while (!(await Bun.file(`${directory}/control-started`).exists()) && Date.now() < deadline) await Bun.sleep(10)
+        expect(await Bun.file(`${directory}/control-started`).exists()).toBe(true)
+        const record = (await OrynStore.getCase(caseId))!
+        const response = await OrynRoute.request(`/cases/${caseId}/control`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ expectedRevision: record.revision, action }),
+        })
+        expect(response.status).toBe(200)
+        expect(ProcessRegistry.get(id)).toBeUndefined()
+        expect(ProcessRegistry.getFinished(id)).toBeDefined()
+      } finally {
+        const proc = ProcessRegistry.get(id)
+        if (proc) {
+          await ProcessRegistry.terminate(proc)
+          await ProcessRegistry.completion(proc)
+        }
+        ProcessRegistry.remove(id)
+      }
+    })
+  },
+)
+
+native("paused Case keeps queued work without waking a worker", async () => {
+  await fixture(async ({ sessionID, caseId }) => {
+    const wake = spyOn(SessionManager, "scheduleWake").mockImplementation(() => {})
+    let itemID: string | undefined
+    try {
+      const item = await SessionInbox.deliverUnique({
+        sessionID,
+        deliveryKey: "pause-queued",
+        mode: "task",
+        message: { role: "user", parts: [{ type: "text", text: "Do the assigned task" }] },
+      })
+      itemID = item.itemID
+      const record = (await OrynStore.getCase(caseId))!
+      await OrynStore.control(caseId, record.revision, "pause")
+      expect(await SessionDrive.request(sessionID, "paused-fixture")).toBe(false)
+      expect(wake).not.toHaveBeenCalled()
+      expect((await SessionInbox.list(sessionID)).some((item) => item.id === itemID)).toBe(true)
+      let ran = false
+      await expect(
+        SessionManager.run(sessionID, async () => {
+          ran = true
+        }),
+      ).rejects.toThrow("Session execution is suspended")
+      expect(ran).toBe(false)
+      const paused = (await OrynStore.getCase(caseId))!
+      await OrynControl.change({ caseId, expectedRevision: paused.revision, action: "resume" })
+      expect(wake).toHaveBeenCalled()
+      expect((await SessionInbox.list(sessionID)).some((item) => item.id === itemID)).toBe(true)
+    } finally {
+      if (itemID) await SessionInbox.remove({ sessionID, itemID })
+      wake.mockRestore()
+    }
+  })
+})
+
+native.each(["takeover", "cancel"] as const)("resuming after %s cannot run an invalidated worker", async (action) => {
+  await fixture(async ({ sessionID, caseId }) => {
+    const wake = spyOn(SessionManager, "scheduleWake").mockImplementation(() => {})
+    let itemID: string | undefined
+    try {
+      const item = await SessionInbox.deliverUnique({
+        sessionID,
+        deliveryKey: "invalidated-worker",
+        mode: "task",
+        message: { role: "user", parts: [{ type: "text", text: "Continue obsolete assignment" }] },
+      })
+      itemID = item.itemID
+      const record = (await OrynStore.getCase(caseId))!
+      const stopped = await OrynControl.change({ caseId, expectedRevision: record.revision, action })
+      await OrynControl.change({ caseId, expectedRevision: stopped.revision, action: "resume" })
+      expect(await SessionDrive.request(sessionID, "invalidated-fixture")).toBe(false)
+      expect(wake).not.toHaveBeenCalled()
+      let ran = false
+      await expect(
+        SessionManager.run(sessionID, async () => {
+          ran = true
+        }),
+      ).rejects.toThrow("Session execution is suspended")
+      expect(ran).toBe(false)
+      expect((await SessionInbox.list(sessionID)).some((item) => item.id === itemID)).toBe(true)
+    } finally {
+      if (itemID) await SessionInbox.remove({ sessionID, itemID })
+      wake.mockRestore()
+    }
+  })
+})
+
+native(
+  "Case pause waits for the worker lease but leaves the QA lease running",
+  async () => {
+    await fixture(async ({ sessionID, caseId }) => {
+      const scope = ScopeContext.current.scope
+      const qa = await Session.create({
+        scope,
+        workspace: { type: "main", path: scope.directory, scopeID: scope.id },
+        agentOverride: "oryn",
+      })
+      const binding = (await OrynStore.sessionSourceBinding(sessionID))!
+      await OrynStore.bindSessionSource({ sessionID: qa.id, caseId, role: "qa", identity: binding.identity! })
+      const entered = Promise.withResolvers<SessionManager.LoopLease>()
+      const qaEntered = Promise.withResolvers<SessionManager.LoopLease>()
+      const cleanup = Promise.withResolvers<void>()
+      const qaCleanup = Promise.withResolvers<void>()
+      const worker = SessionManager.run(sessionID, async (lease) => {
+        entered.resolve(lease)
+        await cleanup.promise
+      })
+      const qaRun = SessionManager.run(qa.id, async (lease) => {
+        qaEntered.resolve(lease)
+        await qaCleanup.promise
+      })
+      let control: Promise<Response> | undefined
+      try {
+        const lease = await entered.promise
+        const qaLease = await qaEntered.promise
+        const aborted = Promise.withResolvers<void>()
+        lease.signal.addEventListener("abort", () => aborted.resolve(), { once: true })
+        const record = (await OrynStore.getCase(caseId))!
+        let returned = false
+        control = Promise.resolve(
+          OrynRoute.request(`/cases/${caseId}/control`, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ expectedRevision: record.revision, action: "pause" }),
+          }),
+        ).then((response) => {
+          returned = true
+          return response
+        })
+        await aborted.promise
+        expect(returned).toBe(false)
+        expect(qaLease.signal.aborted).toBe(false)
+        const paused = (await OrynStore.getCase(caseId))!
+        await expect(
+          OrynControl.change({ caseId, expectedRevision: paused.revision, action: "resume" }),
+        ).rejects.toThrow("Case control is in progress")
+        await expect(
+          OrynControl.handoff({ caseId, reason: "concurrent handoff", callerSessionID: sessionID }),
+        ).rejects.toThrow("Case control is in progress")
+        cleanup.resolve()
+        await worker
+        expect((await control).status).toBe(200)
+        expect(qaLease.signal.aborted).toBe(false)
+      } finally {
+        cleanup.resolve()
+        qaCleanup.resolve()
+        await Promise.allSettled([worker, qaRun, ...(control ? [control] : [])])
+        await Session.remove(qa.id)
+      }
+    })
+  },
+  15000,
+)
+
+native("startup recovery stops a paused Case after interrupted control cleanup", async () => {
+  await fixture(async ({ sessionID, directory, caseId }) => {
+    await Bun.write(`${directory}/recover-background.ts`, "await Bun.sleep(30000)")
+    const result = await execute(sessionID, "bun recover-background.ts", true)
+    const id = result.metadata.processId!
+    try {
+      const record = (await OrynStore.getCase(caseId))!
+      await OrynStore.control(caseId, record.revision, "pause")
+      expect(ProcessRegistry.get(id)).toBeDefined()
+      await OrynControl.recover()
+      expect(ProcessRegistry.get(id)).toBeUndefined()
+      expect(ProcessRegistry.getFinished(id)).toBeDefined()
+    } finally {
+      const proc = ProcessRegistry.get(id)
+      if (proc) {
+        await ProcessRegistry.terminate(proc)
+        await ProcessRegistry.completion(proc)
+      }
+      ProcessRegistry.remove(id)
+    }
+  })
+})
+
+native(
+  "pause waits for cancelled shell preparation and prevents a late spawn",
+  async () => {
+    await fixture(async ({ sessionID, directory, caseId }) => {
+      const prepared = Promise.withResolvers<BashExecutionPolicy.Prepared>()
+      const release = Promise.withResolvers<void>()
+      const entered = Promise.withResolvers<SessionManager.LoopLease>()
+      const resolve = BashExecutionPolicy.resolve
+      const intercept = spyOn(BashExecutionPolicy, "resolve").mockImplementation(async (input) => {
+        const policy = await resolve(input)
+        if (!policy || input.sessionID !== sessionID) return policy
+        return {
+          prepare: async (command) => {
+            const result = await policy.prepare(command)
+            prepared.resolve(result)
+            await release.promise
+            return result
+          },
+        }
+      })
+      const operation = SessionManager.run(sessionID, async (lease) => {
+        entered.resolve(lease)
+        return executeTool(
+          sessionID,
+          "bash",
+          { command: "printf mutation > late-spawn", description: "Attempt late spawn" },
+          lease.signal,
+        )
+      }).then(
+        (value) => value,
+        (error) => error,
+      )
+      let control: Promise<Response> | undefined
+      try {
+        const lease = await entered.promise
+        const scratch = await prepared.promise
+        const aborted = Promise.withResolvers<void>()
+        lease.signal.addEventListener("abort", () => aborted.resolve(), { once: true })
+        const record = (await OrynStore.getCase(caseId))!
+        let returned = false
+        control = Promise.resolve(
+          OrynRoute.request(`/cases/${caseId}/control`, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ expectedRevision: record.revision, action: "pause" }),
+          }),
+        ).then((response) => {
+          returned = true
+          return response
+        })
+        await aborted.promise
+        await operation
+        expect(returned).toBe(false)
+        expect(await Bun.file(`${directory}/late-spawn`).exists()).toBe(false)
+        release.resolve()
+        expect((await control).status).toBe(200)
+        expect(await Bun.file(`${directory}/late-spawn`).exists()).toBe(false)
+        expect(await Bun.file(`${scratch.environment.HOME}/git/HEAD`).exists()).toBe(false)
+      } finally {
+        release.resolve()
+        await Promise.allSettled([operation, ...(control ? [control] : [])])
+        intercept.mockRestore()
+      }
+    })
+  },
+  15000,
+)

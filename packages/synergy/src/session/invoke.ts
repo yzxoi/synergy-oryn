@@ -9,6 +9,7 @@ import z from "zod"
 import { Identifier } from "../id/id"
 import { MessageV2 } from "./message-v2"
 import { Log } from "../util/log"
+import { SessionRunPolicy } from "./run-policy"
 import { Session } from "."
 import { SessionEvent } from "./event"
 import { Agent } from "../agent/agent"
@@ -408,6 +409,7 @@ export namespace SessionInvoke {
     let scopeID = (session.scope as Scope).id
 
     while (true) {
+      if (abort.aborted || !(await SessionRunPolicy.allowed(await Session.get(sessionID)))) break
       const root = (await SessionHistory.modelMessages({ sessionID })).findLast(
         (message) => message.info.role === "user" && message.info.isRoot === true,
       )
@@ -432,6 +434,7 @@ export namespace SessionInvoke {
               log.info("loop", { step, sessionID })
               if (abort.aborted) break
               session = await Session.get(sessionID)
+              if (!(await SessionRunPolicy.allowed(session))) break
               SessionManager.assertExecutionContext(session, "session loop refresh")
               scopeID = (session.scope as Scope).id
               let msgs = await effectiveCompactedMessages(sessionID)
@@ -1371,6 +1374,7 @@ export namespace SessionInvoke {
               }
             }
 
+            if (!(await SessionRunPolicy.allowed(await Session.get(sessionID)))) return false
             const taskItem = await SessionInbox.peekTask(sessionID)
             if (taskItem) {
               log.info("next task found, materializing", { sessionID, itemID: taskItem.id })

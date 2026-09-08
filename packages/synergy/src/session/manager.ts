@@ -15,6 +15,7 @@ import { SessionEndpoint } from "./endpoint"
 import { SessionMemoryPressure } from "./memory-pressure"
 import { SessionInbox } from "./inbox"
 import { ObservabilityMetrics } from "@/observability/metrics"
+import { SessionRunPolicy } from "./run-policy"
 import { SessionProjectHealth } from "./project-health"
 
 const log = Log.create({ service: "session.manager" })
@@ -110,7 +111,7 @@ export namespace SessionManager {
   }
 
   const runtimes = new Map<string, SessionRuntime>()
-  const running = new Set<Promise<void>>()
+  const running = new Map<Promise<void>, string>()
   let accepting = true
 
   export function closeAdmission() {
@@ -119,8 +120,25 @@ export namespace SessionManager {
   export function openAdmission() {
     accepting = true
   }
-  export async function drain() {
-    while (running.size) await Promise.all([...running])
+  export function trackExecution<T>(sessionID: string, execute: () => Promise<T>): Promise<T> {
+    const work = execute()
+    const completion = work.then(
+      () => undefined,
+      () => undefined,
+    )
+    running.set(completion, sessionID)
+    void completion.then(() => running.delete(completion))
+    return work
+  }
+
+  export async function drain(sessionID?: string) {
+    while (true) {
+      const pending = [...running]
+        .filter(([, id]) => sessionID === undefined || id === sessionID)
+        .map(([promise]) => promise)
+      if (!pending.length) return
+      await Promise.all(pending)
+    }
   }
 
   // A session's scope is immutable for its lifetime, so the sessionID -> scopeID
@@ -349,10 +367,11 @@ export namespace SessionManager {
     if (!lease || lease.sessionID !== sessionID || !runtime || !owns(runtime, lease)) throw new BusyError(sessionID)
     let completed = false
     const completion = Promise.withResolvers<void>()
-    running.add(completion.promise)
+    running.set(completion.promise, sessionID)
 
     try {
       const session = await requireSession(sessionID)
+      await SessionRunPolicy.assert(session)
       const scope = session.scope as Scope
       const workspace = (session as Info).workspace ?? {
         type: "main" as const,
@@ -366,6 +385,7 @@ export namespace SessionManager {
           workspace,
           ensure: scope.type === "project",
           fn: async () => {
+            await SessionRunPolicy.assert(session)
             assertExecutionContext(session, "session manager run")
             const workspace = (session as Info).workspace
             if (workspace?.type !== "git_worktree") {
@@ -374,6 +394,7 @@ export namespace SessionManager {
             }
             await SessionProjectHealth.lockWorktree(workspace.path)
             try {
+              await SessionRunPolicy.assert(session)
               activate(lease)
               return await fn(lease)
             } finally {
@@ -530,6 +551,8 @@ export namespace SessionManager {
 
   export async function wake(sessionID: string): Promise<void> {
     if (isRunning(sessionID)) return
+    const session = await getSession(sessionID)
+    if (!session || !(await SessionRunPolicy.allowed(session))) return
     if (!(await SessionInbox.hasRunnableItem(sessionID))) return
     const { SessionInvoke } = await import("./invoke")
     await SessionInvoke.repairAfterAbort(sessionID)

@@ -1,3 +1,4 @@
+import { OrynControl } from "../oryn/control"
 import { Hono, type Context } from "hono"
 import { describeRoute, resolver, validator } from "hono-openapi"
 import z from "zod"
@@ -255,7 +256,7 @@ export const OrynRoute = new Hono()
       try {
         const { id } = c.req.valid("param")
         const { expectedRevision, action } = c.req.valid("json")
-        const record = await OrynStore.control(id, expectedRevision, action)
+        const record = await OrynControl.change({ caseId: id, expectedRevision, action })
         return c.json({
           id: record.id,
           revision: record.revision,

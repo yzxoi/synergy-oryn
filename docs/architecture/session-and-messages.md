@@ -79,6 +79,10 @@ A fork is not a child task. It copies the source session's effective history and
 
 Child sessions inherit the parent workspace and interaction context by default. Their effective control profile is resolved through the parent chain rather than copied as an independent root profile.
 
+## Host Execution Eligibility
+
+SessionRunPolicy allows Host workflows to deny Session execution from their current durable state. SessionManager admission and wake, SessionDrive arbitration, and SessionInvoke inference/task draining consult that policy. A denied Session retains queued task Inbox entries. SessionManager also tracks physical built-in tool callbacks independently of prompt cancellation; `drain(sessionID)` waits for that Session's loop and registered callbacks, while `drain()` waits globally. Oryn uses these hooks for [Case execution control](../decisions/implemented/bug-fix/2026-09-08-oryn-case-execution-control.md); ordinary unbound Sessions keep their existing behavior.
+
 ## One Active Loop
 
 `SessionManager.acquire()` synchronously grants one caller a generation-tagged loop lease before asynchronous session or workspace setup begins. The runtime keeps that lease as its owner through `starting`, `running`, and `stopping`; `signalAbort()` signals the owner controller and sets the phase to `stopping` but does not publish idle events or repair persisted state. Only `release()` with the exact current lease clears ownership and publishes the lifecycle idle event (`SessionEvent.Idle`), so stale cleanup cannot terminate a replacement loop. A second caller waits on the existing runtime instead of creating a competing writer.

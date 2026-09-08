@@ -1682,7 +1682,10 @@ export namespace ToolResolver {
                 )
                 await toolTrace.phase("plugin.runtime.before.end", "plugin before end")
                 await toolTrace.phase("tool.execute.start", "tool execute start")
-                const result = await settleExecutionOnAbort(() => item.execute(args, toolCtx), combinedAbort)
+                const result = await settleExecutionOnAbort(
+                  () => SessionManager.trackExecution(ctx.sessionID, () => item.execute(args, toolCtx)),
+                  combinedAbort,
+                )
                 await RolloutTool.capture(result)
                 Tool.validateAttachmentResult(item.id, result)
                 await toolTrace.phase("tool.execute.end", "tool execute end", {

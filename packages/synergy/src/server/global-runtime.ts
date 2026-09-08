@@ -1,3 +1,4 @@
+import { OrynControl } from "../oryn/control"
 import { Agenda } from "@/agenda"
 import { AgendaBootstrap } from "@/agenda/bootstrap"
 import { ChannelOutbound } from "@/channel/outbound"
@@ -54,6 +55,8 @@ export namespace GlobalRuntime {
           await BossRuntime.ensure().catch((error) => {
             log.warn("runtime boss provisioning failed", { error })
           })
+          const controlRecovery = await OrynControl.recover()
+          if (controlRecovery.failed) log.warn("oryn control recovery incomplete", controlRecovery)
           const orynRecovery = await OrynEngineering.recover()
           const workerRecovery = await OrynService.recoverWorkers()
           const reportRecovery = await OrynReports.recover()

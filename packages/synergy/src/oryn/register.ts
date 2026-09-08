@@ -1,3 +1,5 @@
+import { SessionRunPolicy } from "../session/run-policy"
+import { OrynControl } from "./control"
 import { ProcessAccessPolicy } from "../tool/process/policy"
 import { BashExecutionPolicy } from "../tool/bash/policy"
 import { OrynShell } from "./shell"
@@ -28,6 +30,7 @@ let registered = false
 export function registerOrynDomain(): void {
   if (registered) return
   registered = true
+  SessionRunPolicy.register("oryn", OrynControl.canRun)
   BashExecutionPolicy.register("oryn", OrynShell.resolve)
   ProcessAccessPolicy.register("oryn", OrynShell.processAccess)
 

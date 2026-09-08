@@ -8,6 +8,7 @@ import { Session } from "../session"
 import { BossService } from "../boss/boss"
 import { OrynStore, sourceKey, storeError } from "./store"
 import { OrynCandidate } from "./candidate"
+import { OrynControl } from "./control"
 import { OrynConfig } from "./config"
 import { OrynEngineering } from "./engineering"
 import { OrynReports } from "./reports"
@@ -230,7 +231,7 @@ export namespace OrynService {
     }
     if (!input.reason.trim() || input.reason.length > 2000)
       throw storeError("INVALID_STAGE", "handoff requires a bounded reason")
-    const handed = await OrynStore.requestHandoff(input.caseId, input.reason)
+    const handed = await OrynControl.handoff(input)
     await queueHandoffNotifications(handed)
     await drainOutbox()
     return handed

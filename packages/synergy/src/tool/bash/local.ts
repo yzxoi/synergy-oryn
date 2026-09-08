@@ -196,6 +196,7 @@ export function withLinuxChildOomPreference(command: string, platform = process.
 
 export const LocalBashBackend = {
   async execute(params: BashParams, ctx: BashContext): Promise<BashResult> {
+    ctx.abort.throwIfAborted()
     const policy = (ctx.extra as { bashExecutionPolicy?: BashExecutionPolicy.Policy } | undefined)?.bashExecutionPolicy
     const shell = Shell.acceptable()
     log.info("bash tool using shell", { shell })
@@ -539,6 +540,7 @@ export const LocalBashBackend = {
 
     let child: ReturnType<typeof spawn>
     try {
+      ctx.abort.throwIfAborted()
       if (sandboxWrapper && !sandboxWrapper.skipReason) {
         const invocation = detachedDaemonAllowed
           ? { command: sandboxWrapper.command, args: sandboxWrapper.args }

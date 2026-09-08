@@ -1,3 +1,4 @@
+import { OrynControl } from "./control"
 import { Lock } from "../util/lock"
 import { OrynPublication } from "./publication"
 import { externalIdentityHash } from "../util/identity"
@@ -139,7 +140,7 @@ function requireTransport(): PublishTransport {
 const CANDIDATE_OPERATIONS: PublishOperation[] = ["ensure_draft", "refresh_pr", "publish_review", "mark_ready"]
 
 async function actionTolerantPause(caseId: string, expectedRevision: number): Promise<void> {
-  await OrynStore.control(caseId, expectedRevision, "pause").catch(() => undefined)
+  await OrynControl.change({ caseId, expectedRevision, action: "pause" }).catch(() => undefined)
 }
 
 async function completeReady(action: ActionReceipt): Promise<void> {
