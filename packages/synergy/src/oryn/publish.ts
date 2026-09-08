@@ -464,6 +464,7 @@ export namespace OrynPublish {
         input.operation === "mark_ready" ||
         aborted ||
         name === "GitHubApiError" ||
+        name === "PublishGitUncertainError" ||
         name === "AbortError" ||
         name === "TimeoutError"
       if (name === "PublishNonFastForwardError") {

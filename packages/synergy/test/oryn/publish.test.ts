@@ -5,7 +5,7 @@ import { OrynService } from "../../src/oryn/service"
 import { OrynStore } from "../../src/oryn/store"
 import { OrynPublish, caseMarker, orynBranch, setTransport } from "../../src/oryn/publish"
 import type { PublishExecuteInput, PublishExecuteResult, PublishTransport } from "../../src/oryn/publish"
-import { PublishNonFastForwardError } from "../../src/channel/provider/github/publish"
+import { PublishGitUncertainError, PublishNonFastForwardError } from "../../src/channel/provider/github/push"
 import { tmpdir, runCheck } from "./fixture"
 
 function errorCode(error: unknown): string | undefined {
@@ -502,58 +502,62 @@ describe("OrynPublish ledger", () => {
     })
   })
 
-  test("transient failure parks the action as ambiguous and bounded reconciliation settles it", async () => {
-    await withPubScope(async (root) => {
-      const seeded = await seedFrozen(root)
-      const marker = caseMarker(seeded.caseId)
-      const ok = fakeTransport({ candidateSha: seeded.candidateSha, marker })
-      setTransport(ok)
-      await OrynPublish.publish({
-        callerSessionID: seeded.engineeringSessionId,
-        caseId: seeded.caseId,
-        operation: "ensure_draft",
-        requestKey: "rk_pr_amb",
-        title: "fix: publication fixture",
-      })
+  test.each(["abort", "git-transport"])(
+    "%s failure parks the action as ambiguous and bounded reconciliation settles it",
+    async (kind) => {
+      await withPubScope(async (root) => {
+        const seeded = await seedFrozen(root)
+        const marker = caseMarker(seeded.caseId)
+        const ok = fakeTransport({ candidateSha: seeded.candidateSha, marker })
+        setTransport(ok)
+        await OrynPublish.publish({
+          callerSessionID: seeded.engineeringSessionId,
+          caseId: seeded.caseId,
+          operation: "ensure_draft",
+          requestKey: "rk_pr_amb",
+          title: "fix: publication fixture",
+        })
 
-      // refresh_pr with an already-aborted signal → outcome unknown.
-      const controller = new AbortController()
-      controller.abort()
-      const flaky = fakeTransport({
-        candidateSha: seeded.candidateSha,
-        marker,
-        onExecute: async () => {
-          throw new DOMException("The operation was aborted.", "AbortError")
-        },
-      })
-      setTransport(flaky)
-      try {
-        await OrynPublish.publish(
-          {
-            callerSessionID: seeded.engineeringSessionId,
-            caseId: seeded.caseId,
-            operation: "refresh_pr",
-            requestKey: "rk_refresh_amb",
+        // Neither cancellation nor a failed Git transport proves the remote write did not apply.
+        const controller = new AbortController()
+        if (kind === "abort") controller.abort()
+        const flaky = fakeTransport({
+          candidateSha: seeded.candidateSha,
+          marker,
+          onExecute: async () => {
+            if (kind === "git-transport") throw new PublishGitUncertainError()
+            throw new DOMException("The operation was aborted.", "AbortError")
           },
-          controller.signal,
+        })
+        setTransport(flaky)
+        try {
+          await OrynPublish.publish(
+            {
+              callerSessionID: seeded.engineeringSessionId,
+              caseId: seeded.caseId,
+              operation: "refresh_pr",
+              requestKey: "rk_refresh_amb",
+            },
+            controller.signal,
+          )
+          expect.unreachable()
+        } catch (error) {
+          expect(errorCode(error)).toBe("REMOTE_AMBIGUOUS")
+        }
+        const ambiguous = (await OrynStore.listActions({ caseId: seeded.caseId })).find(
+          (a) => a.requestKey === "rk_refresh_amb",
         )
-        expect.unreachable()
-      } catch (error) {
-        expect(errorCode(error)).toBe("REMOTE_AMBIGUOUS")
-      }
-      const ambiguous = (await OrynStore.listActions({ caseId: seeded.caseId })).find(
-        (a) => a.requestKey === "rk_refresh_amb",
-      )
-      expect(ambiguous?.state).toBe("ambiguous")
+        expect(ambiguous?.state).toBe("ambiguous")
 
-      // Reconciliation observes our marker + head + author and settles.
-      setTransport(ok)
-      const settled = await OrynPublish.reconcileAmbiguous(seeded.caseId, ambiguous!.id)
-      expect(settled.state).toBe("acknowledged")
-      const after = await OrynStore.getCase(seeded.caseId)
-      expect(after?.control).toBe("active")
-    })
-  })
+        // Reconciliation observes our marker + head + author and settles.
+        setTransport(ok)
+        const settled = await OrynPublish.reconcileAmbiguous(seeded.caseId, ambiguous!.id)
+        expect(settled.state).toBe("acknowledged")
+        const after = await OrynStore.getCase(seeded.caseId)
+        expect(after?.control).toBe("active")
+      })
+    },
+  )
 
   test("reconciliation that stays uncertain pauses the case and never replays", async () => {
     await withPubScope(async (root) => {
@@ -684,7 +688,7 @@ describe("OrynPublish ledger", () => {
           candidateSha: seeded.candidateSha,
           marker,
           onExecute: async () => {
-            throw new PublishNonFastForwardError(orynBranch(seeded.caseId), "! [rejected] fetch first")
+            throw new PublishNonFastForwardError(orynBranch(seeded.caseId))
           },
         }),
       )

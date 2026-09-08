@@ -1,58 +1,15 @@
 import { Log } from "@/util/log"
-import { GitHubApiError, GitHubChannelAuth, buildCredentialCommand } from "./api"
+import { OrynGithubPush } from "./push"
+import { GitHubApiError, GitHubChannelAuth } from "./api"
 import { record } from "./record"
 import type { PublishExecuteInput, PublishExecuteResult, PublishFacts, PublishTransport } from "../../../oryn/publish"
 
 const log = Log.create({ service: "channel.github.oryn-publish" })
 
-/** Deterministic rejection: the remote branch diverged, so the push never applied. */
-export class PublishNonFastForwardError extends Error {
-  override readonly name = "PublishNonFastForwardError"
-  constructor(branch: string, stderr: string) {
-    super(`push to ${branch} rejected as non-fast-forward; human reconciliation required`)
-    log.warn("oryn publish push rejected", { branch, stderr: stderr.slice(0, 300) })
-  }
-}
-
 function splitRepository(repository: string): { owner: string; repo: string } {
   const [owner, repo, ...extra] = repository.split("/")
   if (!owner || !repo || extra.length > 0) throw new Error(`Invalid GitHub repository name: ${repository}`)
   return { owner, repo }
-}
-
-/**
- * Push the frozen candidate to the public branch. Pushing an explicit SHA to
- * `refs/heads/<branch>` is fast-forward-only by construction: GitHub rejects
- * diverged heads without `--force`, which this transport never passes.
- */
-async function pushCandidate(input: {
-  repository: string
-  directory: string
-  candidateSha: string
-  branch: string
-  signal?: AbortSignal
-}): Promise<void> {
-  const { owner, repo } = splitRepository(input.repository)
-  const token = await GitHubChannelAuth.resolveInstallationToken(owner, repo, input.signal)
-  const credential = buildCredentialCommand({ token, args: [] })
-  const proc = Bun.spawn(
-    ["git", ...credential.args, "push", "origin", `${input.candidateSha}:refs/heads/${input.branch}`],
-    {
-      cwd: input.directory,
-      env: credential.env,
-      stdout: "pipe",
-      stderr: "pipe",
-      ...(input.signal ? { signal: input.signal } : {}),
-    },
-  )
-  const stderr = await new Response(proc.stderr).text()
-  await new Response(proc.stdout).text()
-  if (proc.exitCode !== 0) {
-    if (/non-fast-forward|rejected|fetch first/i.test(stderr)) {
-      throw new PublishNonFastForwardError(input.branch, stderr)
-    }
-    throw new Error(`git push failed for ${input.branch}: ${stderr.slice(0, 300)}`)
-  }
 }
 
 const FAILING_CONCLUSIONS = new Set([
@@ -110,7 +67,8 @@ export namespace OrynGithubPublish {
             if (!input.directory || !input.candidateSha || !input.branch) {
               throw new Error("branch push requires a workspace, candidate SHA, and branch")
             }
-            await pushCandidate({
+            await OrynGithubPush.push({
+              token,
               repository: input.repository,
               directory: input.directory,
               candidateSha: input.candidateSha,

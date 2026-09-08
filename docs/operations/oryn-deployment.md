@@ -85,6 +85,8 @@ Do not grant Administration or protection-bypass privileges. GitHub does not pro
 
 Install the App on the target repositories (placeholder `owner/repo`), set the app credentials in the runtime environment (`SYNERGY_GITHUB_APP_ID`, `SYNERGY_GITHUB_APP_PRIVATE_KEY`), and confirm `resolveInstallation` succeeds before enabling `oryn.repositories`.
 
+Oryn pushes through the Host-installed Git executable to the configured repository's explicit `https://github.com/owner/repo.git` URL. The publishing process does not inherit personal Git config, proxy variables, SSH settings, custom CA overrides or candidate hooks. Provision direct outbound HTTPS and a working system trust store for Git; changing `origin` or a worker environment does not configure publication. GitHub Enterprise and proxy-only publication require a separate reviewed transport configuration and are not supported by this path. Candidate objects must remain available until publication settles. Temporary bare repositories contain no persisted installation token; normal completion/cancellation removes them. After a Host crash, remove leftover `oryn-push-*` cache directories only while that runtime is stopped.
+
 ## Configuration Checklist
 
 Enable Oryn only after all of the following hold:
