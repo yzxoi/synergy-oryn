@@ -1,6 +1,14 @@
 import { z } from "zod"
 import { MessageContext } from "../../../src/channel/types"
-import { ActionReceipt, Assignment, Case } from "../../../src/oryn/schema"
+import {
+  ActionReceipt,
+  Assignment,
+  Attempt,
+  Case,
+  RunReceipt,
+  ReviewReport,
+  WorkerReport,
+} from "../../../src/oryn/schema"
 
 export const RuntimeMessage = MessageContext.omit({ channelType: true, accountId: true })
 
@@ -13,6 +21,10 @@ export const RuntimeSnapshot = z.object({
   pid: z.number(),
   cases: Case.array(),
   assignments: Assignment.array(),
+  attempts: Attempt.array(),
+  runs: RunReceipt.array(),
+  reviews: ReviewReport.array(),
+  reports: WorkerReport.array(),
   actions: ActionReceipt.array(),
   sessions: z.array(
     z.object({

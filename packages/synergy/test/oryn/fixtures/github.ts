@@ -55,8 +55,12 @@ export function mockGithub() {
     async observe(input) {
       if (input.repository !== repository) throw new Error("mock GitHub observation mismatch")
       return {
-        ...(input.issueNumber === issue?.number ? { issue } : {}),
-        ...(input.pullNumber === pull?.number ? { pull: pull && structuredClone(pull) } : {}),
+        ...(issue && (input.issueNumber === issue.number || (!input.issueNumber && input.marker === marker))
+          ? { issue }
+          : {}),
+        ...(pull && (input.pullNumber === pull.number || (!input.pullNumber && input.marker === marker))
+          ? { pull: structuredClone(pull) }
+          : {}),
         ci: { state: pull && (!input.ref || input.ref === pull.headSha) ? "success" : "none" },
       }
     },

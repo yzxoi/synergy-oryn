@@ -1,11 +1,22 @@
 import { spawn } from "node:child_process"
-import { mkdir } from "node:fs/promises"
+import { copyFile, mkdir } from "node:fs/promises"
 import path from "node:path"
 import { z } from "zod"
 import { RuntimeMessage, RuntimeSnapshot } from "./runtime-protocol"
 
 export async function runtimeProcess(input: { home: string; boot: string }) {
   await mkdir(path.join(input.home, "tmp"), { recursive: true })
+  if (process.platform === "linux") {
+    const helper = path.resolve(
+      import.meta.dir,
+      "../../../src/sandbox/helper-linux/target/release/synergy-sandbox-linux",
+    )
+    if (await Bun.file(helper).exists()) {
+      const destination = path.join(input.home, ".synergy/sandbox-helper")
+      await mkdir(destination, { recursive: true })
+      await copyFile(helper, path.join(destination, "synergy-sandbox-linux"))
+    }
+  }
   const ready = Promise.withResolvers<{ pid: number; port: number }>()
   const closed = Promise.withResolvers<void>()
   const pending = new Map<string, ReturnType<typeof Promise.withResolvers<unknown>>>()
