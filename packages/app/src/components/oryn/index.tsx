@@ -1,3 +1,4 @@
+import type { OrynCaseDetailResponse } from "@ericsanchezok/synergy-sdk/client"
 import { createResource, createSignal, For, Show } from "solid-js"
 import { Icon } from "@ericsanchezok/synergy-ui/icon"
 import { getSemanticIcon } from "@ericsanchezok/synergy-ui/semantic-icon"
@@ -25,17 +26,7 @@ type CaseListItem = {
   updatedAt: number
 }
 
-type CaseDetail = CaseListItem & {
-  observed?: string
-  expected?: string
-  acceptanceRevision: number
-  epoch: number
-  repairRounds: number
-  noProgressRounds: number
-  pullNumbers: number[]
-  sourceCount: number
-  humanDecisions: string[]
-}
+type CaseDetail = OrynCaseDetailResponse
 
 type ControlAction = "pause" | "resume" | "takeover" | "cancel"
 
@@ -142,6 +133,11 @@ export function OrynPanel() {
                     </span>
                   </div>
                   <div class="text-14-medium text-text-strong">{current().summary}</div>
+                  <Show when={current().control === "human_owned" && current().handoff}>
+                    {(handoff) => (
+                      <div class="whitespace-pre-wrap text-12-medium text-text-strong">{handoff().reason}</div>
+                    )}
+                  </Show>
                   <Show when={current().observed}>
                     <div class="text-12-medium text-text-weak">{current().observed}</div>
                   </Show>

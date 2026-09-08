@@ -42,6 +42,22 @@ async function seedCase(scope: Scope) {
 }
 
 describe("oryn routes", () => {
+  test("detail exposes the persisted handoff reason without leaking private text", async () => {
+    await withScope(orynEnabledConfig, async (scope) => {
+      const { record } = await seedCase(scope)
+      const app = Server.App()
+      const headers = { "x-synergy-scope-id": scope.id }
+      await OrynStore.requestHandoff(record.id, "Need the failing attachment")
+      const result = await app.request(`/oryn/cases/${record.id}`, { headers })
+      expect((await result.json()).handoff).toMatchObject({ reason: "Need the failing attachment", epoch: 1 })
+      const another = (await seedCase(scope)).record
+      await OrynStore.requestHandoff(another.id, "Read /home/operator/private.log")
+      const privateResult = await app.request(`/oryn/cases/${another.id}`, { headers })
+      const body = await privateResult.json()
+      expect(body.handoff.reason).not.toContain("/home/operator")
+      expect(body.handoff.reason).toContain("operator workspace")
+    })
+  })
   test("cases list is empty while oryn is disabled", async () => {
     await withScope(undefined, async (scope) => {
       await seedCase(scope)

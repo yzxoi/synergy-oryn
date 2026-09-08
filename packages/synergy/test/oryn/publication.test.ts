@@ -3,7 +3,7 @@ import { OrynPublication } from "../../src/oryn/publication"
 import { Case, Attempt, RunReceipt, ReviewReport } from "../../src/oryn/schema"
 
 const record = Case.parse({
-  schemaVersion: 1,
+  schemaVersion: 2,
   id: "private-case",
   revision: 0,
   kind: "bug",

@@ -10,7 +10,7 @@ import { OrynEngineering } from "./engineering"
 import { OrynReports } from "./reports"
 import { OrynEvidence } from "./evidence"
 import { Finding as FindingSchema } from "./schema"
-import type { Finding, ReviewDomain, RunReceipt, SourceIdentity, Stage } from "./schema"
+import type { Case, Finding, ReviewDomain, RunReceipt, SourceIdentity, Stage } from "./schema"
 import { OrynExecutor } from "./executor"
 
 /**
@@ -138,6 +138,84 @@ function taskText(input: {
 }
 
 export namespace OrynService {
+  export function handoffSummary(record: Case) {
+    if (!record.handoff) return undefined
+    return {
+      ...record.handoff,
+      reason: OrynPublicText.violations(record.handoff.reason).length
+        ? "More information is required; inspect the engineering task in the operator workspace."
+        : record.handoff.reason,
+    }
+  }
+
+  function handoffKey(record: Case) {
+    return externalIdentityHash(record.id, "needs_human", String(record.handoff?.epoch))
+  }
+
+  async function queueHandoffNotifications(record: Case) {
+    const queued: Awaited<ReturnType<typeof OrynStore.writeOutbox>>[] = []
+    if (record.control !== "human_owned" || !record.handoff || record.handoff.epoch !== record.epoch) return queued
+    const config = await OrynConfig.info()
+    if (!config?.enabled) return queued
+    for (const key of record.sourceIds) {
+      const source = await OrynStore.getSource(key)
+      const channel = await OrynStore.channelSource(key)
+      if (
+        !source ||
+        !source.caseIds.includes(record.id) ||
+        source.identity.provider !== "feishu" ||
+        !channel ||
+        sourceKey(channel.identity) !== key ||
+        OrynConfig.resolveRepoAlias(config, source.identity) !== record.repoAlias
+      )
+        continue
+      const owner = await OrynStore.getCaseForSession(record.id, channel.qaSessionId).catch(() => undefined)
+      if (!owner) continue
+      const reason = handoffSummary(record)!.reason
+      queued.push(
+        await OrynStore.writeOutbox({
+          caseId: record.id,
+          sourceKeyHash: key,
+          kind: "needs_human",
+          text: `Oryn needs human input: ${reason}`,
+          dedupKey: handoffKey(record),
+        }),
+      )
+    }
+    return queued
+  }
+
+  export async function requestHandoff(input: { callerSessionID: string; caseId: string; reason: string }) {
+    await requireEnabled()
+    const binding = await requireBinding(input.callerSessionID, ["qa", "engineering"])
+    const record = await OrynStore.getCaseForSession(input.caseId, input.callerSessionID)
+    if (binding.role === "engineering" && record.engineeringSessionId !== input.callerSessionID) {
+      throw storeError("NOT_AUTHORIZED", "caller is not the engineering root")
+    }
+    if (!input.reason.trim() || input.reason.length > 2000)
+      throw storeError("INVALID_STAGE", "handoff requires a bounded reason")
+    const handed = await OrynStore.requestHandoff(input.caseId, input.reason)
+    await queueHandoffNotifications(handed)
+    await drainOutbox()
+    return handed
+  }
+
+  export async function recoverHandoffs() {
+    const result = { recovered: 0, failed: 0 }
+    if (!(await OrynConfig.enabled())) return result
+    for (const record of await OrynStore.listCases({ control: "human_owned" })) {
+      if (!record.handoff) continue
+      try {
+        await queueHandoffNotifications(record)
+        result.recovered++
+      } catch {
+        result.failed++
+      }
+    }
+    await drainOutbox()
+    return result
+  }
+
   /**
    * Host intake for a QA-submitted engineering case. Identity and routing
    * come from the Host-written session binding and config routes, never from
@@ -563,7 +641,11 @@ export namespace OrynService {
     const previous = attempts.length >= 2 ? attempts[attempts.length - 2] : undefined
     const noProgress = previous?.candidateSha !== undefined && previous.candidateSha === attempt.candidateSha
     if (record.repairRounds + 1 > maxRepair || (noProgress ? record.noProgressRounds + 1 : 0) > maxNoProgress) {
-      const handed = await OrynStore.requestHandoff(input.caseId, `rework limit reached: ${input.reason}`)
+      const handed = await requestHandoff({
+        callerSessionID: input.callerSessionID,
+        caseId: input.caseId,
+        reason: `rework limit reached: ${input.reason}`,
+      })
       return {
         attemptId: handed.activeAttemptId ?? attemptId,
         repairRounds: record.repairRounds,
@@ -865,7 +947,8 @@ export namespace OrynService {
   /**
    * Bounded delivery intent. The model never names a chat or account; the
    * target is the Host-bound source. Conversation replies deduplicate per
-   * root turn; lifecycle notifications per source, kind, case and attempt.
+   * root turn; lifecycle notifications per source, kind, case and attempt,
+   * except persisted human handoffs, which use their ownership epoch.
    */
   export async function reply(input: {
     callerSessionID: string
@@ -893,6 +976,14 @@ export namespace OrynService {
         turn.identity.threadId !== binding.identity?.threadId)
     ) {
       throw storeError("NOT_AUTHORIZED", "reply turn does not belong to this source")
+    }
+    if (input.kind === "needs_human" && record?.handoff) {
+      const notices = await queueHandoffNotifications(record)
+      for (const notice of notices) {
+        const channel = await OrynStore.channelSource(notice.entry.sourceKey)
+        if (channel?.qaSessionId === input.callerSessionID) return { entryId: notice.entry.id, created: notice.created }
+      }
+      throw storeError("NOT_AUTHORIZED", "handoff has no current authorized notification source")
     }
     const replySourceKey = turn ? sourceKey(turn.identity) : binding.sourceKey
     const conversational = input.kind === "answer" || input.kind === "clarification"
@@ -931,21 +1022,50 @@ export namespace OrynService {
   }
 
   /**
-   * Drain pending outbox entries through the injected deliverer. Delivery is
+   * Drain pending outbox entries through the injected deliverer.
    * An intent is ambiguous before invoking the transport. A crash or lost
    * acknowledgement therefore cannot cause an automatic duplicate send.
    */
   export async function drainOutbox(): Promise<{ delivered: number; suppressed: number }> {
-    if (!(await OrynConfig.enabled())) return { delivered: 0, suppressed: 0 }
+    const config = await OrynConfig.info()
+    if (!config?.enabled) return { delivered: 0, suppressed: 0 }
     const pending = await OrynStore.listPendingOutbox()
     let delivered = 0
     let suppressed = 0
     for (const entry of pending) {
+      if (config.notifications?.kinds && !config.notifications.kinds.includes(entry.kind)) {
+        await OrynStore.markOutboxSuppressed(entry.id)
+        suppressed++
+        continue
+      }
       const link = await OrynStore.getSource(entry.sourceKey)
       if (!link) {
         await OrynStore.markOutboxSuppressed(entry.id)
         suppressed++
         continue
+      }
+      if (entry.caseId && (entry.kind === "needs_human" || entry.kind === "ready")) {
+        const record = await OrynStore.getCase(entry.caseId)
+        const current =
+          record &&
+          record.sourceIds.includes(entry.sourceKey) &&
+          link.caseIds.includes(record.id) &&
+          (entry.kind === "needs_human"
+            ? record.control === "human_owned" &&
+              record.handoff?.epoch === record.epoch &&
+              entry.dedupKey === handoffKey(record)
+            : record.control === "active")
+        if (!current) {
+          await OrynStore.markOutboxSuppressed(entry.id)
+          suppressed++
+          continue
+        }
+        const config = await OrynConfig.info()
+        if (
+          link.identity.provider === "feishu" &&
+          OrynConfig.resolveRepoAlias(config, link.identity) !== record.repoAlias
+        )
+          continue
       }
       const send = deliverer
       if (!send || !link.identity) continue

@@ -6,7 +6,7 @@ import { Config } from "../../src/config/config"
 import { tmpdir } from "./fixture"
 
 const record = Case.parse({
-  schemaVersion: 1,
+  schemaVersion: 2,
   id: "case-labels",
   revision: 0,
   kind: "bug",

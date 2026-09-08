@@ -42,6 +42,8 @@ Case submission derives its source from the persisted calling root, so follow-up
 
 Oryn foreground streams, reactions and automatic terminal artifacts are silent. The outbound bridge consumes persisted QA reply intents through the provider transport; connection recovery retries only definitely unsent pending intents. Per-root targets preserve the originating message, provider scope key and chat type, while uncertain sends never replay automatically. See the [ingress decision](../decisions/implemented/architecture/2026-09-08-oryn-feishu-ingress.md) and [notification settlement](../decisions/implemented/architecture/2026-09-08-oryn-notification-settlement.md).
 
+Human handoff persists the reason and Case epoch before writing one outbox intent per authorized linked reporter. Runtime startup repairs interrupted intent creation; QA replies reuse those intents. Delivery suppresses disabled notification kinds, unlinked sources and superseded handoffs. Unknown send outcomes remain ambiguous. The task detail API and Oryn panel expose a public-safe reason; legacy human-owned Cases have no inferred reason. See [handoff outcomes](../decisions/implemented/architecture/2026-09-08-oryn-handoff-outcome.md).
+
 ## Provider and Transport Lifecycle
 
 Every provider declares one lifecycle:

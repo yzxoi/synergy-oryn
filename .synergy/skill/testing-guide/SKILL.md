@@ -121,3 +121,7 @@ Use [Development reference](../../../docs/reference/development.md) and [Open-so
 Report the invariant, test location, red/green evidence, commands run, pass/fail counts, unrun gates, platform limitations, and any remaining nondeterminism.
 
 The root `coverage:check` command builds the public Plugin package through the dependency graph before instrumented suites run. Browser fixtures and Plugin Kit scaffolds resolve the published `import` entries; a clean checkout must not rely on artifacts left by another test or package-validation job.
+
+For Oryn model-pipeline fixtures, use the reusable loopback scripted-model transport and let ChannelHost, Sessions, tools and Inbox advance the scenario. Do not drive business stages from the test harness. When installation fixtures replace provider configuration, reload provider caches on installation and restoration; run model scenarios together to detect closed-endpoint reuse. Cancel and await all fixture-owned root and worker Sessions before restoring configuration.
+
+For recorded streams, cancel both after a delivered chunk and while a read is pending with a buffered prefix. Use barriers at the external stream boundary and assert that byte records precede body/attempt completion. Cancellation tests must retain received bytes and still propagate real recording failures; increasing timeouts or dropping late evidence does not verify this invariant.

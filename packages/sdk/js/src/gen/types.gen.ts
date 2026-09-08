@@ -9015,6 +9015,11 @@ export type OrynCaseDetailResponse = {
   pullNumbers: Array<number>
   sourceCount: number
   humanDecisions: Array<string>
+  handoff?: {
+    reason: string
+    epoch: number
+    requestedAt: number
+  }
   createdAt: number
   updatedAt: number
 }

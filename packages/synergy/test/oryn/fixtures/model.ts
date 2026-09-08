@@ -10,19 +10,23 @@ const Request = z.object({
 export type ModelRequest = z.infer<typeof Request>
 export type ModelStep = { text: string } | { tool: string; input: Record<string, unknown> }
 
-export function scriptedModel(respond: (request: ModelRequest) => ModelStep, maxRequests = 64) {
+export function scriptedModel(respond: (request: ModelRequest) => ModelStep | Promise<ModelStep>, maxRequests = 64) {
   const requests: ModelRequest[] = []
   const errors: string[] = []
+  const steps: ModelStep[] = []
+  let abortedRequests = 0
   const server = Bun.serve({
     hostname: "127.0.0.1",
     port: 0,
     async fetch(request) {
       try {
         if (new URL(request.url).pathname !== "/v1/chat/completions") throw new Error("unexpected model endpoint")
-        if (requests.length >= maxRequests) throw new Error("scripted model request budget exhausted")
         const body = Request.parse(await request.json())
+        if (requests.length >= maxRequests) throw new Error("scripted model request budget exhausted")
         requests.push(body)
-        const step = respond(body)
+        const requestId = requests.length
+        const step = await respond(body)
+        steps.push(step)
         const delta =
           "tool" in step
             ? {
@@ -30,7 +34,7 @@ export function scriptedModel(respond: (request: ModelRequest) => ModelStep, max
                 tool_calls: [
                   {
                     index: 0,
-                    id: `call_${requests.length}`,
+                    id: `call_${requestId}`,
                     type: "function",
                     function: { name: step.tool, arguments: JSON.stringify(step.input) },
                   },
@@ -38,9 +42,9 @@ export function scriptedModel(respond: (request: ModelRequest) => ModelStep, max
               }
             : { role: "assistant", content: step.text }
         const chunks = [
-          { id: `fixture_${requests.length}`, choices: [{ index: 0, delta, finish_reason: null }] },
+          { id: `fixture_${requestId}`, choices: [{ index: 0, delta, finish_reason: null }] },
           {
-            id: `fixture_${requests.length}`,
+            id: `fixture_${requestId}`,
             choices: [{ index: 0, delta: {}, finish_reason: "tool" in step ? "tool_calls" : "stop" }],
             usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
           },
@@ -49,6 +53,10 @@ export function scriptedModel(respond: (request: ModelRequest) => ModelStep, max
           headers: { "content-type": "text/event-stream" },
         })
       } catch (error) {
+        if (request.signal.aborted) {
+          abortedRequests++
+          return new Response(null, { status: 499 })
+        }
         errors.push(error instanceof Error ? error.message : String(error))
         return Response.json({ error: { message: errors.at(-1) } }, { status: 400 })
       }
@@ -57,6 +65,10 @@ export function scriptedModel(respond: (request: ModelRequest) => ModelStep, max
   return {
     requests,
     errors,
+    steps,
+    get abortedRequests() {
+      return abortedRequests
+    },
     config: {
       name: "Oryn scripted model",
       npm: "@ai-sdk/openai-compatible",

@@ -20,6 +20,7 @@ import { LatticeRuntime } from "@/lattice/runtime"
 import { PushBridge } from "@/push/bridge"
 import { OrynEngineering } from "@/oryn/engineering"
 import { OrynReports } from "@/oryn/reports"
+import { OrynService } from "@/oryn/service"
 
 export namespace GlobalRuntime {
   const log = Log.create({ service: "global-runtime" })
@@ -55,6 +56,8 @@ export namespace GlobalRuntime {
           })
           const orynRecovery = await OrynEngineering.recover()
           const reportRecovery = await OrynReports.recover()
+          const handoffRecovery = await OrynService.recoverHandoffs()
+          if (handoffRecovery.failed) log.warn("oryn handoff recovery incomplete", handoffRecovery)
           if (reportRecovery.failed) log.warn("oryn report recovery incomplete", reportRecovery)
           if (orynRecovery.failed || orynRecovery.blocked)
             log.warn("oryn engineering recovery incomplete", orynRecovery)

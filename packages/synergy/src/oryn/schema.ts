@@ -147,7 +147,7 @@ export type HumanDecision = z.infer<typeof HumanDecision>
 
 export const Case = z
   .object({
-    schemaVersion: z.literal(1),
+    schemaVersion: z.literal(2),
     id: z.string().min(1),
     revision: z.number().int().nonnegative(),
     kind: CaseKind,
@@ -171,6 +171,14 @@ export const Case = z
     repairRounds: z.number().int().nonnegative().default(0),
     noProgressRounds: z.number().int().nonnegative().default(0),
     humanDecisions: z.array(z.string()).default([]),
+    handoff: z
+      .object({
+        reason: z.string().min(1).max(2000),
+        epoch: z.number().int().nonnegative(),
+        requestedAt: z.number().int().positive(),
+      })
+      .strict()
+      .optional(),
     createdAt: z.number().int().positive(),
     updatedAt: z.number().int().positive(),
   })

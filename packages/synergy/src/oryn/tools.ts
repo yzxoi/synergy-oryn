@@ -161,6 +161,7 @@ export const OrynCaseTool = Tool.define(
                 expected: record.expected,
                 repoAlias: record.repoAlias,
                 control: record.control,
+                handoff: OrynService.handoffSummary(record),
                 activeAttemptId: record.activeAttemptId,
                 acceptanceRevision: record.acceptanceRevision,
                 repairRounds: record.repairRounds,
@@ -212,7 +213,11 @@ export const OrynCaseTool = Tool.define(
         }
         const binding = await requireBinding(ctx.sessionID, params.caseId)
         if (binding.role === "worker") throw toolError("NOT_AUTHORIZED", "report the blocker to the engineering root")
-        const record = await OrynStore.requestHandoff(params.caseId, params.reason)
+        const record = await OrynService.requestHandoff({
+          callerSessionID: ctx.sessionID,
+          caseId: params.caseId,
+          reason: params.reason,
+        })
         return {
           title: "Handed off to human",
           output: `caseId: ${record.id}\ncontrol: ${record.control}\nepoch: ${record.epoch}`,
@@ -431,7 +436,7 @@ export const OrynReplyTool = Tool.define(
   "oryn_reply",
   {
     description:
-      "Queue a bounded QA reply to your bound reporter source. The host supplies recipient and root turn identity; no account or chat id is accepted. Answers deduplicate within the current turn, and lifecycle notifications within the case attempt. Returns the durable entry id and whether it was newly queued; this does not claim remote delivery.",
+      "Queue a bounded QA reply to your bound reporter source. The host supplies recipient and root turn identity; no account or chat id is accepted. Answers deduplicate within the current turn, ordinary lifecycle notifications within the case attempt, and persisted human-handoff notices within the handoff epoch. Returns the durable entry id and whether it was newly queued; this does not claim remote delivery.",
     parameters: ReplyParameters,
     async execute(params, ctx): Promise<Tool.ExecutionResult> {
       return execute(async () => {

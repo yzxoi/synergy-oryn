@@ -134,7 +134,12 @@ test(
           expect(mock.replies[0]).toMatchObject({
             accountId,
             messageId: "report",
-            parts: [{ type: "text", text: "已记录反馈。缺少获准的测试仓库，需要人工补充环境；尚未确认修复。" }],
+            parts: [
+              {
+                type: "text",
+                text: "Oryn needs human input: Test repository is not configured; a human must provide the approved environment",
+              },
+            ],
           })
           const sessions = []
           for await (const session of Session.listAll())

@@ -6,6 +6,7 @@ import { ToolExecutor } from "../../src/session/tool-executor"
 import { ToolTaskScheduler } from "../../src/session/tool-scheduler"
 import { Config } from "../../src/config/config"
 import { ConfigDomain } from "../../src/config/domain"
+import { Provider } from "../../src/provider/provider"
 import { Lock } from "../../src/util/lock"
 import { tmpdir as projectTmpdir } from "../fixture/fixture"
 
@@ -15,6 +16,7 @@ export async function globalConfig(config: Partial<Config.Info>) {
   const restore = async () => {
     try {
       for (const entry of saved.reverse()) await Config.domainUpdate(entry.id, entry.config, { mode: "replace-domain" })
+      if (config.provider) await Provider.reload()
     } finally {
       lock[Symbol.dispose]()
     }
@@ -25,6 +27,7 @@ export async function globalConfig(config: Partial<Config.Info>) {
       saved.push({ id, config: previous })
       await Config.domainUpdate(id, { ...previous, ...fragment }, { mode: "replace-domain" })
     }
+    if (config.provider) await Provider.reload()
     return { [Symbol.asyncDispose]: restore }
   } catch (error) {
     await restore()

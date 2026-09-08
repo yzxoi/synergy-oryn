@@ -49,7 +49,7 @@ Before starting candidate work, verify the actual helper through the native Oryn
 
 The local mock ingress check needs no Feishu credentials. From `packages/synergy`, run `bun test test/oryn/feishu-ingress.test.ts test/oryn/outbox.test.ts test/oryn/tools.test.ts`. It enters the real ChannelHost, persists Inbox tasks, executes the reply tool and sends through a captured provider. It verifies thread/reply routing and uncertain dispatch with synthetic assistant output. It does not prove live Feishu delivery, model behavior, candidate execution, or GitHub publication; those require separate evidence.
 
-To exercise model-driven QA without model or Feishu credentials, run `bun run test test/oryn/model-pipeline.test.ts` from `packages/synergy`. The reusable `test/oryn/fixtures/model.ts` serves deterministic OpenAI-compatible SSE on a loopback ephemeral port; the configured provider, LLM loop, real tool resolver, Case intake, human handoff and explicit reply outbox all execute normally under the isolated test home. The fixture deliberately omits the approved repository directory and verifies one `needs_human` response, no PR, no internal progress messages and no repeated QA inference for the duplicate provider event. It waits for the owning QA task to settle before checking replay. It does not yet run reproduction, coding, review, GitHub publication or a model worker subprocess, and scripted choices do not establish a live model's judgment.
+To exercise model-driven QA without model or Feishu credentials, run `bun run test test/oryn/model-pipeline.test.ts` from `packages/synergy`. The reusable `test/oryn/fixtures/model.ts` serves deterministic OpenAI-compatible SSE on a loopback ephemeral port; the configured provider, LLM loop, real tool resolver, Case intake, human handoff and explicit reply outbox all execute normally under the isolated test home. The fixture deliberately omits the approved repository directory and verifies one `needs_human` response, no PR, no internal progress messages and no repeated QA inference for the duplicate provider event. It waits for the owning QA task to settle before checking replay. It does not run coding, review, GitHub publication or a model worker subprocess, and scripted choices do not establish a live model's judgment.
 
 ### Feishu
 
@@ -59,7 +59,11 @@ To exercise model-driven QA without model or Feishu credentials, run `bun run te
 4. Set `groupSessionScope` to `group_thread` on the Oryn-bound account so each topic gets its own QA session; other accounts keep their existing scoping.
 5. Set a non-empty `oryn.routes[].chats` allowlist to restrict intake to the intended test chats. An omitted or empty `chats` list matches the whole configured account; it does not disable intake. Accounts without a matching Oryn route keep ordinary Synergy routing.
 
-### GitHub App
+#Run `bun run test test/oryn/model-pipeline.test.ts test/oryn/engineering-pipeline.test.ts` to include the real engineering root, Boss worker, independent worktree, baseline check receipt and report-driven human handoff. The attachment assertion passes on the supplied baseline; the expected outcome is a request for the failing input and client version, not a claimed bug fix. Both scenarios use only loopback model and captured Feishu transport.
+
+A human handoff records its reason in the Case and shows the public-safe projection in the Oryn task detail. The Host queues one result per linked reporter, so the QA model does not need to send a second notice. Startup repairs a missing intent after interrupted persistence; it never automatically replays an ambiguous send. Resuming the Case suppresses a queued old handoff, and disabled notification kinds are settled as suppressed rather than sent later. Inspect the engineering task when the public reason is redacted.
+
+## GitHub App
 
 Minimal permissions for the Oryn publish transport:
 

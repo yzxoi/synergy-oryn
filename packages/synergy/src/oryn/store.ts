@@ -304,7 +304,7 @@ export namespace OrynStore {
     if (existing) return existing
     const ts = now()
     const record: Case = {
-      schemaVersion: 1,
+      schemaVersion: 2,
       id: input.caseId,
       revision: 0,
       kind: input.kind,
@@ -836,11 +836,16 @@ export namespace OrynStore {
     using _lock = await Lock.write(`oryn-case:${caseId}`)
     const current = await getCase(caseId)
     if (!current) throw storeError("NOT_AUTHORIZED", `case ${caseId} not found`)
+    if (current.control === "human_owned" && current.handoff?.reason === reason) return current
+    if (current.control !== "active") throw storeError("HUMAN_OWNED", `case is ${current.control}`)
+    const timestamp = now()
     const record: Case = {
       ...current,
+      revision: current.revision + 1,
       control: "human_owned",
       epoch: current.epoch + 1,
-      updatedAt: now(),
+      handoff: { reason, epoch: current.epoch + 1, requestedAt: timestamp },
+      updatedAt: timestamp,
     }
     await writeCase(record)
     return record

@@ -4,9 +4,11 @@ import { OrynPath } from "./path"
 import type { Migration } from "../migration"
 import { MigrationRegistry } from "../migration/registry"
 import { z } from "zod"
-import { ActionReceipt, OutboxEntry } from "./schema"
+import { ActionReceipt, Case, OutboxEntry } from "./schema"
 
 const log = Log.create({ service: "oryn.migration" })
+
+const LegacyCase = Case.extend({ schemaVersion: z.literal(1) }).omit({ handoff: true })
 
 const LegacyOutboxEntry = OutboxEntry.extend({
   schemaVersion: z.literal(1),
@@ -86,6 +88,24 @@ export const migrations: Migration[] = [
         if (!ActionReceipt.safeParse(value).success) {
           const legacy = ActionReceiptV2.parse(value)
           await Storage.write(OrynPath.action(id), ActionReceipt.parse({ ...legacy, schemaVersion: 3 }))
+        }
+        progress(index + 1, ids.length)
+      }
+    },
+  },
+  {
+    id: "20260908-oryn-handoff-outcome",
+    description: "Version Cases to preserve explicit human-handoff outcomes without inventing legacy reasons",
+    version: "1.0.0",
+    domain: "oryn",
+    dependsOn: ["20260907-oryn-baseline"],
+    async up(progress) {
+      const ids = await Storage.scan(OrynPath.casesRoot())
+      for (const [index, id] of ids.entries()) {
+        const value = await Storage.read<unknown>(OrynPath.caseInfo(id))
+        if (!Case.safeParse(value).success) {
+          const legacy = LegacyCase.parse(value)
+          await Storage.write(OrynPath.caseInfo(id), Case.parse({ ...legacy, schemaVersion: 2 }))
         }
         progress(index + 1, ids.length)
       }

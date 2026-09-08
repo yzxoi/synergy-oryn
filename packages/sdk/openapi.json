@@ -50693,6 +50693,28 @@
               "type": "string"
             }
           },
+          "handoff": {
+            "type": "object",
+            "properties": {
+              "reason": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 2000
+              },
+              "epoch": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "requestedAt": {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991
+              }
+            },
+            "required": ["reason", "epoch", "requestedAt"],
+            "additionalProperties": false
+          },
           "createdAt": {
             "type": "integer",
             "minimum": -9007199254740991,
