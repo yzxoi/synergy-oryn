@@ -39,13 +39,16 @@ export namespace OrynSandbox {
     readableRoots?: string[]
   }) {
     input.abort.throwIfAborted()
-    if (input.profile.isolation && input.profile.isolation !== "sandbox")
+    const trusted = input.profile.isolation === "trusted_local"
+    if (input.profile.isolation && input.profile.isolation !== "sandbox" && !trusted)
       throw storeError(
         "ENVIRONMENT_UNAVAILABLE",
         "checks require OS sandbox isolation; external VM execution is not configured",
       )
-    const supported =
-      process.platform === "linux" ? ["namespace", "seccomp", ...(input.profile.resourceLimits ? ["cgroup"] : [])] : []
+    const supported = [
+      ...(trusted ? ["network_egress"] : process.platform === "linux" ? ["namespace", "seccomp"] : []),
+      ...(process.platform === "linux" && input.profile.resourceLimits ? ["cgroup"] : []),
+    ]
     if (input.profile.requiredCapabilities?.some((capability) => !supported.includes(capability)))
       throw storeError(
         "ENVIRONMENT_UNAVAILABLE",
@@ -65,43 +68,45 @@ export namespace OrynSandbox {
         if (!path || path === ".." || path.startsWith(`..${sep}`) || isAbsolute(path))
           throw storeError("NOT_AUTHORIZED", "check output directory is outside the experiment")
       }
-      const wrapper = SandboxBackend.prepareWrapper({
-        command: process.platform === "linux" ? "/bin/sh" : await realpath(command),
-        args:
-          process.platform === "linux"
-            ? [
-                "-c",
-                'cd "$1" && shift && exec "$@"',
-                "oryn-check",
-                workspace,
-                await realpath(command),
-                ...input.argv.slice(1),
-              ]
-            : input.argv.slice(1),
-        workspace,
-        executionCwd: scratch,
-        sandboxMode: "read_only",
-        permissionProfile: {
-          fileSystem: {
+      const wrapper = trusted
+        ? { command: await realpath(command), args: input.argv.slice(1), sandboxed: false }
+        : SandboxBackend.prepareWrapper({
+            command: process.platform === "linux" ? "/bin/sh" : await realpath(command),
+            args:
+              process.platform === "linux"
+                ? [
+                    "-c",
+                    'cd "$1" && shift && exec "$@"',
+                    "oryn-check",
+                    workspace,
+                    await realpath(command),
+                    ...input.argv.slice(1),
+                  ]
+                : input.argv.slice(1),
             workspace,
-            readableRoots: [
-              workspace,
-              await realpath(command),
-              ...SYSTEM_READ_ROOTS.filter(existsSync),
-              ...(input.readableRoots ?? []),
-            ],
-            writableRoots: [scratch, ...writableRoots],
-            readOnlySubpaths: [],
-            unreadableGlobs: [],
-            protectedMetadataNames: [".git", ".agents", ".codex", ".synergy"],
-            protectedPaths: [],
-            dataDenyRoots: [],
-            includePlatformDefaults: false,
-          },
-          network: { mode: "restricted", allowLocalBinding: false, allowedUnixSockets: [] },
-        },
-      })
-      if (!wrapper.sandboxed || wrapper.skipReason) {
+            executionCwd: scratch,
+            sandboxMode: "read_only",
+            permissionProfile: {
+              fileSystem: {
+                workspace,
+                readableRoots: [
+                  workspace,
+                  await realpath(command),
+                  ...SYSTEM_READ_ROOTS.filter(existsSync),
+                  ...(input.readableRoots ?? []),
+                ],
+                writableRoots: [scratch, ...writableRoots],
+                readOnlySubpaths: [],
+                unreadableGlobs: [],
+                protectedMetadataNames: [".git", ".agents", ".codex", ".synergy"],
+                protectedPaths: [],
+                dataDenyRoots: [],
+                includePlatformDefaults: false,
+              },
+              network: { mode: "restricted", allowLocalBinding: false, allowedUnixSockets: [] },
+            },
+          })
+      if ((!trusted && !wrapper.sandboxed) || wrapper.skipReason) {
         if (wrapper.tempPath) SandboxBackend.cleanupTemp(wrapper.tempPath)
         throw storeError("ENVIRONMENT_UNAVAILABLE", wrapper.skipReason ?? "OS sandbox is unavailable")
       }
@@ -129,7 +134,7 @@ export namespace OrynSandbox {
           cwd: workspace,
           env: resources.environment,
           inheritEnv: false,
-          networkMode: "restricted",
+          networkMode: trusted ? "full" : "restricted",
           fallbackPolicy: "deny",
           signal: input.abort,
           timeoutMs: input.timeoutMs,

@@ -57,11 +57,29 @@ Run `bun test test/oryn/engineering-start.test.ts test/session/creation-recovery
 
 Code workers prepare a commit with `oryn_result` / `input.kind: commit_candidate`, supplying the assignment identity, stable request key, conventional title and explicit relative file paths. The Host returns the full candidate SHA and local branch for the subsequent candidate report. Use the same request after interruption; changed requests or changed source require inspection. The Host does not execute repository commit hooks, and repositories with Git filters or submodules need separate support. Independent checks and review remain required. Do not grant the worker shell write access to the common Git directory to make `git commit` succeed.
 
+## Trusted Local Execution
+
+For an installation that deliberately grants candidate code the runtime OS user's filesystem and network access, set `oryn.executionMode` to `"trusted_local"` in the runtime config domain. This selects unwrapped execution for checks and engineering Bash. It requires no proc mount, Docker, systemd or cgroup when process-resource limits are omitted. Outer-platform permissions still apply.
+
+```jsonc
+{
+  "oryn": {
+    "executionMode": "trusted_local",
+  },
+}
+```
+
+Merge this field into the existing Oryn configuration. Remove `namespace` and `seccomp` from the selected check profiles' `requiredCapabilities`; omit `limits.processResources` and profile `resourceLimits` if no cgroup manager is available. Required capabilities are still checked, and mode selection does not erase them. `network_egress` is available in trusted-local profiles; `uid` and `browser` remain unsupported.
+
+Finish or stop existing engineering tasks before changing modes. New engineering roots use `full_access` in trusted-local mode; existing roots retain their selected control profile. Worker roles, assignment ownership, candidate freezing and PR review/delivery rules continue to apply. Command timeouts, output limits, scheduler concurrency and process cleanup remain enabled.
+
+Checks still materialize a disposable version-pinned checkout and record the mode in their receipts. Their clean environment does not prevent reading other files accessible to the runtime OS user. Filesystem and network containment are absent in this mode, including for worker Bash. Revert the setting to `"sandbox"` for newly created engineering tasks and sandboxed checks; there is no automatic fallback from sandbox to trusted-local execution.
+
 ## Isolation Preflight
 
 `oryn_check` defaults to local `sandbox` isolation. Explicit `worktree` and `external_vm` execution are rejected: directory separation is insufficient and no VM execution transport is connected. macOS uses a deny-default Seatbelt profile; Linux requires the built helper and Bubblewrap with usable user/PID/network namespaces and seccomp. A missing or rejected wrapper cannot fall back to an unwrapped command, regardless of ordinary interactive sandbox fallback settings.
 
-The local check profile exposes a disposable checkout of the pinned commit, plus system executables/libraries and the approved executable. Tracked source remains read-only. Installation-selected output directories are writable and shared by the commands in that check plan. Each command gets a private disposable HOME/temp directory, with ambient credentials and Git configuration excluded. Host network access is denied. Dependency provisioning, persistent cross-run build caches, source overlays and browser execution need separate support; do not interpret those environment gaps as a reproduced bug.
+The sandbox check profile exposes a disposable checkout of the pinned commit, plus system executables/libraries and the approved executable. Tracked source remains read-only. Installation-selected output directories are writable and shared by the commands in that check plan. Each command gets a private disposable HOME/temp directory, with ambient credentials and Git configuration excluded. Host network access is denied. Dependency provisioning, persistent cross-run build caches, source overlays and browser execution need separate support; do not interpret those environment gaps as a reproduced bug.
 
 | Declared capability                | Local check behavior                                                                                                                |
 | ---------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |

@@ -31,7 +31,7 @@ function content(request: ModelRequest, role?: string) {
     .join("\n")
 }
 
-test.each(["direct", "repair"] as const)(
+test.each(["direct", "repair", "trusted_local"] as const)(
   "Feishu feedback reaches independent review and PR delivery (%s)",
   async (mode) => {
     const rework = mode === "repair"
@@ -79,6 +79,7 @@ test.each(["direct", "repair"] as const)(
           },
         },
         oryn: {
+          executionMode: mode === "trusted_local" ? "trusted_local" : "sandbox",
           enabled: true,
           routes: [{ feishuAccount: accountId, chats: ["qa"], repoAlias: "fixture" }],
           repositories: { fixture: { owner: "acme", repo: "oryn-fixture", baseBranch: "dev", directory: repo.path } },
@@ -189,6 +190,13 @@ test.each(["direct", "repair"] as const)(
           if (!attempt.candidateSha) throw new Error("ready attempt has no candidate")
           expect(attempt.candidateSha).not.toBe(baseline)
           const runs = await OrynStore.listRuns(record.id)
+          expect(
+            runs.every((run) =>
+              run.observations.some((line) =>
+                line.startsWith(`execution mode: ${mode === "trusted_local" ? "trusted_local" : "sandbox"};`),
+              ),
+            ),
+          ).toBe(true)
           expect(runs).toHaveLength(rework ? 4 : 2)
           expect(runs.find((run) => run.lane === "baseline" && run.actualSha === baseline)).toMatchObject({
             actualSha: baseline,

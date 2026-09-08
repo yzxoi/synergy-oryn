@@ -16,7 +16,11 @@ export namespace OrynConfig {
     return Object.fromEntries(
       Object.entries(config.executionProfiles ?? {})
         .filter(([id]) => !repository.testProfiles || repository.testProfiles.includes(id))
-        .map(([id, profile]) => {
+        .map(([id, configured]) => {
+          const profile =
+            config.executionMode === "trusted_local"
+              ? { ...configured, isolation: "trusted_local" as const }
+              : configured
           const ceiling = config.limits?.processResources
           if (!ceiling) return [id, profile]
           const limits = profile.resourceLimits ?? ceiling

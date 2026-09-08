@@ -449,7 +449,7 @@ export const LocalBashBackend = {
           cwd,
         })
         sandboxWrapper = restricted
-        if (!restricted.sandboxed || restricted.skipReason)
+        if ((!restricted.sandboxed && restricted.executionMode !== "trusted_local") || restricted.skipReason)
           throw new Error(`Host shell sandbox unavailable: ${restricted.skipReason ?? "not sandboxed"}`)
         for (const key of Object.keys(sandboxEnv)) delete sandboxEnv[key]
         Object.assign(sandboxEnv, restricted.environment)
@@ -462,7 +462,7 @@ export const LocalBashBackend = {
       assertDetachedDaemonContainment({
         platform: process.platform,
         detachedDaemonAllowed,
-        sandboxed: Boolean(sandboxWrapper && !sandboxWrapper.skipReason),
+        sandboxed: Boolean(sandboxWrapper?.sandboxed && !sandboxWrapper.skipReason),
       })
       sandboxWarning = sandboxWrapper?.skipReason
     } catch (error) {

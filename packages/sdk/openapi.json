@@ -37559,9 +37559,9 @@
         "additionalProperties": false
       },
       "OrynIsolationModeConfig": {
-        "description": "Isolation strategy: worktree (directory separation only), sandbox (OS-level), external_vm (offload to an approved VM)",
+        "description": "Execution strategy: sandbox (OS isolation, default), trusted_local (no filesystem or network containment), worktree/external_vm (unsupported)",
         "type": "string",
-        "enum": ["worktree", "sandbox", "external_vm"]
+        "enum": ["worktree", "sandbox", "external_vm", "trusted_local"]
       },
       "OrynExecutionProfileConfig": {
         "type": "object",
@@ -37694,6 +37694,11 @@
       "OrynConfig": {
         "type": "object",
         "properties": {
+          "executionMode": {
+            "description": "Installation-selected execution mode for checks and engineering Bash. Default sandbox. trusted_local runs with the runtime OS user's filesystem and network access; new engineering sessions use full_access. This overrides check-profile isolation but does not remove required capabilities or resource limits",
+            "type": "string",
+            "enum": ["sandbox", "trusted_local"]
+          },
           "defaultRepoAlias": {
             "description": "Default repository selected in Oryn settings",
             "type": "string",

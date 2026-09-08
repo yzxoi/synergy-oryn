@@ -34,12 +34,14 @@ async function fixture(
     attemptId: string
   }) => Promise<void>,
   processResources?: OrynProcessResources,
+  executionMode?: "sandbox" | "trusted_local",
 ) {
   await using repo = await tmpdir({
     git: true,
     config: {
       oryn: {
         enabled: true,
+        executionMode,
         limits: processResources ? { processResources } : undefined,
         routes: [{ feishuAccount: "test", repoAlias: "repo" }],
         repositories: { repo: { owner: "test", repo: "repo" } },
@@ -100,6 +102,41 @@ async function fixture(
     },
   })
 }
+
+test("trusted local worker Bash executes without containment through the real tool resolver", async () => {
+  await using outside = await tmpdir()
+  const server = Bun.serve({ port: 0, fetch: () => new Response("worker connected") })
+  try {
+    await fixture(
+      async ({ sessionID, directory }) => {
+        expect(await Session.resolveEffectiveControlProfile({ sessionID })).toBe("full_access")
+        const policy = await OrynShell.resolve({
+          sessionID,
+          agent: "oryn-code",
+          workspace: directory,
+          abort: new AbortController().signal,
+        })
+        const prepared = await policy!.prepare({ command: "true", extraReadRoots: [] })
+        try {
+          expect(prepared.sandboxed).toBe(false)
+        } finally {
+          await prepared.dispose()
+        }
+        await Bun.write(
+          `${directory}/trusted.ts`,
+          `await Bun.write(${JSON.stringify(outside.path + "/result")}, await fetch(${JSON.stringify(server.url.href)}).then(r=>r.text()))`,
+        )
+        const result = await execute(sessionID, "bun trusted.ts")
+        expect(result.metadata.exit, result.output).toBe(0)
+        expect(await Bun.file(`${outside.path}/result`).text()).toBe("worker connected")
+      },
+      undefined,
+      "trusted_local",
+    )
+  } finally {
+    server.stop(true)
+  }
+}, 30000)
 
 async function execute(
   sessionID: string,
