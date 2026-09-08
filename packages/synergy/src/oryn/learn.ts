@@ -2,6 +2,8 @@ import { Lock } from "../util/lock"
 import { externalIdentityHash } from "../util/identity"
 import { OrynStore, storeError } from "./store"
 import { OrynConfig } from "./config"
+import { OrynBudget } from "./budget"
+import { Session } from "../session"
 import type { LearningCandidate } from "./schema"
 
 /**
@@ -39,6 +41,36 @@ function memoryInput(candidate: LearningCandidate) {
   }
 }
 
+async function requireOwner(sessionID: string, caseId: string) {
+  if (!(await OrynConfig.enabled())) throw storeError("NOT_AUTHORIZED", "oryn runtime is disabled")
+  const binding = await OrynStore.sessionSourceBinding(sessionID)
+  if (!binding || !["engineering", "worker"].includes(binding.role) || binding.caseId !== caseId) {
+    throw storeError("NOT_AUTHORIZED", "only bound engineering or worker sessions may mutate Case learning")
+  }
+  const record = await OrynStore.getCase(caseId)
+  if (!record) throw storeError("NOT_AUTHORIZED", "learning Case is unavailable")
+  if (record.control !== "active") throw storeError("HUMAN_OWNED", `case is ${record.control}`, { caseId })
+  await OrynBudget.assert(record)
+  const session = await Session.get(sessionID)
+  if (session.time.archived) throw storeError("NOT_AUTHORIZED", "learning session is archived")
+  if (binding.role === "engineering") {
+    if (record.engineeringSessionId !== sessionID || session.agentOverride !== "oryn-work") {
+      throw storeError("NOT_AUTHORIZED", "caller is not the current engineering root")
+    }
+    return record
+  }
+  const assignment = (await OrynStore.listAssignments(caseId)).find((item) => item.sessionId === sessionID)
+  if (
+    !assignment ||
+    assignment.epoch !== record.epoch ||
+    assignment.attemptId !== record.activeAttemptId ||
+    assignment.agentId !== session.agentOverride ||
+    session.parentID !== record.engineeringSessionId
+  )
+    throw storeError("NOT_AUTHORIZED", "learning worker assignment is no longer current")
+  return record
+}
+
 export namespace OrynLearning {
   /**
    * Worker/engineering proposal of a reusable lesson. Evidence refs are
@@ -55,17 +87,8 @@ export namespace OrynLearning {
     evidenceRefs: string[]
     outcomeVersion?: string
   }): Promise<{ learningId: string; created: boolean }> {
-    if (!(await OrynConfig.enabled())) throw storeError("NOT_AUTHORIZED", "oryn runtime is disabled")
-    const binding = await OrynStore.sessionSourceBinding(input.callerSessionID)
-    if (!binding) throw storeError("NOT_AUTHORIZED", "session has no Oryn source binding")
-    if (binding.role !== "engineering" && binding.role !== "worker") {
-      throw storeError("NOT_AUTHORIZED", "only engineering sessions may propose lessons")
-    }
-    if (binding.caseId !== input.caseId) {
-      throw storeError("NOT_AUTHORIZED", "case does not belong to this session")
-    }
-    const record = await OrynStore.getCase(input.caseId)
-    if (!record) throw storeError("NOT_AUTHORIZED", `case ${input.caseId} not found`)
+    using _case = await Lock.write(`oryn-case:${input.caseId}`)
+    await requireOwner(input.callerSessionID, input.caseId)
 
     const valid = new Set<string>()
     for (const run of await OrynStore.listRuns(input.caseId)) valid.add(run.id)
@@ -79,7 +102,6 @@ export namespace OrynLearning {
       })
     }
 
-    using _lock = await Lock.write(`oryn-learning-proposals:${input.caseId}`)
     const existing = (await OrynStore.listLearnings(input.caseId)).find((l) => l.lesson === input.lesson)
     if (existing) return { learningId: existing.id, created: false }
     const candidate = await OrynStore.writeLearning({
@@ -144,16 +166,9 @@ export namespace OrynLearning {
     learningId: string
     reason: string
   }): Promise<LearningCandidate> {
-    if (!(await OrynConfig.enabled())) throw storeError("NOT_AUTHORIZED", "oryn runtime is disabled")
-    const binding = await OrynStore.sessionSourceBinding(input.callerSessionID)
-    if (!binding) throw storeError("NOT_AUTHORIZED", "session has no Oryn source binding")
-    if (binding.role !== "engineering" && binding.role !== "worker") {
-      throw storeError("NOT_AUTHORIZED", "only engineering sessions may withdraw lessons")
-    }
-    if (binding.caseId !== input.caseId) {
-      throw storeError("NOT_AUTHORIZED", "case does not belong to this session")
-    }
     using _lock = await Lock.write(`oryn-learning-effect:${input.learningId}`)
+    using _case = await Lock.write(`oryn-case:${input.caseId}`)
+    await requireOwner(input.callerSessionID, input.caseId)
     const candidate = await OrynStore.getLearning(input.learningId)
     if (!candidate || candidate.caseId !== input.caseId) {
       throw storeError("NOT_AUTHORIZED", `learning candidate ${input.learningId} not found`)

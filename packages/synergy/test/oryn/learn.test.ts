@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Scope } from "../../src/scope"
 import { ScopeContext } from "../../src/scope/context"
+import { Session } from "../../src/session"
 import { OrynService } from "../../src/oryn/service"
 import { OrynStore } from "../../src/oryn/store"
 import { OrynPublish, setTransport } from "../../src/oryn/publish"
@@ -23,6 +24,178 @@ async function proposedReadyLesson(root: string) {
 }
 
 describe("learning side-effect recovery", () => {
+  test.each(["archived", "agent", "parent"] as const)(
+    "a worker with changed %s identity cannot mutate learning",
+    async (change) => {
+      await withLearnScope({}, async (root) => {
+        const seeded = await seedFrozen(root)
+        const worker = (await OrynStore.listAssignments(seeded.caseId))[0]
+        const sessionID = worker.sessionId
+        if (!sessionID) throw new Error("fixture worker has no Session")
+        const otherParent = change === "parent" ? await Session.create({}) : undefined
+        await Session.update(sessionID, (session) => {
+          if (change === "archived") session.time.archived = Date.now()
+          if (change === "agent") session.agentOverride = "synergy"
+          if (otherParent) session.parentID = otherParent.id
+        })
+        await expect(
+          OrynLearning.propose({
+            callerSessionID: sessionID,
+            caseId: seeded.caseId,
+            lesson: "changed identity",
+            applicability: "unused",
+            invalidation: "unused",
+            evidenceRefs: [seeded.baselineRunId],
+          }),
+        ).rejects.toMatchObject({ data: { code: "NOT_AUTHORIZED" } })
+        expect(await OrynStore.listLearnings(seeded.caseId)).toHaveLength(0)
+      })
+    },
+  )
+
+  test.each(["paused", "human_owned", "cancelled", "closed"] as const)(
+    "%s Cases cannot mutate shared learning",
+    async (control) => {
+      await withLearnScope({ verifiedMemory: true }, async (root) => {
+        const seeded = await proposedReadyLesson(root)
+        const record = (await OrynStore.getCase(seeded.caseId))!
+        await OrynStore.mutateCase(record.id, record.revision, (draft) => ({ ...draft, control }))
+        let removals = 0
+        setMemoryPromoter({
+          async promote({ id }) {
+            return id
+          },
+          async remove() {
+            removals++
+          },
+        })
+        await expect(
+          OrynLearning.propose({
+            callerSessionID: seeded.engineeringSessionId,
+            caseId: record.id,
+            lesson: "inactive Case lesson",
+            applicability: "unused",
+            invalidation: "unused",
+            evidenceRefs: [seeded.baselineRunId],
+          }),
+        ).rejects.toMatchObject({ data: { code: "HUMAN_OWNED" } })
+        await expect(
+          OrynLearning.invalidate({
+            callerSessionID: seeded.engineeringSessionId,
+            caseId: record.id,
+            learningId: seeded.learningId,
+            reason: "inactive withdrawal",
+          }),
+        ).rejects.toMatchObject({ data: { code: "HUMAN_OWNED" } })
+        expect(removals).toBe(0)
+        expect((await OrynStore.getLearning(seeded.learningId))?.promotionState).toBe("proposed")
+      })
+    },
+  )
+
+  test.each(["epoch", "attempt"] as const)(
+    "a worker from a previous %s cannot propose or withdraw lessons",
+    async (change) => {
+      await withLearnScope({ verifiedMemory: true }, async (root) => {
+        const seeded = await proposedReadyLesson(root)
+        const worker = (await OrynStore.listAssignments(seeded.caseId))[0]
+        const workerSessionId = worker.sessionId
+        if (!workerSessionId) throw new Error("fixture worker has no Session")
+        const record = (await OrynStore.getCase(seeded.caseId))!
+        if (change === "epoch") {
+          await OrynStore.mutateCase(record.id, record.revision, (draft) => ({ ...draft, epoch: draft.epoch + 1 }))
+        } else {
+          await OrynService.rework({
+            callerSessionID: seeded.engineeringSessionId,
+            caseId: record.id,
+            reason: "new candidate required",
+          })
+        }
+        let removals = 0
+        setMemoryPromoter({
+          async promote({ id }) {
+            return id
+          },
+          async remove() {
+            removals++
+          },
+        })
+        await expect(
+          OrynLearning.propose({
+            callerSessionID: workerSessionId,
+            caseId: record.id,
+            lesson: "stale worker lesson",
+            applicability: "unused",
+            invalidation: "unused",
+            evidenceRefs: [seeded.baselineRunId],
+          }),
+        ).rejects.toMatchObject({ data: { code: "NOT_AUTHORIZED" } })
+        await expect(
+          OrynLearning.invalidate({
+            callerSessionID: workerSessionId,
+            caseId: record.id,
+            learningId: seeded.learningId,
+            reason: "stale worker withdrawal",
+          }),
+        ).rejects.toMatchObject({ data: { code: "NOT_AUTHORIZED" } })
+        expect(removals).toBe(0)
+      })
+    },
+  )
+
+  test("a current worker can propose and withdraw its Case lesson", async () => {
+    await withLearnScope({}, async (root) => {
+      const seeded = await seedFrozen(root)
+      const worker = (await OrynStore.listAssignments(seeded.caseId))[0]
+      const workerSessionId = worker.sessionId
+      if (!workerSessionId) throw new Error("fixture worker has no Session")
+      setMemoryPromoter({
+        async promote({ id }) {
+          return id
+        },
+        async remove() {},
+      })
+      const proposed = await OrynLearning.propose({
+        callerSessionID: workerSessionId,
+        caseId: seeded.caseId,
+        lesson: "current worker lesson",
+        applicability: "this candidate",
+        invalidation: "new evidence",
+        evidenceRefs: [seeded.baselineRunId],
+      })
+      expect(proposed.created).toBe(true)
+      expect(
+        (
+          await OrynLearning.invalidate({
+            callerSessionID: workerSessionId,
+            caseId: seeded.caseId,
+            learningId: proposed.learningId,
+            reason: "superseded",
+          })
+        ).promotionState,
+      ).toBe("rejected")
+    })
+  })
+
+  test("expired unfinished Cases cannot submit new lessons", async () => {
+    await withLearnScope({}, async (root) => {
+      const seeded = await seedFrozen(root)
+      const record = (await OrynStore.getCase(seeded.caseId))!
+      await OrynStore.mutateCase(record.id, record.revision, (draft) => ({ ...draft, createdAt: 1 }))
+      await expect(
+        OrynLearning.propose({
+          callerSessionID: seeded.engineeringSessionId,
+          caseId: record.id,
+          lesson: "over budget",
+          applicability: "unused",
+          invalidation: "unused",
+          evidenceRefs: [seeded.baselineRunId],
+        }),
+      ).rejects.toMatchObject({ data: { code: "BUDGET_EXHAUSTED" } })
+      expect(await OrynStore.listLearnings(record.id)).toHaveLength(0)
+    })
+  })
+
   test("withdrawal preserves an acknowledged historical memory identity", async () => {
     await withLearnScope({ verifiedMemory: true }, async (root) => {
       const seeded = await proposedReadyLesson(root)
