@@ -92,15 +92,20 @@ export async function runtimeProcess(input: { home: string; boot: string }) {
     const id = crypto.randomUUID()
     const result = Promise.withResolvers<unknown>()
     pending.set(id, result)
-    const timeout = setTimeout(() => {
-      pending.delete(id)
-      result.reject(new Error(`Runtime fixture ${operation} timed out: ${output.slice(-6000)}`))
-    }, 30000)
+    // Receive awaits the real QA execution; its bound belongs to the scenario,
+    // while administrative IPC keeps a separate deadlock/cleanup guard.
+    const timeout =
+      operation === "receive"
+        ? undefined
+        : setTimeout(() => {
+            pending.delete(id)
+            result.reject(new Error(`Runtime fixture ${operation} timed out: ${output.slice(-6000)}`))
+          }, 30000)
     child.send({ id, operation, ...(message ? { message } : {}) })
     try {
       return await result.promise
     } finally {
-      clearTimeout(timeout)
+      if (timeout) clearTimeout(timeout)
     }
   }
   const timeout = setTimeout(
