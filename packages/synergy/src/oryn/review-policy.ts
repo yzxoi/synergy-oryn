@@ -1,3 +1,5 @@
+import { OrynGithubStore } from "./github-store"
+import { OrynConfig } from "./config"
 import { OrynCandidate } from "./candidate"
 import { OrynGit } from "./git"
 import { OrynStore, storeError } from "./store"
@@ -52,6 +54,23 @@ export namespace OrynReviewPolicy {
 
   export async function requirements(record: Case, attempt: Attempt) {
     if (!attempt.candidateSha) throw storeError("INVALID_STAGE", "review requirements need a frozen candidate")
+    const github = await OrynGithubStore.get(record.id)
+    if (github?.mode === "review") {
+      const repository = (await OrynConfig.info())?.repositories?.[record.repoAlias]
+      if (
+        !repository?.directory ||
+        github.snapshot.headSha !== attempt.candidateSha ||
+        github.snapshot.baseSha !== attempt.baselineSha
+      )
+        throw storeError("STALE_HEAD", "External review inputs changed")
+      const changes = await OrynGit.changes(repository.directory, attempt.baselineSha, attempt.candidateSha)
+      return {
+        version: REVIEW_POLICY_VERSION,
+        baseSha: attempt.baselineSha,
+        headSha: attempt.candidateSha,
+        domains: classify(changes),
+      }
+    }
     const assignments = await OrynStore.listAssignments(record.id)
     const code = assignments.find(
       (assignment) =>
@@ -65,7 +84,7 @@ export namespace OrynReviewPolicy {
     const attempts = (await OrynStore.listAttempts(record.id)).sort(
       (a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id),
     )
-    const baseline = attempts[0]?.baselineSha
+    const baseline = github?.mode === "repair" ? github.snapshot.baseSha : attempts[0]?.baselineSha
     if (!baseline) throw storeError("INVALID_STAGE", "review requirements need the original Case baseline")
     // Repair-only diffs omit risks introduced by earlier commits on the same PR.
     const changes = await OrynGit.changes(code.workspaceRef, baseline, attempt.candidateSha)

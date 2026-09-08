@@ -474,7 +474,7 @@ export const ConfigRoute = new Hono()
     },
   )
 
-async function reloadAfterConfigChange(configChange: Config.Change, reason: string) {
+export async function reloadAfterConfigChange(configChange: Config.Change, reason: string) {
   const changedFields = new Set(configChange.changedFields)
   if (changedFields.size === 0) {
     log.info("config updated (no changes)")

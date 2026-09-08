@@ -116,6 +116,7 @@ export const SemanticIconToken = {
   "settings.import": "upload",
   "settings.configFiles": "folder-cog",
   "settings.personalize": "scroll-text",
+  "settings.oryn": "telescope",
   "settings.voice": "audio-lines",
   "settings.storage": "layers",
 

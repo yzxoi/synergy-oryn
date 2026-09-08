@@ -197,10 +197,16 @@ export namespace OrynStore {
       const next = { ...link, caseIds: [...link.caseIds, caseId] }
       await Storage.write(OrynPath.source(sourceKeyHash), next)
     }
+    using caseLock = await Lock.write(`oryn-case:${caseId}`)
     const record = await getCase(caseId)
     if (!record) throw storeError("NOT_AUTHORIZED", `case ${caseId} missing while linking source`)
     if (!record.sourceIds.includes(sourceKeyHash)) {
-      await writeCase({ ...record, sourceIds: [...record.sourceIds, sourceKeyHash], updatedAt: now() })
+      await writeCase({
+        ...record,
+        revision: record.revision + 1,
+        sourceIds: [...record.sourceIds, sourceKeyHash],
+        updatedAt: now(),
+      })
     }
     const updated = await getSource(sourceKeyHash)
     return updated!

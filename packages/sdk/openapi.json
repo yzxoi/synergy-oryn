@@ -19779,6 +19779,143 @@
         ]
       }
     },
+    "/oryn/setup": {
+      "get": {
+        "operationId": "oryn.setup.get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "directory",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "scopeID",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "summary": "Read Oryn setup",
+        "responses": {
+          "200": {
+            "description": "Oryn configuration and available destinations",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrynSetupView"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Runtime shutting down",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RuntimeShuttingDownError"
+                }
+              }
+            }
+          }
+        },
+        "x-codeSamples": [
+          {
+            "lang": "js",
+            "source": "import { createSynergyClient } from \"@ericsanchezok/synergy-sdk\"\n\nconst client = createSynergyClient()\nawait client.oryn.setup.get({\n  ...\n})"
+          }
+        ]
+      },
+      "put": {
+        "operationId": "oryn.setup.update",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "directory",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "scopeID",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "summary": "Configure Oryn",
+        "responses": {
+          "200": {
+            "description": "Saved setup",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrynSetupView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ForbiddenError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoteConflictError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Runtime shutting down",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RuntimeShuttingDownError"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OrynSetupInput"
+              }
+            }
+          }
+        },
+        "x-codeSamples": [
+          {
+            "lang": "js",
+            "source": "import { createSynergyClient } from \"@ericsanchezok/synergy-sdk\"\n\nconst client = createSynergyClient()\nawait client.oryn.setup.update({\n  ...\n})"
+          }
+        ]
+      }
+    },
     "/oryn/cases": {
       "get": {
         "operationId": "oryn.case.list",
@@ -32058,6 +32195,7 @@
         "required": ["type"]
       },
       "SessionEndpoint": {
+        "description": "Endpoint context if created from a session endpoint",
         "type": "object",
         "properties": {
           "kind": {
@@ -37205,6 +37343,29 @@
         "required": ["feishuAccount", "repoAlias"],
         "additionalProperties": false
       },
+      "OrynGithubConfig": {
+        "description": "GitHub intake, review and repair policy",
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "description": "Route repository polling into Oryn instead of ordinary Channel agents",
+            "type": "boolean"
+          },
+          "backfill": {
+            "description": "Include existing open issues and PRs (default: true)",
+            "type": "boolean"
+          },
+          "autoReview": {
+            "description": "Review existing and future non-draft PRs (default: true)",
+            "type": "boolean"
+          },
+          "autoFix": {
+            "description": "Allow verified issue fixes and confirmed discoveries (default: false); human merge remains required",
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
       "OrynPublishOperationConfig": {
         "type": "string",
         "enum": ["ensure_issue", "ensure_draft", "refresh_pr", "publish_review", "mark_ready"]
@@ -37212,6 +37373,9 @@
       "OrynRepositoryConfig": {
         "type": "object",
         "properties": {
+          "github": {
+            "$ref": "#/components/schemas/OrynGithubConfig"
+          },
           "labels": {
             "description": "Synchronize Oryn-owned type/progress labels on bound issues and PRs; preserve existing priorities (default: false)",
             "type": "boolean"
@@ -37330,6 +37494,18 @@
         "properties": {
           "processResources": {
             "$ref": "#/components/schemas/OrynProcessResourcesConfig"
+          },
+          "maxDiscoveryDepth": {
+            "description": "Maximum descendant discovery depth (default: 2)",
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 8
+          },
+          "maxDescendants": {
+            "description": "Maximum discoveries per root case (default: 8)",
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100
           },
           "maxActiveCases": {
             "description": "Maximum concurrently active cases (default: 4)",
@@ -37469,6 +37645,26 @@
         "description": "Silent delivery policy for Feishu results",
         "type": "object",
         "properties": {
+          "target": {
+            "description": "Operator-selected Feishu destination for GitHub-origin human intervention and ready notices",
+            "type": "object",
+            "properties": {
+              "accountId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "chatId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "threadId": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["accountId", "chatId"],
+            "additionalProperties": false
+          },
           "kinds": {
             "description": "Result kinds delivered back to Feishu (default: all six). Process noise such as tool calls, worker reports, and retries is never delivered regardless of this setting",
             "type": "array",
@@ -37496,9 +37692,13 @@
         "additionalProperties": false
       },
       "OrynConfig": {
-        "description": "Oryn feedback-to-PR runtime configuration (requires explicit enable)",
         "type": "object",
         "properties": {
+          "defaultRepoAlias": {
+            "description": "Default repository selected in Oryn settings",
+            "type": "string",
+            "minLength": 1
+          },
           "enabled": {
             "description": "Enable the Oryn feedback-to-PR runtime. Default: false. Existing Synergy channel, Boss, Feishu, and GitHub behavior is unchanged while disabled",
             "type": "boolean"
@@ -50629,6 +50829,126 @@
         },
         "required": ["id", "url", "mime", "size"]
       },
+      "OrynSetupView": {
+        "type": "object",
+        "properties": {
+          "revision": {
+            "type": "string"
+          },
+          "config": {
+            "$ref": "#/components/schemas/OrynConfig"
+          },
+          "repositories": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "accountId": {
+                  "type": "string"
+                },
+                "repository": {
+                  "type": "string"
+                }
+              },
+              "required": ["accountId", "repository"]
+            }
+          },
+          "targets": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "accountId": {
+                  "type": "string"
+                },
+                "chatId": {
+                  "type": "string"
+                },
+                "threadId": {
+                  "type": "string"
+                },
+                "label": {
+                  "type": "string"
+                }
+              },
+              "required": ["id", "accountId", "chatId", "label"],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": ["revision", "repositories", "targets"],
+        "additionalProperties": false
+      },
+      "ForbiddenError": {
+        "type": "object",
+        "properties": {
+          "message": {
+            "type": "string"
+          }
+        },
+        "required": ["message"]
+      },
+      "OrynSetupInput": {
+        "type": "object",
+        "properties": {
+          "revision": {
+            "type": "string"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "repoAlias": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          },
+          "githubAccount": {
+            "type": "string",
+            "minLength": 1
+          },
+          "repository": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9-]{0,38}\\/[A-Za-z0-9_][A-Za-z0-9_.-]{0,99}$"
+          },
+          "directory": {
+            "type": "string",
+            "minLength": 1
+          },
+          "baseBranch": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "backfill": {
+            "type": "boolean"
+          },
+          "autoReview": {
+            "type": "boolean"
+          },
+          "autoFix": {
+            "type": "boolean"
+          },
+          "notificationTarget": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "revision",
+          "enabled",
+          "repoAlias",
+          "githubAccount",
+          "repository",
+          "directory",
+          "baseBranch",
+          "backfill",
+          "autoReview",
+          "autoFix"
+        ],
+        "additionalProperties": false
+      },
       "OrynCaseListItem": {
         "type": "object",
         "properties": {
@@ -52582,15 +52902,6 @@
         },
         "required": ["pluginId", "name", "version", "generation", "enabledScopes", "capabilities", "contributions"]
       },
-      "ForbiddenError": {
-        "type": "object",
-        "properties": {
-          "message": {
-            "type": "string"
-          }
-        },
-        "required": ["message"]
-      },
       "PluginConfigUpdate": {
         "type": "object",
         "propertyNames": {
@@ -54246,66 +54557,6 @@
         },
         "required": ["type", "properties"]
       },
-      "Event.agenda.item.created": {
-        "type": "object",
-        "properties": {
-          "type": {
-            "type": "string",
-            "const": "agenda.item.created"
-          },
-          "properties": {
-            "type": "object",
-            "properties": {
-              "item": {
-                "$ref": "#/components/schemas/AgendaItem"
-              }
-            },
-            "required": ["item"]
-          }
-        },
-        "required": ["type", "properties"]
-      },
-      "Event.agenda.item.updated": {
-        "type": "object",
-        "properties": {
-          "type": {
-            "type": "string",
-            "const": "agenda.item.updated"
-          },
-          "properties": {
-            "type": "object",
-            "properties": {
-              "item": {
-                "$ref": "#/components/schemas/AgendaItem"
-              }
-            },
-            "required": ["item"]
-          }
-        },
-        "required": ["type", "properties"]
-      },
-      "Event.agenda.item.deleted": {
-        "type": "object",
-        "properties": {
-          "type": {
-            "type": "string",
-            "const": "agenda.item.deleted"
-          },
-          "properties": {
-            "type": "object",
-            "properties": {
-              "id": {
-                "type": "string"
-              },
-              "scopeID": {
-                "type": "string"
-              }
-            },
-            "required": ["id", "scopeID"]
-          }
-        },
-        "required": ["type", "properties"]
-      },
       "Event.provider.auth.updated": {
         "type": "object",
         "properties": {
@@ -54321,6 +54572,32 @@
               }
             },
             "required": ["health"]
+          }
+        },
+        "required": ["type", "properties"]
+      },
+      "Event.config.updated": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "config.updated"
+          },
+          "properties": {
+            "type": "object",
+            "properties": {
+              "scope": {
+                "type": "string",
+                "enum": ["global", "project"]
+              },
+              "changedFields": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": ["scope", "changedFields"]
           }
         },
         "required": ["type", "properties"]
@@ -54409,32 +54686,6 @@
               }
             },
             "required": ["sessionID", "messageID", "partID"]
-          }
-        },
-        "required": ["type", "properties"]
-      },
-      "Event.config.updated": {
-        "type": "object",
-        "properties": {
-          "type": {
-            "type": "string",
-            "const": "config.updated"
-          },
-          "properties": {
-            "type": "object",
-            "properties": {
-              "scope": {
-                "type": "string",
-                "enum": ["global", "project"]
-              },
-              "changedFields": {
-                "type": "array",
-                "items": {
-                  "type": "string"
-                }
-              }
-            },
-            "required": ["scope", "changedFields"]
           }
         },
         "required": ["type", "properties"]
@@ -54707,36 +54958,21 @@
         },
         "required": ["type", "properties"]
       },
-      "Event.runtime.reloaded": {
+      "Event.session.compacted": {
         "type": "object",
         "properties": {
           "type": {
             "type": "string",
-            "const": "runtime.reloaded"
+            "const": "session.compacted"
           },
           "properties": {
             "type": "object",
             "properties": {
-              "executed": {
-                "type": "array",
-                "items": {
-                  "$ref": "#/components/schemas/RuntimeReloadTarget"
-                }
-              },
-              "cascaded": {
-                "type": "array",
-                "items": {
-                  "$ref": "#/components/schemas/RuntimeReloadTarget"
-                }
-              },
-              "changedFields": {
-                "type": "array",
-                "items": {
-                  "type": "string"
-                }
+              "sessionID": {
+                "type": "string"
               }
             },
-            "required": ["executed", "cascaded", "changedFields"]
+            "required": ["sessionID"]
           }
         },
         "required": ["type", "properties"]
@@ -54816,21 +55052,96 @@
         },
         "required": ["type", "properties"]
       },
-      "Event.session.compacted": {
+      "Event.agenda.item.created": {
         "type": "object",
         "properties": {
           "type": {
             "type": "string",
-            "const": "session.compacted"
+            "const": "agenda.item.created"
           },
           "properties": {
             "type": "object",
             "properties": {
-              "sessionID": {
+              "item": {
+                "$ref": "#/components/schemas/AgendaItem"
+              }
+            },
+            "required": ["item"]
+          }
+        },
+        "required": ["type", "properties"]
+      },
+      "Event.agenda.item.updated": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "agenda.item.updated"
+          },
+          "properties": {
+            "type": "object",
+            "properties": {
+              "item": {
+                "$ref": "#/components/schemas/AgendaItem"
+              }
+            },
+            "required": ["item"]
+          }
+        },
+        "required": ["type", "properties"]
+      },
+      "Event.agenda.item.deleted": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "agenda.item.deleted"
+          },
+          "properties": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "scopeID": {
                 "type": "string"
               }
             },
-            "required": ["sessionID"]
+            "required": ["id", "scopeID"]
+          }
+        },
+        "required": ["type", "properties"]
+      },
+      "Event.runtime.reloaded": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "runtime.reloaded"
+          },
+          "properties": {
+            "type": "object",
+            "properties": {
+              "executed": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/RuntimeReloadTarget"
+                }
+              },
+              "cascaded": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/RuntimeReloadTarget"
+                }
+              },
+              "changedFields": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": ["executed", "cascaded", "changedFields"]
           }
         },
         "required": ["type", "properties"]
@@ -55993,16 +56304,10 @@
             "$ref": "#/components/schemas/Event.scope.runtime.disposed"
           },
           {
-            "$ref": "#/components/schemas/Event.agenda.item.created"
-          },
-          {
-            "$ref": "#/components/schemas/Event.agenda.item.updated"
-          },
-          {
-            "$ref": "#/components/schemas/Event.agenda.item.deleted"
-          },
-          {
             "$ref": "#/components/schemas/Event.provider.auth.updated"
+          },
+          {
+            "$ref": "#/components/schemas/Event.config.updated"
           },
           {
             "$ref": "#/components/schemas/Event.message.updated"
@@ -56015,9 +56320,6 @@
           },
           {
             "$ref": "#/components/schemas/Event.message.part.removed"
-          },
-          {
-            "$ref": "#/components/schemas/Event.config.updated"
           },
           {
             "$ref": "#/components/schemas/Event.permission.asked"
@@ -56056,7 +56358,7 @@
             "$ref": "#/components/schemas/Event.session.inbox.updated"
           },
           {
-            "$ref": "#/components/schemas/Event.runtime.reloaded"
+            "$ref": "#/components/schemas/Event.session.compacted"
           },
           {
             "$ref": "#/components/schemas/Event.file.edited"
@@ -56068,7 +56370,16 @@
             "$ref": "#/components/schemas/Event.dag.updated"
           },
           {
-            "$ref": "#/components/schemas/Event.session.compacted"
+            "$ref": "#/components/schemas/Event.agenda.item.created"
+          },
+          {
+            "$ref": "#/components/schemas/Event.agenda.item.updated"
+          },
+          {
+            "$ref": "#/components/schemas/Event.agenda.item.deleted"
+          },
+          {
+            "$ref": "#/components/schemas/Event.runtime.reloaded"
           },
           {
             "$ref": "#/components/schemas/Event.cortex.task.created"

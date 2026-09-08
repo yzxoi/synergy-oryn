@@ -1582,6 +1582,9 @@ export type ChannelInfo = {
   createdAt?: number
 }
 
+/**
+ * Endpoint context if created from a session endpoint
+ */
 export type SessionEndpoint = {
   kind: "channel"
   channel: ChannelInfo
@@ -4181,6 +4184,28 @@ export type OrynRouteConfig = {
   repoAlias: string
 }
 
+/**
+ * GitHub intake, review and repair policy
+ */
+export type OrynGithubConfig = {
+  /**
+   * Route repository polling into Oryn instead of ordinary Channel agents
+   */
+  enabled?: boolean
+  /**
+   * Include existing open issues and PRs (default: true)
+   */
+  backfill?: boolean
+  /**
+   * Review existing and future non-draft PRs (default: true)
+   */
+  autoReview?: boolean
+  /**
+   * Allow verified issue fixes and confirmed discoveries (default: false); human merge remains required
+   */
+  autoFix?: boolean
+}
+
 export type OrynPublishOperationConfig =
   | "ensure_issue"
   | "ensure_draft"
@@ -4189,6 +4214,7 @@ export type OrynPublishOperationConfig =
   | "mark_ready"
 
 export type OrynRepositoryConfig = {
+  github?: OrynGithubConfig
   /**
    * Synchronize Oryn-owned type/progress labels on bound issues and PRs; preserve existing priorities (default: false)
    */
@@ -4277,6 +4303,14 @@ export type OrynProcessResourcesConfig = {
 export type OrynLimitsConfig = {
   processResources?: OrynProcessResourcesConfig
   /**
+   * Maximum descendant discovery depth (default: 2)
+   */
+  maxDiscoveryDepth?: number
+  /**
+   * Maximum discoveries per root case (default: 8)
+   */
+  maxDescendants?: number
+  /**
    * Maximum concurrently active cases (default: 4)
    */
   maxActiveCases?: number
@@ -4362,6 +4396,14 @@ export type OrynExecutionProfileConfig = {
  */
 export type OrynNotificationsConfig = {
   /**
+   * Operator-selected Feishu destination for GitHub-origin human intervention and ready notices
+   */
+  target?: {
+    accountId: string
+    chatId: string
+    threadId?: string
+  }
+  /**
    * Result kinds delivered back to Feishu (default: all six). Process noise such as tool calls, worker reports, and retries is never delivered regardless of this setting
    */
   kinds?: Array<"answer" | "clarification" | "accepted" | "needs_human" | "ready" | "released">
@@ -4381,10 +4423,11 @@ export type OrynLearningConfig = {
   autoReward?: boolean
 }
 
-/**
- * Oryn feedback-to-PR runtime configuration (requires explicit enable)
- */
 export type OrynConfig = {
+  /**
+   * Default repository selected in Oryn settings
+   */
+  defaultRepoAlias?: string
   /**
    * Enable the Oryn feedback-to-PR runtime. Default: false. Existing Synergy channel, Boss, Feishu, and GitHub behavior is unchanged while disabled
    */
@@ -9021,6 +9064,40 @@ export type AssetInfo = {
   size: number
 }
 
+export type OrynSetupView = {
+  revision: string
+  config?: OrynConfig
+  repositories: Array<{
+    accountId: string
+    repository: string
+  }>
+  targets: Array<{
+    id: string
+    accountId: string
+    chatId: string
+    threadId?: string
+    label: string
+  }>
+}
+
+export type ForbiddenError = {
+  message: string
+}
+
+export type OrynSetupInput = {
+  revision: string
+  enabled: boolean
+  repoAlias: string
+  githubAccount: string
+  repository: string
+  directory: string
+  baseBranch: string
+  backfill: boolean
+  autoReview: boolean
+  autoFix: boolean
+  notificationTarget?: string
+}
+
 export type OrynCaseListItem = {
   id: string
   revision: number
@@ -9564,10 +9641,6 @@ export type GlobalThemeContribution = {
   }
 }
 
-export type ForbiddenError = {
-  message: string
-}
-
 export type PluginConfigUpdate = {
   [key: string]: unknown
 }
@@ -10106,32 +10179,18 @@ export type EventScopeRuntimeDisposed = {
   }
 }
 
-export type EventAgendaItemCreated = {
-  type: "agenda.item.created"
-  properties: {
-    item: AgendaItem
-  }
-}
-
-export type EventAgendaItemUpdated = {
-  type: "agenda.item.updated"
-  properties: {
-    item: AgendaItem
-  }
-}
-
-export type EventAgendaItemDeleted = {
-  type: "agenda.item.deleted"
-  properties: {
-    id: string
-    scopeID: string
-  }
-}
-
 export type EventProviderAuthUpdated = {
   type: "provider.auth.updated"
   properties: {
     health: ProviderAuthHealth
+  }
+}
+
+export type EventConfigUpdated = {
+  type: "config.updated"
+  properties: {
+    scope: "global" | "project"
+    changedFields: Array<string>
   }
 }
 
@@ -10164,14 +10223,6 @@ export type EventMessagePartRemoved = {
     sessionID: string
     messageID: string
     partID: string
-  }
-}
-
-export type EventConfigUpdated = {
-  type: "config.updated"
-  properties: {
-    scope: "global" | "project"
-    changedFields: Array<string>
   }
 }
 
@@ -10270,12 +10321,10 @@ export type EventSessionInboxUpdated = {
   }
 }
 
-export type EventRuntimeReloaded = {
-  type: "runtime.reloaded"
+export type EventSessionCompacted = {
+  type: "session.compacted"
   properties: {
-    executed: Array<RuntimeReloadTarget>
-    cascaded: Array<RuntimeReloadTarget>
-    changedFields: Array<string>
+    sessionID: string
   }
 }
 
@@ -10303,10 +10352,34 @@ export type EventDagUpdated = {
   }
 }
 
-export type EventSessionCompacted = {
-  type: "session.compacted"
+export type EventAgendaItemCreated = {
+  type: "agenda.item.created"
   properties: {
-    sessionID: string
+    item: AgendaItem
+  }
+}
+
+export type EventAgendaItemUpdated = {
+  type: "agenda.item.updated"
+  properties: {
+    item: AgendaItem
+  }
+}
+
+export type EventAgendaItemDeleted = {
+  type: "agenda.item.deleted"
+  properties: {
+    id: string
+    scopeID: string
+  }
+}
+
+export type EventRuntimeReloaded = {
+  type: "runtime.reloaded"
+  properties: {
+    executed: Array<RuntimeReloadTarget>
+    cascaded: Array<RuntimeReloadTarget>
+    changedFields: Array<string>
   }
 }
 
@@ -10724,15 +10797,12 @@ export type Event =
   | EventScopeUpdated
   | EventScopeRemoved
   | EventScopeRuntimeDisposed
-  | EventAgendaItemCreated
-  | EventAgendaItemUpdated
-  | EventAgendaItemDeleted
   | EventProviderAuthUpdated
+  | EventConfigUpdated
   | EventMessageUpdated
   | EventMessageRemoved
   | EventMessagePartUpdated
   | EventMessagePartRemoved
-  | EventConfigUpdated
   | EventPermissionAsked
   | EventPermissionReplied
   | EventSessionUpdated
@@ -10745,11 +10815,14 @@ export type Event =
   | EventSessionTurnStart
   | EventSessionTurnEnd
   | EventSessionInboxUpdated
-  | EventRuntimeReloaded
+  | EventSessionCompacted
   | EventFileEdited
   | EventTodoUpdated
   | EventDagUpdated
-  | EventSessionCompacted
+  | EventAgendaItemCreated
+  | EventAgendaItemUpdated
+  | EventAgendaItemDeleted
+  | EventRuntimeReloaded
   | EventCortexTaskCreated
   | EventCortexTaskCompleted
   | EventCortexTasksUpdated
@@ -20329,6 +20402,74 @@ export type AssetGetResponses = {
    */
   200: unknown
 }
+
+export type OrynSetupGetData = {
+  body?: never
+  path?: never
+  query?: {
+    directory?: string
+    scopeID?: string
+  }
+  url: "/oryn/setup"
+}
+
+export type OrynSetupGetErrors = {
+  /**
+   * Runtime shutting down
+   */
+  503: RuntimeShuttingDownError
+}
+
+export type OrynSetupGetError = OrynSetupGetErrors[keyof OrynSetupGetErrors]
+
+export type OrynSetupGetResponses = {
+  /**
+   * Oryn configuration and available destinations
+   */
+  200: OrynSetupView
+}
+
+export type OrynSetupGetResponse = OrynSetupGetResponses[keyof OrynSetupGetResponses]
+
+export type OrynSetupUpdateData = {
+  body?: OrynSetupInput
+  path?: never
+  query?: {
+    directory?: string
+    scopeID?: string
+  }
+  url: "/oryn/setup"
+}
+
+export type OrynSetupUpdateErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+  /**
+   * Forbidden
+   */
+  403: ForbiddenError
+  /**
+   * Conflict
+   */
+  409: NoteConflictError
+  /**
+   * Runtime shutting down
+   */
+  503: RuntimeShuttingDownError
+}
+
+export type OrynSetupUpdateError = OrynSetupUpdateErrors[keyof OrynSetupUpdateErrors]
+
+export type OrynSetupUpdateResponses = {
+  /**
+   * Saved setup
+   */
+  200: OrynSetupView
+}
+
+export type OrynSetupUpdateResponse = OrynSetupUpdateResponses[keyof OrynSetupUpdateResponses]
 
 export type OrynCaseListData = {
   body?: never

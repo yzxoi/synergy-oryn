@@ -1,3 +1,7 @@
+import { OrynGithub } from "./github"
+import { OrynDiscovery } from "./discovery"
+import { OrynGithubStore } from "./github-store"
+import { OrynGithubRuntime } from "./github-runtime"
 import { OrynControl } from "./control"
 import { Lock } from "../util/lock"
 import { OrynPublication } from "./publication"
@@ -214,6 +218,14 @@ export namespace OrynPublish {
     refs?: PublishRefs
     deduped: boolean
   }> {
+    const githubWork = await OrynGithubStore.get(input.caseId)
+    if (githubWork?.mode === "review") {
+      if (input.operation !== "publish_review")
+        throw storeError("NOT_AUTHORIZED", "External PR cases can only publish independent reviews")
+      return OrynGithubRuntime.publishReview(input.caseId, input.callerSessionID)
+    }
+    if (githubWork && !(await OrynGithub.authorized(githubWork, "run")))
+      throw storeError("NOT_AUTHORIZED", "GitHub work authority was revoked")
     using publicationLock = await Lock.tryAcquireWrite(`oryn-publication:${input.caseId}`)
     if (!publicationLock) throw storeError("INVALID_STAGE", "Case publication is in progress; retry after settlement")
     if (input.operation === "sync_labels") throw storeError("NOT_AUTHORIZED", "label synchronization is host-owned")
@@ -234,6 +246,25 @@ export namespace OrynPublish {
     const repoCfg = oryn?.repositories?.[record.repoAlias]
     if (!repoCfg) {
       throw storeError("NOT_AUTHORIZED", `repository alias ${record.repoAlias} is not configured`)
+    }
+    const discovery = await OrynDiscovery.lineage(input.caseId)
+    if (discovery && input.operation === "ensure_issue") {
+      const reports = await OrynStore.listWorkerReports(input.caseId)
+      const assignments = await OrynStore.listAssignments(input.caseId)
+      if (
+        !reports.some(
+          (report) =>
+            report.kind === "repro" &&
+            report.outcome === "reproduced" &&
+            assignments.some(
+              (assignment) => assignment.acceptedReportId === report.id && assignment.epoch === record.epoch,
+            ),
+        )
+      )
+        throw storeError(
+          "EVIDENCE_INSUFFICIENT",
+          "An independent discovery needs accepted reproduction before a public issue",
+        )
     }
     const allowed = repoCfg.allowedOperations
     if (allowed && input.operation !== "notify_feishu" && !allowed.includes(input.operation)) {
@@ -285,7 +316,14 @@ export namespace OrynPublish {
       if (!facts.issue) {
         throw storeError("REMOTE_AMBIGUOUS", "linked issue is missing remotely; refusing to create a duplicate")
       }
-      if (!facts.issue.markerPresent || !facts.issue.authorIsApp) {
+      if (
+        (!facts.issue.markerPresent || !facts.issue.authorIsApp) &&
+        !(
+          githubWork?.mode === "issue" &&
+          githubWork.number === facts.issue.number &&
+          githubWork.repository === repository
+        )
+      ) {
         throw storeError("REMOTE_AMBIGUOUS", "linked issue lacks the Oryn marker; refusing to create a duplicate")
       }
       const receipt = await OrynStore.writeAction({

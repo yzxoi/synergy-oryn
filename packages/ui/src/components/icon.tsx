@@ -540,3 +540,5 @@ export function Icon(props: IconProps) {
 }
 
 export { COMPUTER_TOOL_ICONS } from "./tool/computer-icons"
+
+export const ORYN_TOOL_ICONS = { oryn_discover: "bug" } as const

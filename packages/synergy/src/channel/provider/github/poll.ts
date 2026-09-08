@@ -13,6 +13,12 @@ import { externalIdentityHash } from "../../../util/identity"
 import { runGithubPollReconciler } from "./publish"
 import { Lock } from "@/util/lock"
 
+type RepositoryPoller = (input: { accountId: string; repository: string; signal: AbortSignal }) => Promise<boolean>
+let repositoryPoller: RepositoryPoller | undefined
+export function setGithubRepositoryPoller(poller: RepositoryPoller) {
+  repositoryPoller = poller
+}
+
 const log = Log.create({ service: "channel.github.poll" })
 
 /** Lookback window used on the very first poll of a repository so events that
@@ -91,6 +97,7 @@ export async function pollRepository(input: {
   signal: AbortSignal
   host: ChannelHost.Instance
 }): Promise<void> {
+  if (await repositoryPoller?.(input)) return
   const { owner, repo } = splitRepository(input.repository)
 
   const appId = Number(process.env.SYNERGY_GITHUB_APP_ID)

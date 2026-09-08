@@ -50,13 +50,23 @@ function toolAllows(tools: string[]): Rule[] {
   return tools.map((tool) => ({ permission: tool, pattern: "*", action: "allow" as const }))
 }
 
-const QA_TOOLS = ["skill", "memory_search", "memory_get", "oryn_case", "oryn_reply", "oryn_github_read"]
+const QA_TOOLS = [
+  "skill",
+  "memory_search",
+  "memory_get",
+  "oryn_discover",
+  "oryn_case",
+  "oryn_reply",
+  "oryn_github_read",
+]
 const WORK_TOOLS = [
+  "oryn_reply",
   "skill",
   "memory_search",
   "memory_get",
   "boss_status",
   "session_read",
+  "oryn_discover",
   "oryn_case",
   "oryn_dispatch",
   "oryn_result",
@@ -74,6 +84,7 @@ const REPRO_TOOLS = [
   "bash",
   "process",
   "boss_report",
+  "oryn_discover",
   "oryn_case",
   "oryn_check",
   "oryn_result",
@@ -89,6 +100,7 @@ const CODE_TOOLS = [
   "bash",
   "process",
   "boss_report",
+  "oryn_discover",
   "oryn_case",
   "oryn_check",
   "oryn_result",
@@ -100,6 +112,7 @@ const REVIEW_TOOLS = [
   "memory_get",
   "session_read",
   "boss_report",
+  "oryn_discover",
   "oryn_case",
   "oryn_check",
   "oryn_result",

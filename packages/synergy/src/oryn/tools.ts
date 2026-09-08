@@ -1,3 +1,7 @@
+import { OrynControl } from "./control"
+import { OrynGit } from "./git"
+import { OrynDiscovery, DiscoveryInput } from "./discovery"
+import { OrynGithubStore } from "./github-store"
 import z from "zod"
 import { ToolScheduler } from "../session/tool-scheduler"
 import { Tool } from "../tool/tool"
@@ -143,6 +147,7 @@ export const OrynCaseTool = Tool.define(
             title: `Case ${record.id}`,
             output: JSON.stringify(
               {
+                github: binding.role !== "qa" ? await OrynGithubStore.get(record.id) : undefined,
                 caseId: record.id,
                 executionProfiles:
                   binding.role !== "qa"
@@ -223,7 +228,9 @@ export const OrynCaseTool = Tool.define(
         }
         if (params.action === "amend") {
           const binding = await requireBinding(ctx.sessionID, params.caseId)
-          if (binding.role !== "qa") throw toolError("NOT_AUTHORIZED", "only QA may amend reporter acceptance")
+          const github = binding.role === "engineering" ? await OrynGithubStore.get(params.caseId) : undefined
+          if (binding.role !== "qa" && github?.mode !== "issue")
+            throw toolError("NOT_AUTHORIZED", "Only QA or the bound GitHub issue root may amend reporter acceptance")
           const record = await OrynStore.amendAcceptance(params.caseId, params.expectedRevision, {
             observed: params.observed,
             expected: params.expected,
@@ -700,6 +707,12 @@ export const OrynPublishTool = Tool.define(
 
 const GithubReadParameters = z.object({
   caseId: z.string().min(1),
+  path: z
+    .string()
+    .min(1)
+    .max(500)
+    .optional()
+    .describe("For GitHub PR work, a path returned in changedFiles; returns its exact base-to-head diff"),
 })
 
 export const OrynGithubReadTool = Tool.define(
@@ -710,6 +723,45 @@ export const OrynGithubReadTool = Tool.define(
     parameters: GithubReadParameters,
     async execute(params, ctx): Promise<Tool.ExecutionResult> {
       return execute(async () => {
+        await requireBinding(ctx.sessionID, params.caseId)
+        const work = await OrynGithubStore.get(params.caseId)
+        if (work) {
+          const repository = (await OrynConfig.info())?.repositories?.[work.repoAlias]
+          const changes =
+            repository?.directory && work.snapshot.baseSha && work.snapshot.headSha
+              ? await OrynGit.changes(repository.directory, work.snapshot.baseSha, work.snapshot.headSha)
+              : []
+          if (
+            params.path &&
+            (!changes.some((change) => change.path === params.path) ||
+              /(^|\/)(\.env|.*\.(pem|key)|.*credentials.*|.*secret.*)(\.|$)/i.test(params.path))
+          )
+            throw toolError("NOT_AUTHORIZED", "Select a non-sensitive path from changedFiles")
+          const diff =
+            params.path && repository?.directory
+              ? await OrynGit.read(repository.directory, [
+                  "diff",
+                  "--no-ext-diff",
+                  "--no-textconv",
+                  "--no-renames",
+                  work.snapshot.baseSha!,
+                  work.snapshot.headSha!,
+                  "--",
+                  params.path,
+                ])
+              : undefined
+          return {
+            title: "GitHub context",
+            output: JSON.stringify({
+              mode: work.mode,
+              snapshot: work.snapshot,
+              fingerprint: work.fingerprint,
+              changedFiles: changes,
+              diff,
+            }),
+            metadata: { caseId: params.caseId },
+          }
+        }
         const facts = await OrynPublish.readFacts({
           callerSessionID: ctx.sessionID,
           caseId: params.caseId,
@@ -770,8 +822,43 @@ export const OrynLearnTool = Tool.define(
   },
 )
 
+export const OrynDiscoverTool = Tool.define(
+  "oryn_discover",
+  {
+    description:
+      "Record a bug found during any Oryn stage. Supply observed/expected behavior, parent-Case evidence record IDs, and its relationship. The Host binds caller, repository and source version, deduplicates observations and limits descendants. Current-change findings stay in the existing review; independent/blocking bugs enter a separate reproduction Case before any public issue or PR. Environment gaps and security reports never auto-publish. Returns the durable discovery and optional child Case; suspicion is not proof.",
+    parameters: DiscoveryInput,
+    async execute(input, ctx): Promise<Tool.ExecutionResult> {
+      return execute(async () => {
+        const discovery = await OrynDiscovery.propose(ctx.sessionID, input)
+        if (discovery.state === "needs_human")
+          await OrynControl.handoff({
+            caseId: input.caseId,
+            callerSessionID: ctx.sessionID,
+            reason:
+              discovery.relation === "security"
+                ? "A private security finding requires operator review; inspect the engineering task."
+                : "Discovery limits reached; review the retained findings before continuing.",
+          })
+        return {
+          title: "Discovery recorded",
+          output: JSON.stringify({
+            id: discovery.id,
+            childCaseId: discovery.childCaseId,
+            state: discovery.state,
+            relation: discovery.relation,
+          }),
+          metadata: { discoveryId: discovery.id, state: discovery.state },
+        }
+      })
+    },
+  },
+  { exposure: { mode: "resident" } },
+)
+
 export function registerOrynTools(): Tool.Info[] {
   return [
+    OrynDiscoverTool,
     OrynCaseTool,
     OrynDispatchTool,
     OrynResultTool,

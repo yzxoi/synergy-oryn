@@ -407,6 +407,11 @@ import type {
   OrynCaseListErrors,
   OrynCaseListResponses,
   OrynControlInput,
+  OrynSetupGetErrors,
+  OrynSetupGetResponses,
+  OrynSetupInput,
+  OrynSetupUpdateErrors,
+  OrynSetupUpdateResponses,
   Part as Part2,
   PartDeleteErrors,
   PartDeleteResponses,
@@ -10548,6 +10553,71 @@ export class Asset extends HeyApiClient {
   }
 }
 
+export class Setup extends HeyApiClient {
+  /**
+   * Read Oryn setup
+   */
+  public get<ThrowOnError extends boolean = false>(
+    parameters?: {
+      directory?: string
+      scopeID?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "directory" },
+            { in: "query", key: "scopeID" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).get<OrynSetupGetResponses, OrynSetupGetErrors, ThrowOnError>({
+      url: "/oryn/setup",
+      ...options,
+      ...params,
+    })
+  }
+
+  /**
+   * Configure Oryn
+   */
+  public update<ThrowOnError extends boolean = false>(
+    parameters?: {
+      directory?: string
+      scopeID?: string
+      orynSetupInput?: OrynSetupInput
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "directory" },
+            { in: "query", key: "scopeID" },
+            { key: "orynSetupInput", map: "body" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).put<OrynSetupUpdateResponses, OrynSetupUpdateErrors, ThrowOnError>({
+      url: "/oryn/setup",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    })
+  }
+}
+
 export class Attempt extends HeyApiClient {
   /**
    * Get an Oryn attempt
@@ -10690,6 +10760,8 @@ export class Case extends HeyApiClient {
 }
 
 export class Oryn extends HeyApiClient {
+  setup = new Setup({ client: this.client })
+
   case = new Case({ client: this.client })
 }
 
