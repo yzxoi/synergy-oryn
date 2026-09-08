@@ -6,6 +6,8 @@ import { OrynSandbox } from "../../src/oryn/sandbox"
 import { OrynExperiment } from "../../src/oryn/experiment"
 import { OrynGit } from "../../src/oryn/git"
 import { tmpdir } from "../fixture/fixture"
+import yargs from "yargs/yargs"
+import { OrynCommand } from "../../src/cli/cmd/oryn"
 
 const hash = (value: string) => new Bun.CryptoHasher("sha256").update(value).digest("hex")
 
@@ -285,6 +287,30 @@ test("snapshot output cannot be redirected into the source by a parent symlink",
     OrynDependencies.seal({ source: f.repo.path, output: join(f.artifacts.path, "redirect/snapshot"), abort: f.abort }),
   ).rejects.toMatchObject(unavailable)
   expect(await lstat(join(f.repo.path, "snapshot")).catch(() => undefined)).toBeUndefined()
+})
+
+test("the registered seal command writes its artifact and restores signal listeners after success and failure", async () => {
+  const f = await fixture()
+  const output = join(f.artifacts.path, "registered-cli")
+  const before = [process.listenerCount("SIGINT"), process.listenerCount("SIGTERM")]
+  const exitCode = process.exitCode ?? 0
+  const invoke = () =>
+    yargs(["oryn", "seal-dependencies", f.repo.path, output, "--json"])
+      .command(OrynCommand)
+      .exitProcess(false)
+      .parseAsync()
+  try {
+    await invoke()
+    const manifest = await Bun.file(join(output, "manifest.json")).text()
+    expect(hash(manifest)).toBe(f.sealed.digest)
+    expect([process.listenerCount("SIGINT"), process.listenerCount("SIGTERM")]).toEqual(before)
+    await invoke()
+    expect(process.exitCode).toBe(1)
+    expect(await Bun.file(join(output, "manifest.json")).text()).toBe(manifest)
+    expect([process.listenerCount("SIGINT"), process.listenerCount("SIGTERM")]).toEqual(before)
+  } finally {
+    process.exitCode = exitCode
+  }
 })
 
 test("the product CLI seals dependencies and reports failures with a nonzero exit", async () => {
