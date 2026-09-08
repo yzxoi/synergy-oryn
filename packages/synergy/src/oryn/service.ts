@@ -16,6 +16,7 @@ import { OrynEngineering } from "./engineering"
 import { OrynReports } from "./reports"
 import { OrynReady } from "./ready"
 import { OrynReviewPolicy } from "./review-policy"
+import { OrynBudget } from "./budget"
 import { OrynEvidence } from "./evidence"
 import { Finding as FindingSchema, REVIEW_POLICY_VERSION } from "./schema"
 import type { Case, Finding, OutboxEntry, ReviewDomain, RunReceipt, SourceIdentity, Stage } from "./schema"
@@ -63,6 +64,7 @@ async function requireActiveCase(caseId: string) {
     throw storeError("HUMAN_OWNED", `case is ${record.control}`, { caseId })
   }
   if (record.control === "paused") throw storeError("HUMAN_OWNED", "case is paused", { caseId })
+  await OrynBudget.assert(record)
   return record
 }
 async function assertStageAdmission(caseId: string, attemptId: string, stage: Stage): Promise<void> {
@@ -820,6 +822,8 @@ export namespace OrynService {
     if (record.engineeringSessionId !== input.callerSessionID)
       throw storeError("NOT_AUTHORIZED", "caller is not the case engineering root")
     const failures: Array<{ code: string; message: string }> = []
+    const budget = await OrynBudget.reason(record)
+    if (budget) failures.push({ code: "BUDGET_EXHAUSTED", message: budget })
 
     if (record.control !== "active") {
       failures.push({ code: "HUMAN_OWNED", message: `case is ${record.control}` })

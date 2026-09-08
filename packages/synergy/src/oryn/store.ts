@@ -873,14 +873,24 @@ export namespace OrynStore {
   }
 
   /**
-   * Model-initiated human handoff. Serializes on the case lock with a fresh
+   * Human handoff. Serializes on the case lock with a fresh
    * revision read; takeover semantics apply (control becomes human_owned and
    * the epoch bumps so pending external actions go stale).
+   * A stale optional Host snapshot preserves the current record.
    */
-  export async function requestHandoff(caseId: string, reason: string): Promise<Case> {
+  export async function requestHandoff(
+    caseId: string,
+    reason: string,
+    expected?: { revision: number; attemptRevision?: number },
+  ): Promise<Case> {
     using _lock = await Lock.write(`oryn-case:${caseId}`)
     const current = await getCase(caseId)
     if (!current) throw storeError("NOT_AUTHORIZED", `case ${caseId} not found`)
+    if (expected) {
+      if (current.revision !== expected.revision) return current
+      const attempt = current.activeAttemptId ? await getAttempt(caseId, current.activeAttemptId) : undefined
+      if (attempt?.revision !== expected.attemptRevision) return current
+    }
     if (current.control === "human_owned" && current.handoff?.reason === reason) return current
     if (current.control !== "active") throw storeError("HUMAN_OWNED", `case is ${current.control}`)
     const timestamp = now()
@@ -1118,17 +1128,6 @@ export namespace OrynStore {
     const ids = await Storage.scan(OrynPath.runsRoot(caseId))
     const records = await Promise.all(ids.map((id) => getRun(caseId, id)))
     return records.filter((r): r is RunReceipt => r !== undefined)
-  }
-
-  /** Real budget counters per case: heavy-run receipts and elapsed wall clock. */
-  export async function checkBudget(caseId: string): Promise<{ heavyRuns: number; elapsedMinutes: number }> {
-    const record = await getCase(caseId)
-    if (!record) throw storeError("NOT_AUTHORIZED", `case ${caseId} not found`)
-    const runs = await listRuns(caseId)
-    return {
-      heavyRuns: runs.filter((r) => r.lane !== "baseline").length,
-      elapsedMinutes: Math.floor((now() - record.createdAt) / 60000),
-    }
   }
 
   export async function listReviews(caseId: string): Promise<ReviewReport[]> {

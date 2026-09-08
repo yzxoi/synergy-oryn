@@ -9,6 +9,7 @@ import { Lock } from "../util/lock"
 import { Log } from "../util/log"
 import { OrynOwnership } from "./ownership"
 import { OrynEvidence } from "./evidence"
+import { OrynBudget } from "./budget"
 import { OrynConfig } from "./config"
 import { OrynStore, storeError } from "./store"
 import type { Case } from "./schema"
@@ -21,6 +22,7 @@ export namespace OrynControl {
     if (!binding.caseId || !(await OrynConfig.enabled())) return false
     const record = await OrynStore.getCase(binding.caseId)
     if (!record || record.control !== "active") return false
+    if (await OrynBudget.reason(record)) return false
     if (binding.role === "engineering")
       return (
         record.engineeringSessionId === session.id &&
@@ -125,6 +127,35 @@ export namespace OrynControl {
       } catch (error) {
         result.failed++
         Log.create({ service: "oryn.control" }).warn("Case process cleanup incomplete", { caseId: item.id, error })
+      }
+    }
+    return result
+  }
+
+  export async function enforceBudgets() {
+    const result = { expired: 0, failed: 0 }
+    if (!(await OrynConfig.enabled())) return result
+    for (const item of await OrynStore.listCases({ control: "active" })) {
+      try {
+        using lock = await Lock.tryAcquireWrite(`oryn-control:${item.id}`)
+        if (!lock) continue
+        const current = await OrynStore.getCase(item.id)
+        if (!current) continue
+        const attempt = current.activeAttemptId
+          ? await OrynStore.getAttempt(current.id, current.activeAttemptId)
+          : undefined
+        const reason = await OrynBudget.reason(current)
+        if (!reason) continue
+        const record = await OrynStore.requestHandoff(current.id, reason, {
+          revision: current.revision,
+          attemptRevision: attempt?.revision,
+        })
+        if (record.control !== "human_owned" || record.handoff?.reason !== reason) continue
+        result.expired++
+        await stop(record)
+      } catch (error) {
+        result.failed++
+        Log.create({ service: "oryn.control" }).warn("Case budget enforcement incomplete", { caseId: item.id, error })
       }
     }
     return result

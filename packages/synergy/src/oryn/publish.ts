@@ -5,6 +5,7 @@ import { externalIdentityHash } from "../util/identity"
 import { OrynStore, storeError } from "./store"
 import { OrynConfig } from "./config"
 import { OrynService } from "./service"
+import { OrynBudget } from "./budget"
 import { OrynLearning } from "./learn"
 import { OrynReady } from "./ready"
 import type { ActionReceipt, PublishOperation } from "./schema"
@@ -239,6 +240,7 @@ export namespace OrynPublish {
       throw storeError("NOT_AUTHORIZED", `operation ${input.operation} is not allowed for this repository`)
     }
     const repository = `${repoCfg.owner}/${repoCfg.repo}`
+    await OrynBudget.assert(record)
     const marker = caseMarker(input.caseId)
 
     const attemptId = input.attemptId ?? record.activeAttemptId

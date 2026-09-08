@@ -1,6 +1,7 @@
 import { OrynConfig } from "../oryn/config"
 import { OrynStore } from "../oryn/store"
 import { OrynControl } from "../oryn/control"
+import { OrynBudgetRuntime } from "../oryn/budget-runtime"
 import { Agenda } from "@/agenda"
 import { AgendaBootstrap } from "@/agenda/bootstrap"
 import { ChannelOutbound } from "@/channel/outbound"
@@ -43,6 +44,7 @@ export namespace GlobalRuntime {
           await SessionRecovery.reconcileRuntimeState({ scopeID: Scope.home().id, apply: true }).catch((error) => {
             log.warn("session runtime recovery failed", { scopeID: Scope.home().id, error })
           })
+          if (await OrynConfig.enabled()) await OrynBudgetRuntime.start()
           await LatticeRuntime.init()
           ActivitySummary.init()
           await SessionInvoke.resumePending({ scopeID: Scope.home().id })
@@ -82,6 +84,7 @@ export namespace GlobalRuntime {
   }
 
   export async function stop() {
+    await OrynBudgetRuntime.stop()
     Agenda.stop()
     // Stop accepting new pushes and wait for queued fan-outs before the
     // storage/services they rely on are torn down.

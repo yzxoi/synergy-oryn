@@ -98,7 +98,7 @@ Enable Oryn only after all of the following hold:
 - `oryn.enabled: true` with at least one `routes` entry and one `repositories` entry (the schema rejects enabling without them).
 - `oryn.repositories[alias].baseBranch` points at the branch PRs target (for this fork's workflow: `dev`).
 - `oryn.executionProfiles` declare only capabilities the preflight verified.
-- Set `oryn.limits.heavyConcurrency` for check processes (runtime default 2) and explicit `maxCaseMinutes` for check admission. Full worker-count, model-token and runtime-wide Case budget enforcement remain incomplete; the schema descriptions are not proof of enforced limits.
+- Set `oryn.limits.heavyConcurrency` for check processes (runtime default 2) and `maxCaseMinutes` for the Case wall-clock budget (default 720). Worker-count, model-token and QA capacity enforcement remain incomplete; the corresponding schema descriptions are not proof of enforced limits.
 - `oryn.review.maxRepairRounds` (default 3) and `maxNoProgressRounds` (default 2) reflect the team's appetite for autonomous rework.
 - Project-level config does not override runtime-owned Oryn keys; the `runtime` domain owns this key and project config cannot widen the allowlists.
 
@@ -106,7 +106,10 @@ Enable Oryn only after all of the following hold:
 
 - Every stage dispatch, worker report, review, and check run is a durable record; the Feishu reporter receives only the six result kinds (`answer`, `clarification`, `accepted`, `needs_human`, `ready`, `released`) filtered by `oryn.notifications.kinds`. Process noise (tool calls, worker reports, retries) is never delivered.
 - Reply intents deduplicate by recipient and operation. Answers and clarifications are scoped to the host-owned root turn, so later questions can receive answers. Before transport invocation, the outbox records an uncertain dispatch; a confirmed response settles it to delivered. Timeout or interruption does not trigger an automatic resend. Draft PR creation, merge, and release are distinct facts.
-- Check admission rejects an explicitly configured Case wall-clock limit once exceeded. Model-token accounting, automatic budget handoff and ordinary coder-shell accounting still need implementation and verification; do not rely on the corresponding configuration fields as hard limits.
+- The wall-clock budget starts at Case creation and includes queued time, pauses and repair rounds. Admission rejects expired engineering/worker turns, stage dispatch, check execution and new publication. The runtime checks active Cases at startup before resuming pending tasks and then after each sweep with a one-second delay. It persists human handoff, cancels and drains owned Session work, terminates tracked worker processes and queues the existing per-reporter handoff outcome. Notification delivery does not block later budget sweeps; uncertain sends keep their ordinary reconciliation rules.
+- Attempts already ready for human review are exempt from automatic time expiry. A concurrent completed Attempt or changed Case revision prevents a stale sweep from transferring ownership. Cleanup failures are logged and retried; detection and OS cleanup latency mean this is not a real-time CPU limit. Model-token accounting, total worker limits and QA capacity reservation still need implementation and verification.
+
+Before upgrading, inspect old active Cases and configure the intended `maxCaseMinutes`: the default applies to their original creation times immediately at startup. No timestamp migration or budget reset occurs. After exhaustion, inspect the retained work and increase the installation budget before explicitly resuming; a resume without more time remains ineligible and returns to human handoff. Run `bun run test test/oryn/worker-start.test.ts test/oryn/shell.test.ts test/oryn/publish.test.ts -t 'budget|expired'` from `packages/synergy` for admission, cancellation, actual background-process cleanup, handoff delivery, readiness races and publication denial.
 
 ## Delivery Check Gating
 

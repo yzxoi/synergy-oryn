@@ -1218,6 +1218,38 @@ test("a label receipt cannot acknowledge a model publication through a reused re
   })
 })
 
+test("an expired candidate cannot publish readiness despite accepted verification and review", async () => {
+  await withPubScope(async (root) => {
+    const seeded = await seedFrozen(root)
+    await verifyFrozen(seeded)
+    await OrynStore.attachRemoteRefs(seeded.caseId, { pullNumber: 55 })
+    const record = (await OrynStore.getCase(seeded.caseId))!
+    await OrynStore.mutateCase(record.id, record.revision, (value) => ({
+      ...value,
+      createdAt: Date.now() - 721 * 60_000,
+    }))
+    const transport = fakeTransport({ candidateSha: seeded.candidateSha, marker: caseMarker(record.id), ci: "success" })
+    setTransport(transport)
+    const gate = await OrynService.evaluateDelivery({
+      callerSessionID: seeded.engineeringSessionId,
+      caseId: record.id,
+      payload: `Verified candidate ${seeded.candidateSha}`,
+      ciStatus: "passed",
+    })
+    expect(gate.ready).toBe(false)
+    expect(gate.failures.some((failure) => failure.code === "BUDGET_EXHAUSTED")).toBe(true)
+    await expect(
+      OrynPublish.publish({
+        callerSessionID: seeded.engineeringSessionId,
+        caseId: record.id,
+        operation: "mark_ready",
+        requestKey: "expired-candidate-ready",
+      }),
+    ).rejects.toMatchObject({ data: { code: "BUDGET_EXHAUSTED" } })
+    expect(transport.calls).toHaveLength(0)
+  })
+})
+
 test("Host requires risk-domain reviews even when engineering only requested general review", async () => {
   await withPubScope(async (root) => {
     const seeded = await seedFrozen(root, ["src/channel/credentials/storage.ts", ".github/workflows/release.yml"])

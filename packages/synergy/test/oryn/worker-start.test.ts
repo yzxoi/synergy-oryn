@@ -7,6 +7,8 @@ import { Config } from "../../src/config/config"
 import { BossService } from "../../src/boss/boss"
 import { OrynOwnership } from "../../src/oryn/ownership"
 import { OrynControl } from "../../src/oryn/control"
+import { OrynBudget } from "../../src/oryn/budget"
+import { OrynBudgetRuntime } from "../../src/oryn/budget-runtime"
 import { OrynEngineering } from "../../src/oryn/engineering"
 import { scriptedModel } from "./fixtures/model"
 import { OrynService } from "../../src/oryn/service"
@@ -28,6 +30,7 @@ async function fixture(
     dispatch: () => ReturnType<typeof OrynService.dispatch>
   }) => Promise<void>,
   modelConfig?: Partial<Config.Info>,
+  limits?: { maxCaseMinutes: number },
 ) {
   await using repo = await tmpdir({ git: true })
   await using config = await globalConfig({
@@ -36,6 +39,7 @@ async function fixture(
       enabled: true,
       routes: [{ feishuAccount: "test", repoAlias: "fixture" }],
       repositories: { fixture: { owner: "acme", repo: "fixture", directory: repo.path } },
+      limits,
     },
   })
   await Bun.$`git remote add origin https://github.com/acme/fixture.git`.cwd(repo.path).quiet()
@@ -85,6 +89,160 @@ async function fixture(
     },
   })
 }
+
+test("an expired Case cannot start another engineering or worker turn", async () => {
+  await fixture(async ({ rootId, caseId, dispatch }) => {
+    const worker = await dispatch()
+    const record = (await OrynStore.getCase(caseId))!
+    await OrynStore.mutateCase(caseId, record.revision, (value) => ({
+      ...value,
+      createdAt: Date.now() - 721 * 60_000,
+    }))
+    expect(await OrynControl.canRun(await Session.get(rootId))).toBe(false)
+    expect(await OrynControl.canRun(await Session.get(worker.workerSessionId))).toBe(false)
+    await expect(dispatch()).rejects.toMatchObject({ data: { code: "BUDGET_EXHAUSTED" } })
+  })
+})
+
+test("the budget monitor stops work despite held delivery and notifies each Case once across restart", async () => {
+  await fixture(
+    async ({ rootId, caseId, dispatch }) => {
+      const worker = await dispatch()
+      const record = (await OrynStore.getCase(caseId))!
+      const source = (await OrynStore.getSource(record.sourceIds[0]))!
+      const qa = await Session.create({ title: "Budget QA", agentOverride: "oryn" })
+      await OrynStore.bindSessionSource({ sessionID: qa.id, identity: source.identity, role: "qa" })
+      await OrynStore.recordChannelTurn({
+        sessionID: qa.id,
+        rootID: "budget-turn",
+        identity: source.identity,
+        chatType: "group",
+      })
+      const delivered: { sourceKey: string; text: string }[] = []
+      const releaseDelivery = Promise.withResolvers<void>()
+      let secondary: string | undefined
+      OrynService.setOutboxDeliverer(async ({ sourceKey, text }) => {
+        delivered.push({ sourceKey, text })
+        if (delivered.length === 1) await releaseDelivery.promise
+      })
+      const entered = Promise.withResolvers<void>()
+      let cancelled = false
+      const running = SessionManager.run(worker.workerSessionId, async (lease) => {
+        entered.resolve()
+        await new Promise<void>((resolve) =>
+          lease.signal.addEventListener(
+            "abort",
+            () => {
+              cancelled = true
+              resolve()
+            },
+            { once: true },
+          ),
+        )
+      })
+      try {
+        await entered.promise
+        await OrynBudgetRuntime.start()
+        await OrynStore.mutateCase(caseId, record.revision, (value) => ({ ...value, createdAt: Date.now() - 61_000 }))
+        const deadline = Date.now() + 10_000
+        while ((!cancelled || delivered.length === 0) && Date.now() < deadline) await Bun.sleep(20)
+        expect(cancelled).toBe(true)
+        await running
+        expect(SessionManager.isRunning(worker.workerSessionId)).toBe(false)
+        expect(await OrynControl.canRun(await Session.get(rootId))).toBe(false)
+        expect(await OrynControl.canRun(await Session.get(qa.id))).toBeUndefined()
+        const handed = (await OrynStore.getCase(caseId))!
+        expect(handed).toMatchObject({ control: "human_owned", epoch: 1 })
+        expect(handed.handoff?.reason).toContain("budget of 1 minutes")
+        expect(delivered).toHaveLength(1)
+        expect(delivered[0].text).toContain("budget of 1 minutes")
+        const secondIdentity = { ...source.identity, messageId: "second-budget-case" }
+        const secondSource = await OrynStore.recordSource({ identity: secondIdentity })
+        await OrynStore.recordChannelTurn({
+          sessionID: qa.id,
+          rootID: "second-budget-turn",
+          identity: secondIdentity,
+          chatType: "group",
+        })
+        const second = await OrynStore.createCase({
+          caseId: `case_${crypto.randomUUID()}`,
+          kind: "bug",
+          summary: "Second budget Case",
+          repoAlias: record.repoAlias,
+          sourceKeyHash: secondSource.key,
+        })
+        secondary = second.id
+        await OrynStore.linkSourceToCase(secondSource.key, second.id)
+        await OrynStore.mutateCase(second.id, second.revision, (value) => ({
+          ...value,
+          createdAt: Date.now() - 61_000,
+        }))
+        const secondDeadline = Date.now() + 5000
+        while ((await OrynStore.getCase(second.id))?.control === "active" && Date.now() < secondDeadline)
+          await Bun.sleep(20)
+        expect((await OrynStore.getCase(second.id))?.control).toBe("human_owned")
+        expect(delivered).toHaveLength(1)
+        releaseDelivery.resolve()
+        const deliveryDeadline = Date.now() + 5000
+        while (delivered.length < 2 && Date.now() < deliveryDeadline) await Bun.sleep(20)
+        expect(delivered.map((notice) => notice.sourceKey).sort()).toEqual([source.key, secondSource.key].sort())
+        await OrynBudgetRuntime.stop()
+        await OrynBudgetRuntime.start()
+        await OrynBudgetRuntime.stop()
+        expect(delivered).toHaveLength(2)
+        expect((await OrynStore.getCase(caseId))?.epoch).toBe(1)
+      } finally {
+        releaseDelivery.resolve()
+        await OrynBudgetRuntime.stop()
+        SessionInvoke.cancel(worker.workerSessionId, { recoverQueuedTasks: false })
+        await running.catch(() => undefined)
+        OrynService.setOutboxDeliverer(undefined)
+        await Session.remove(qa.id)
+        if (secondary) {
+          const record = (await OrynStore.getCase(secondary))!
+          await OrynStore.mutateCase(record.id, record.revision, (value) => ({ ...value, control: "closed" }))
+        }
+      }
+    },
+    undefined,
+    { maxCaseMinutes: 1 },
+  )
+}, 20_000)
+
+test("budget enforcement cannot overwrite a concurrently completed Attempt", async () => {
+  await fixture(
+    async ({ caseId, attemptId }) => {
+      const record = (await OrynStore.getCase(caseId))!
+      await OrynStore.mutateCase(caseId, record.revision, (value) => ({ ...value, createdAt: Date.now() - 61_000 }))
+      const entered = Promise.withResolvers<void>()
+      const release = Promise.withResolvers<void>()
+      const reason = OrynBudget.reason
+      const held = spyOn(OrynBudget, "reason").mockImplementation(async (record) => {
+        const result = await reason(record)
+        if (record.id === caseId) {
+          entered.resolve()
+          await release.promise
+        }
+        return result
+      })
+      const pending = OrynControl.enforceBudgets()
+      try {
+        await entered.promise
+        await OrynStore.mutateAttempt(caseId, attemptId, (attempt) => ({ ...attempt, disposition: "ready" }))
+        release.resolve()
+        expect((await pending).failed).toBe(0)
+        expect((await OrynStore.getCase(caseId))?.control).toBe("active")
+      } finally {
+        release.resolve()
+        await pending
+        held.mockRestore()
+      }
+      expect(await OrynBudget.reason((await OrynStore.getCase(caseId))!)).toBeUndefined()
+    },
+    undefined,
+    { maxCaseMinutes: 1 },
+  )
+})
 
 test("dispatch reserves the worker identity before a completed spawn loses its response", async () => {
   await fixture(async (input) => {

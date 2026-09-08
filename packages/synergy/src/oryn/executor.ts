@@ -8,6 +8,7 @@ import { OrynGit } from "./git"
 import { OrynEvidence } from "./evidence"
 import { OrynStore, storeError } from "./store"
 import { OrynConfig } from "./config"
+import { OrynBudget } from "./budget"
 import type { RunReceipt } from "./schema"
 
 /**
@@ -156,6 +157,7 @@ export namespace OrynExecutor {
         throw storeError("HUMAN_OWNED", "check assignment is no longer active")
       if (!attempt || ["superseded", "failed", "handed_off", "ready"].includes(attempt.disposition))
         throw storeError("INVALID_STAGE", "check Attempt is no longer active")
+      await OrynBudget.assert(record)
       const sha =
         input.lane === "candidate"
           ? attempt.candidateSha
@@ -188,11 +190,6 @@ export namespace OrynExecutor {
     }
 
     const limits = oryn?.limits
-    const budget = await OrynStore.checkBudget(input.caseId)
-    const maxMinutes = limits?.maxCaseMinutes
-    if (maxMinutes !== undefined && budget.elapsedMinutes > maxMinutes) {
-      throw storeError("BUDGET_EXHAUSTED", `case exceeded ${maxMinutes} minutes`)
-    }
 
     const admission = await OrynExecutor.admission(input)
     const lease = ToolScheduler.currentExecution()
