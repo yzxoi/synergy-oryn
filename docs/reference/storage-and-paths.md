@@ -186,6 +186,8 @@ Oryn `channel_sources` records preserve provider reply targets keyed by hashed s
 
 Each Oryn Case can have a version 1 `engineering_start` record containing its reserved Session/Attempt identities, fixed repository Scope and baseline, startup phase and blocked reason. It is a recovery record, not an execution queue. Include it with the Case and Session records in backup and restore. The startup owner repairs interrupted creation; absent records are reserved when an active Case first starts. See [engineering startup](../decisions/implemented/architecture/2026-09-08-oryn-engineering-startup.md).
 
+Oryn Assignment v1 `sessionId` reserves the worker identity before Session creation; its `workspaceRef` records completed workspace linkage. Recovery preserves both and repairs the Attempt's assignment list from the canonical Assignment. A missing Session index is repairable from Session info, while a previously bound worker with missing canonical info is not recreated. Keep Assignment, Session and Git/worktree registry state together in backups. See [worker handoff](../decisions/implemented/architecture/2026-09-08-oryn-worker-handoff.md).
+
 Stop the server before raw filesystem backup or relocation. For supported selective movement, use `synergy data pack`, `merge`, `move`, and `set-home`. Use session export/import for portable session artifacts.
 
 Never include `data/auth/` in a public diagnostics bundle, issue attachment, or repository commit.

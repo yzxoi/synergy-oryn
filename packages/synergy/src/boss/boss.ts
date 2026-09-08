@@ -1,4 +1,5 @@
 import z from "zod"
+import { Lock } from "../util/lock"
 import { Identifier } from "../id/id"
 import { Agent } from "../agent/agent"
 import { AgentDelegation } from "../agent/delegation"
@@ -210,8 +211,12 @@ export namespace BossService {
       workspace?: "main" | "worktree"
       baseRevision?: string
     },
+    options: { sessionID?: string; requireExisting?: boolean } = {},
   ): Promise<Session.Info> {
+    const reservedID = options.sessionID ? Identifier.schema("session").parse(options.sessionID) : undefined
+    using _lock = reservedID ? await Lock.write(`boss-spawn:${reservedID}`) : undefined
     const caller = await requireBoss(callerID)
+    if (reservedID && caller.time.archived) throw new BossError("not_boss", "Reserved worker parent is archived")
     const role = input.role.trim()
     if (!role) throw new BossError("invalid_role", "role is required")
     const rootID = bossRootID(caller)
@@ -224,33 +229,80 @@ export namespace BossService {
       throw new BossError("agent_not_delegatable", `Agent "${agent}" is not delegatable from this session`)
     }
 
-    const instructions = input.instructions?.trim()
-    const session = await Session.create({
-      parentID: caller.id,
-      title: `${caller.title} · ${role}`,
-      agentOverride: agent,
-      interaction: SessionInteraction.unattended("boss"),
-      workflow: {
-        kind: "boss",
-        role: "worker",
-        workerRole: role,
-        rootID,
-        ...(instructions ? { instructions } : {}),
-      },
-    })
+    const instructions = input.instructions?.trim() || undefined
+    const recovered = reservedID ? await Session.recoverCreation(caller.scope, reservedID) : undefined
+    if (options.requireExisting && !recovered)
+      throw new BossError("spawn_missing", "Previously bound worker Session is unavailable")
+    if (
+      recovered &&
+      (recovered.time.archived ||
+        recovered.parentID !== caller.id ||
+        recovered.scope.id !== caller.scope.id ||
+        recovered.agentOverride !== agent ||
+        recovered.workflow?.kind !== "boss" ||
+        recovered.workflow.role !== "worker" ||
+        recovered.workflow.rootID !== rootID ||
+        recovered.workflow.workerRole !== role ||
+        recovered.workflow.instructions !== instructions)
+    )
+      throw new BossError("spawn_identity_mismatch", "Reserved worker does not match its original Boss assignment")
+    const session =
+      recovered ??
+      (await Session.create({
+        ...(reservedID ? { id: reservedID } : {}),
+        parentID: caller.id,
+        title: `${caller.title} · ${role}`,
+        agentOverride: agent,
+        interaction: SessionInteraction.unattended("boss"),
+        workflow: {
+          kind: "boss",
+          role: "worker",
+          workerRole: role,
+          rootID,
+          ...(instructions ? { instructions } : {}),
+        },
+      }))
 
     if (input.workspace === "worktree") {
       try {
         const { Worktree } = await import("../project/worktree")
-        await Worktree.create({
+        if (reservedID) {
+          const owned = await Worktree.ownedBySession(session.id)
+          if (
+            owned.length > 1 ||
+            owned.some(
+              (item) =>
+                item.stale || item.setupFailed || (input.baseRevision && item.baseRevision !== input.baseRevision),
+            )
+          )
+            throw new BossError(
+              "spawn_workspace_mismatch",
+              "Reserved worker workspace is unavailable or has different inputs",
+            )
+          if (session.workspace?.type === "git_worktree") {
+            if (
+              owned[0]?.path !== session.workspace.path ||
+              (input.baseRevision && session.workspace.baseRevision !== input.baseRevision)
+            )
+              throw new BossError("spawn_workspace_mismatch", "Reserved worker workspace ownership changed")
+            return session
+          }
+          if (owned[0]) {
+            await Worktree.enter({ sessionID: session.id, target: owned[0].id })
+            return await Session.get(session.id)
+          }
+        }
+        const workspace = await Worktree.create({
           sessionID: session.id,
           baseRef: "current",
           ...(input.baseRevision ? { baseRevision: input.baseRevision } : {}),
           bind: true,
         })
+        if (reservedID && workspace.setupFailed)
+          throw new BossError("spawn_workspace_mismatch", "Reserved worker workspace setup failed")
         return await Session.get(session.id)
       } catch (error) {
-        await Session.remove(session.id).catch(() => undefined)
+        if (!reservedID) await Session.remove(session.id).catch(() => undefined)
         const message = error instanceof Error ? error.message : String(error)
         throw new BossError(
           "worktree_failed",
@@ -299,7 +351,8 @@ export namespace BossService {
         summary: { title: `Task: ${taskTitle}` },
       },
     })
-    if (result.created) SessionManager.scheduleWake(target.id, "boss_assign")
+    if (result.created || (await SessionInbox.hasRunnableItem(target.id, { allowSteer: true })))
+      SessionManager.scheduleWake(target.id, "boss_assign")
     return { itemID: result.itemID, messageID: result.messageID, created: result.created }
   }
 

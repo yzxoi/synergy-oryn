@@ -52,6 +52,7 @@ async function fixture(
       const worker = await BossService.spawn(root.sessionID, {
         role: "repro",
         agent: "oryn-repro",
+        instructions: `Oryn case ${claim.caseId}: repro assignment.`,
         workspace: "worktree",
         baseRevision: (await OrynStore.getAttempt(claim.caseId, root.attemptId))!.baselineSha,
       })

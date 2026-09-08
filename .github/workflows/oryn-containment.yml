@@ -34,6 +34,6 @@ jobs:
       - name: Exercise the actual Oryn sandbox and scheduler
         working-directory: packages/synergy
         run: bun run test test/oryn/sandbox.test.ts test/oryn/workspaces.test.ts test/oryn/review.test.ts test/sandbox/explicit-profile.test.ts test/sandbox/backend.test.ts test/sandbox/linux-multi-root.test.ts
-      - name: Exercise candidate preparation and the scripted success pipeline
+      - name: Exercise worker recovery, candidate preparation and scripted pipelines
         working-directory: packages/synergy
-        run: bun run test test/oryn/candidate.test.ts test/oryn/success-pipeline.test.ts
+        run: bun run test test/oryn/worker-start.test.ts test/oryn/candidate.test.ts test/oryn/success-pipeline.test.ts

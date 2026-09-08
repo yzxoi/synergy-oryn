@@ -129,7 +129,8 @@ Outbox schema version 2 distinguishes definitely unsent `pending` entries from `
 
 Use a consistent backup of the dedicated runtime root, including its `data/` and configuration, with the same cadence as the rest of the runtime. Oryn does not have an independent transactionally consistent backup. Recovery rules:
 
-- After a crash, intake claims and the action ledger make every step resumable: replayed submissions dedupe to the same case, and ambiguous external actions settle through reconciliation against remote facts (App author, case marker, head SHA) instead of blind replay.
+- Replayed submissions dedupe to the same Case. Startup repairs reserved worker creation, missing Session indexes, registered worktree binding and pending task delivery; it validates repository/source policy before replay. Ambiguous external actions settle through reconciliation against remote facts (App author, case marker, head SHA) instead of blind replay.
+- Test worker creation recovery with `bun run test test/oryn/worker-start.test.ts` from `packages/synergy`. It injects persistence interruptions and captures scheduling; the scripted success/repair suite separately verifies actual worker execution. Already consumed tasks are not delivered again. Interrupted model turns and Git worktrees created before their registry write still require operator inspection; do not interpret these tests as complete crash recovery.
 - Never restore a partial `oryn/` subtree alone; restore the storage directory as a unit so ledger, claims, and case records stay consistent.
 - Session bindings reference session IDs; restoring data without the sessions directory leaves orphaned bindings, which the host treats as unbound (fail-closed) rather than re-binding automatically.
 

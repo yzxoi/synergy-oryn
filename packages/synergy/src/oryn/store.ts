@@ -475,11 +475,21 @@ export namespace OrynStore {
       updatedAt: ts,
     }
     await Storage.write(OrynPath.assignment(input.caseId, assignment.id), assignment)
-    await mutateAttempt(input.caseId, input.attemptId, (draft) => ({
-      ...draft,
-      assignmentIds: [...draft.assignmentIds, assignment.id],
-    }))
+    await linkAssignment(assignment)
     return assignment
+  }
+
+  export async function linkAssignment(assignment: Assignment): Promise<void> {
+    using _lock = await Lock.write(`oryn-attempt:${assignment.caseId}:${assignment.attemptId}`)
+    const attempt = await getAttempt(assignment.caseId, assignment.attemptId)
+    if (!attempt) throw storeError("INVALID_STAGE", "assignment Attempt is unavailable")
+    if (attempt.assignmentIds.includes(assignment.id)) return
+    await Storage.write(OrynPath.attempt(assignment.caseId, assignment.attemptId), {
+      ...attempt,
+      assignmentIds: [...attempt.assignmentIds, assignment.id],
+      revision: attempt.revision + 1,
+      updatedAt: now(),
+    })
   }
 
   export async function getAssignment(caseId: string, assignmentId: string): Promise<Assignment | undefined> {
@@ -859,6 +869,9 @@ export namespace OrynStore {
     using _lock = await Lock.write(`oryn-assignment:${caseId}:${assignmentId}`)
     const current = await getAssignment(caseId, assignmentId)
     if (!current) throw storeError("NOT_AUTHORIZED", `assignment ${assignmentId} not found`)
+    if (current.sessionId && current.sessionId !== sessionID)
+      throw storeError("INVALID_STAGE", "assignment worker identity is already reserved", { caseId })
+    if (current.sessionId === sessionID) return current
     const next: Assignment = { ...current, sessionId: sessionID, updatedAt: now() }
     await Storage.write(OrynPath.assignment(caseId, assignmentId), next)
     return next

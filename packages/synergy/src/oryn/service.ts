@@ -1,6 +1,9 @@
 import { OrynPublicText } from "./public-text"
+import { Log } from "../util/log"
 import { Lock } from "../util/lock"
 import { externalIdentityHash } from "../util/identity"
+import { Identifier } from "../id/id"
+import { ScopeContext } from "../scope/context"
 import { Session } from "../session"
 import { BossService } from "../boss/boss"
 import { OrynStore, sourceKey, storeError } from "./store"
@@ -387,19 +390,25 @@ export namespace OrynService {
         requestKey: input.requestKey,
       }))
 
-    const worker = assignment.sessionId
-      ? await Session.get(assignment.sessionId)
-      : await BossService.spawn(input.callerSessionID, {
-          role: input.stage,
-          agent: STAGE_AGENT[input.stage],
-          instructions: `Oryn case ${input.caseId}: ${input.stage} assignment.`,
-          workspace: "worktree",
-          baseRevision:
-            input.stage === "verify" || input.stage === "review" ? attempt.candidateSha! : attempt.baselineSha,
-        })
+    await OrynStore.linkAssignment(assignment)
+    const sessionId = assignment.sessionId ?? Identifier.descending("session")
+    await OrynStore.setAssignmentSession(input.caseId, assignment.id, sessionId)
+    const worker = await BossService.spawn(
+      input.callerSessionID,
+      {
+        role: input.stage,
+        agent: STAGE_AGENT[input.stage],
+        instructions: `Oryn case ${input.caseId}: ${input.stage} assignment.`,
+        workspace: "worktree",
+        baseRevision:
+          input.stage === "verify" || input.stage === "review" ? attempt.candidateSha! : attempt.baselineSha,
+      },
+      { sessionID: sessionId, requireExisting: Boolean(assignment.workspaceRef) },
+    )
     if (worker.workspace?.type !== "git_worktree")
       throw storeError("ENVIRONMENT_UNAVAILABLE", "assignment requires its own version-pinned worktree")
-    await OrynStore.setAssignmentSession(input.caseId, assignment.id, worker.id)
+    if (assignment.workspaceRef && assignment.workspaceRef !== worker.workspace.path)
+      throw storeError("INVALID_STAGE", "assignment workspace reference changed")
     await OrynStore.setAssignmentWorkspace(input.caseId, assignment.id, worker.workspace.path)
     if (binding.identity) {
       await OrynStore.bindSessionSource({
@@ -431,6 +440,49 @@ export namespace OrynService {
       { deliveryKey: `oryn:${assignment.id}` },
     )
     return { assignmentId: assignment.id, workerSessionId: worker.id, deduped: existing !== undefined }
+  }
+
+  export async function recoverWorkers() {
+    const log = Log.create({ service: "oryn.workers" })
+    const result = { recovered: 0, failed: 0 }
+    const config = await OrynConfig.info()
+    if (!config?.enabled) return result
+    for (const record of await OrynStore.listCases({ control: "active" })) {
+      if (!record.engineeringSessionId || !config.repositories?.[record.repoAlias]) continue
+      for (const assignment of await OrynStore.listAssignments(record.id)) {
+        if (
+          assignment.acceptedReportId ||
+          assignment.attemptId !== record.activeAttemptId ||
+          assignment.epoch !== record.epoch
+        )
+          continue
+        try {
+          const engineering = await OrynEngineering.start(record.id)
+          if (engineering.state !== "started")
+            throw storeError("NOT_AUTHORIZED", "engineering startup policy blocks worker recovery")
+          const root = await Session.get(record.engineeringSessionId)
+          if (root.time.archived) throw storeError("NOT_AUTHORIZED", "engineering root is archived")
+          await ScopeContext.provide({
+            scope: root.scope,
+            workspace: root.workspace,
+            fn: () =>
+              dispatch({
+                callerSessionID: root.id,
+                caseId: record.id,
+                attemptId: assignment.attemptId,
+                stage: assignment.stage,
+                requestKey: assignment.requestKey,
+                reviewDomain: assignment.reviewDomain,
+              }),
+          })
+          result.recovered++
+        } catch (error) {
+          result.failed++
+          log.warn("worker recovery failed", { caseId: record.id, assignmentId: assignment.id, error })
+        }
+      }
+    }
+    return result
   }
 
   /**
