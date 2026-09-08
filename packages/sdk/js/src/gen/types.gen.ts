@@ -4302,6 +4302,19 @@ export type OrynExecutionProfileConfig = {
    */
   writableDirectories?: Array<string>
   /**
+   * Pre-provisioned Bun dependencies; exactly one snapshot must match the commit's dependency inputs and Host platform/runtime
+   */
+  dependencySnapshots?: Array<{
+    /**
+     * Installation-owned sealed dependency snapshot directory
+     */
+    directory: string
+    /**
+     * SHA-256 of the sealed dependency manifest
+     */
+    digest: string
+  }>
+  /**
    * Isolation capabilities the host must verify before this profile may run
    */
   requiredCapabilities?: Array<"uid" | "namespace" | "seccomp" | "cgroup" | "browser" | "network_egress">

@@ -37369,6 +37369,28 @@
               "maxLength": 240
             }
           },
+          "dependencySnapshots": {
+            "description": "Pre-provisioned Bun dependencies; exactly one snapshot must match the commit's dependency inputs and Host platform/runtime",
+            "maxItems": 16,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "directory": {
+                  "description": "Installation-owned sealed dependency snapshot directory",
+                  "type": "string",
+                  "minLength": 1
+                },
+                "digest": {
+                  "description": "SHA-256 of the sealed dependency manifest",
+                  "type": "string",
+                  "pattern": "^[a-f0-9]{64}$"
+                }
+              },
+              "required": ["directory", "digest"],
+              "additionalProperties": false
+            }
+          },
           "requiredCapabilities": {
             "description": "Isolation capabilities the host must verify before this profile may run",
             "type": "array",

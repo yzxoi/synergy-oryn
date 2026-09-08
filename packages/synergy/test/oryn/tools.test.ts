@@ -82,7 +82,11 @@ async function caseFixture(
             routes: [{ feishuAccount: "tools", repoAlias: "widget" }],
             repositories: { widget: { owner: "acme", repo: "widget", baseBranch: "dev", testProfiles: ["quick"] } },
             executionProfiles: {
-              quick: { commandAllowlist: ["bun"], writableDirectories: ["dist"] },
+              quick: {
+                commandAllowlist: ["bun"],
+                writableDirectories: ["dist"],
+                dependencySnapshots: [{ directory: "/private/oryn-dependencies", digest: "a".repeat(64) }],
+              },
               other: { commandAllowlist: ["node"] },
             },
           }
@@ -127,8 +131,13 @@ test("engineering can inspect its repository check profiles while QA cannot", as
     const tool = await OrynCaseTool.init()
     const read = () => tool.execute({ input: { action: "get", caseId: own } }, context(callerSessionID))
     expect(JSON.parse((await read()).output).executionProfiles).toEqual({
-      quick: { commandAllowlist: ["bun"], writableDirectories: ["dist"] },
+      quick: {
+        commandAllowlist: ["bun"],
+        writableDirectories: ["dist"],
+        dependencySnapshots: [{ digest: "a".repeat(64) }],
+      },
     })
+    expect((await read()).output).not.toContain("/private/oryn-dependencies")
     const binding = (await OrynStore.sessionSourceBinding(callerSessionID))!
     await OrynStore.bindSessionSource({ sessionID: callerSessionID, identity: binding.identity!, role: "qa" })
     expect(JSON.parse((await read()).output).executionProfiles).toBeUndefined()

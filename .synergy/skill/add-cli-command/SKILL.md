@@ -17,7 +17,7 @@ description: Add or modify a Synergy CLI command, command group, positional, opt
 2. Add or update a named command in `packages/synergy/src/cli/cmd/` with `cmd()`. Match neighboring yargs builder, positional, alias, and output patterns rather than imposing a parallel style.
 3. Keep domain logic in its owning module. Let the command parse input, establish Scope or server attachment, call the domain API, format output, and set an appropriate exit status.
 4. Give every command, positional, and option useful help text. Support structured output when the adjacent command family already does.
-5. Register a root command in `packages/synergy/src/index.ts`; register a nested command in its owning command-group builder.
+5. Register a root command lazily in `packages/synergy/src/cli/commands.ts`; register a nested command in its owning command-group builder.
 6. Use generated SDK/server helpers for attached commands where the family already does. Preserve auth, directory/Scope, timeout, and error semantics.
 7. Regenerate the SDK with `./script/generate.ts` only if an API route or OpenAPI-visible schema changed.
 

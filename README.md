@@ -158,9 +158,9 @@ This repository hosts **Synergy Oryn**, a product configuration and runtime exte
 
 Oryn is dormant until explicitly enabled: set `oryn.enabled` (with routes and repository mappings) in the installation’s `120-runtime.jsonc` config domain. Project configuration cannot enable Oryn or change its business policy; the built-in Oryn agent identities cannot be replaced by config, plugins or external adapters. While disabled, all Synergy channel, Boss, Feishu, and GitHub behavior is unchanged.
 
-The [deployment guide](docs/operations/oryn-deployment.md) documents the Linux setup, installation policy and reusable mock experiments. Tests cover model-driven Feishu intake, independent verification/review, PR delivery and repair, uncertain remote writes, concurrent QA capacity and process-restart recovery. Engineering checks use disposable fixed-commit checkouts with explicitly approved writable output directories. Human merge remains required.
+The [deployment guide](docs/operations/oryn-deployment.md) documents the Linux setup, installation policy and reusable mock experiments. Tests cover model-driven Feishu intake, independent verification/review, PR delivery and repair, uncertain remote writes, concurrent QA capacity and process-restart recovery. Engineering checks use disposable fixed-commit checkouts with explicitly approved writable output directories and digest-verified dependency snapshots. Human merge remains required.
 
-Deployment acceptance is still in progress. Dependency provisioning, broader resource quotas, complete evidence/policy snapshots and the remaining GitHub lifecycle paths require work. Mock results do not establish live Feishu delivery, GitHub App credentials or target-VPS behavior.
+Deployment acceptance is still in progress. Target-specific dependency acceptance, broader resource quotas, complete evidence/policy snapshots and the remaining GitHub lifecycle paths require work. Mock results do not establish live Feishu delivery, GitHub App credentials or target-VPS behavior.
 
 ## Develop Synergy
 

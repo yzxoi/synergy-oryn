@@ -6,7 +6,7 @@ Oryn is dormant unless `oryn.enabled` is `true`. Every preflight step below assu
 
 Oryn authorization must be configured in the installation-owned `120-runtime.jsonc` domain. Project-local configuration and scoped overrides do not authorize Oryn repositories, execution profiles, publication or budgets. Do not copy a candidate repository's configuration into the installation. Configure model roles through installation model settings; Oryn agent IDs, prompts and role definitions are reserved. See [installation policy](../decisions/implemented/architecture/2026-09-08-oryn-installation-policy.md) for the enforced scope and remaining execution checks.
 
-Worker source separation is covered by [versioned-workspace tests](../decisions/implemented/architecture/2026-09-08-oryn-versioned-worker-workspaces.md). Every new worker needs enough disk for a worktree; repro/code pin baseline and verify/review pin candidate. Historical main-checkout workers must be stopped and replaced, not rebound while active. Git filters, submodules and dirty overlays require a contained execution path that is not delivered by these checks. Broader resource accounting, dependency provisioning and full pipeline validation are still required before this runbook can be treated as deployment acceptance.
+Worker source separation is covered by [versioned-workspace tests](../decisions/implemented/architecture/2026-09-08-oryn-versioned-worker-workspaces.md). Every new worker needs enough disk for a worktree; repro/code pin baseline and verify/review pin candidate. Historical main-checkout workers must be stopped and replaced, not rebound while active. Git filters, submodules and dirty overlays require a contained execution path that is not delivered by these checks. Broader resource accounting, target-specific dependency acceptance and full pipeline validation are still required before this runbook can be treated as deployment acceptance.
 
 The shared check runner bounds output and manages ordinary Unix descendants, as described in [check process lifecycle](../decisions/implemented/bug-fix/2026-09-08-owned-check-process-lifecycle.md). Checks use an explicit sandbox policy with read-only source, private disposable HOME/temp paths and restricted networking; see [check containment](../decisions/implemented/bug-fix/2026-09-08-oryn-check-containment.md). Check-heavy and profile limits now use [ToolScheduler resource admission](../decisions/implemented/architecture/2026-09-08-oryn-check-resource-admission.md); these counters do not include coder Bash/background processes. Model turns separately use the foreground reservation described below. Worker Bash uses its own strict Host policy, described below; these process policies do not establish complete deployment acceptance.
 
@@ -114,9 +114,50 @@ Merge these fields into the existing installation configuration. An absent or em
 
 Each check plan gets a fresh private Git checkout built from the assigned commit's objects, with its own index/configuration and detached HEAD. It does not copy ignored/untracked files, local dependency installations, candidate hooks or host Git configuration. Commands in the same plan share approved output directories; separate plans, Cases and baseline/candidate runs do not. Only output paths free of tracked source and symlink ancestors are allowed. Parent traversal and Git/agent metadata paths are rejected. Source edits and symlink escapes remain denied by the OS sandbox; changed source or ownership makes evidence inconclusive. Plans requesting source overlays are rejected because no patch-application mechanism supplies that evidence.
 
-The checkout and outputs are removed after the plan settles and owned processes stop. No persistent artifact retention or dependency cache is implied. Prepare dependencies through a separately reviewed provisioning mechanism; the runner does not borrow the configured checkout's `node_modules` or run network-enabled installation scripts. Following a Host crash, inspect leftover `oryn-experiment-*` temporary directories only while the runtime is stopped and its owned processes are confirmed terminated; automatic orphan discovery is not implemented.
+The checkout and outputs are removed after the plan settles and owned processes stop. Dependency inputs can be supplied by sealed snapshots as described below; output artifact retention and automatic cache collection are not implemented. The runner does not borrow the configured checkout's `node_modules` or run network-enabled installation scripts. Following a Host crash, inspect leftover `oryn-experiment-*` temporary directories only while the runtime is stopped and its owned processes are confirmed terminated; automatic orphan discovery is not implemented.
 
-Run `bun run test test/oryn/experiment.test.ts test/oryn/workspaces.test.ts test/oryn/sandbox.test.ts test/oryn/tools.test.ts` from `packages/synergy`. The native tests build and execute real TypeScript through `Bun.build()`, inspect the exact Git HEAD, reject source/metadata writes, prove separate experiments and check cleanup. Linux CI additionally exercises the `bun build` CLI. On macOS, Bun CLI ancestor-directory discovery can be denied even with a valid project manifest; `Bun.build()` is verified without widening host-directory reads. A target-specific build failure remains an environment gap unless independent evidence establishes a product defect.
+Run `bun run test test/oryn/experiment.test.ts test/oryn/workspaces.test.ts test/oryn/sandbox.test.ts test/oryn/tools.test.ts` from `packages/synergy`. The native tests build and execute real TypeScript through `Bun.build()`, inspect the exact Git HEAD, reject source/metadata writes, prove separate experiments and check cleanup. Linux CI additionally exercises the `bun build` CLI. On macOS, Bun CLI and bare-package resolution can require forbidden ancestor-directory reads even with a valid project manifest; only dependency-free `Bun.build()` is verified there. Host-directory reads are not widened to hide that limitation. A target-specific build failure remains an environment gap unless independent evidence establishes a product defect.
+
+## Sealed Dependency Inputs
+
+Prepare dependencies on the same Linux architecture and exact Bun version as the runtime, in a separate reviewed clean checkout. The runtime performs no package installation. For a repository whose dependencies work without lifecycle scripts, use `bun install --frozen-lockfile --ignore-scripts` in that checkout, then confirm the intended checks have the required dependencies. This operator step may require outbound access; do not run it with GitHub App keys, Feishu credentials or the production runtime home in its environment. Native dependencies requiring install scripts need a separately reviewed preparation step; a snapshot does not prove which commands created its bytes.
+
+Use the installed product command to seal the existing dependency directories. The destination parent must exist, the destination itself must be new, and it must be outside the source checkout. Paths below are placeholders:
+
+```bash
+synergy oryn seal-dependencies /srv/oryn/provisioned-source /srv/oryn/dependencies/baseline --json
+```
+
+Success prints JSON with `directory`, `digest`, `files` (file/link entries) and `bytes`; failure exits nonzero. The command performs no installation or network access and does not replace existing output. Merge the returned directory and manifest SHA-256 into the relevant installation profile:
+
+```jsonc
+{
+  "oryn": {
+    "executionProfiles": {
+      "build": {
+        "commandAllowlist": ["bun", "git"],
+        "writableDirectories": ["dist"],
+        "dependencySnapshots": [
+          {
+            "directory": "/srv/oryn/dependencies/baseline",
+            "digest": "<64-character-lowercase-sha256-from-command>",
+          },
+        ],
+      },
+    },
+  },
+}
+```
+
+Keep snapshots installation-owned and stable while checks use them. A snapshot contains a version-1 manifest and content-addressed blobs, without copying the source checkout or runtime credential stores; repository-contained absolute links are normalized to relative targets. The operator must ensure the preinstalled dependency tree itself contains no private material. It pins the Host platform, architecture, exact Bun version, tracked package manifests, Bun locks/configuration, package-manager configuration and declared Bun patch files. Registry/Git dependencies and repository-local workspace links are supported. Copied `file:`/`link:` dependencies and non-array workspace declarations are rejected; they need an expanded input policy. Other runtime/OS library versions and installation-script provenance are not attested by this format.
+
+At most 16 snapshots may be configured per profile. Exactly one must match the assigned commit's dependency inputs and Host runtime. A normal source-only change can reuse a snapshot; dependency-input changes require a new snapshot. Baseline and candidate snapshots can coexist when their dependency inputs differ. Do not configure duplicate matches. Without configured snapshots, dependency-free checks remain available; missing dependencies must be reported as an environment gap. A configured missing, damaged, unsupported or ambiguous snapshot fails with `ENVIRONMENT_UNAVAILABLE` before commands run, allowing the Case to transfer to a human instead of claiming a product bug.
+
+Each experiment receives its own copies after manifest/blob digest verification; dependencies remain read-only in the native sandbox. Workspace links bind to that experiment's source and final targets must stay within it, outside protected metadata. Snapshot paths are hidden from engineering model profile discovery; digests are visible and successful run observations identify the selected digest. The snapshot proves the copied inputs, not installation completeness or correctness. Do not treat sealing as a successful project build.
+
+Version 1 limits individual files to 512 MiB, total referenced file bytes to 64 GiB, manifests to 64 MiB, entries to 250,000 and dependency roots to 256. Capacity planning must include one materialized dependency tree per concurrent experiment plus retained snapshots. Ordinary completion/failure/cancellation cleans owned temporary outputs; a hard crash during sealing can leave a destination requiring operator inspection. Unsupported manifest versions are rejected; there is no Case-store migration. Back up the manifest and blobs together with the matching installation configuration. Remove a retained snapshot only after removing its profile reference and draining its users; automatic garbage collection is not implemented.
+
+Run `bun run test test/oryn/dependencies.test.ts` from `packages/synergy`. The suite exercises the installed CLI entry point, snapshot reuse/invalidation, tampering, relative and chained link escape rejection, dependency write denial and cleanup. Linux native CI also compiles and executes an application using a sealed package and a workspace dependency. macOS records the package-resolver containment limitation described above; it is not the deployment acceptance platform.
 
 ## Model Capacity
 

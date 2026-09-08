@@ -4,6 +4,7 @@ import { isAbsolute, join, relative, sep } from "node:path"
 import type { OrynExecutionProfile } from "../config/schema"
 import { OrynGit } from "./git"
 import { storeError } from "./store"
+import { OrynDependencies } from "./dependencies"
 
 export namespace OrynExperiment {
   export async function prepare(input: {
@@ -42,6 +43,11 @@ export namespace OrynExperiment {
         throw storeError("ENVIRONMENT_UNAVAILABLE", "experiment dependencies must not require submodule checkout")
       input.abort.throwIfAborted()
       await OrynGit.read(directory, ["checkout-index", "--all"])
+      const dependencies = await OrynDependencies.install({
+        directory,
+        snapshots: input.profile.dependencySnapshots,
+        abort: input.abort,
+      })
       const writableRoots: string[] = []
       const created = new Set<string>()
       for (const path of input.profile.writableDirectories ?? []) {
@@ -79,6 +85,7 @@ export namespace OrynExperiment {
       input.abort.throwIfAborted()
       return {
         directory,
+        dependencies,
         readableRoots: [objects],
         writableRoots,
         async changed() {

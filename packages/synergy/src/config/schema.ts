@@ -672,6 +672,23 @@ export const OrynExecutionProfile = z
       .describe(
         "Relative build-output directories in a disposable check checkout (for example dist, coverage). Must not overlap tracked source, symlink ancestors or Git/agent metadata; all other source remains read-only",
       ),
+    dependencySnapshots: z
+      .array(
+        z
+          .object({
+            directory: z.string().min(1).describe("Installation-owned sealed dependency snapshot directory"),
+            digest: z
+              .string()
+              .regex(/^[a-f0-9]{64}$/)
+              .describe("SHA-256 of the sealed dependency manifest"),
+          })
+          .strict(),
+      )
+      .max(16)
+      .optional()
+      .describe(
+        "Pre-provisioned Bun dependencies; exactly one snapshot must match the commit's dependency inputs and Host platform/runtime",
+      ),
     requiredCapabilities: z
       .array(z.enum(["uid", "namespace", "seccomp", "cgroup", "browser", "network_egress"]))
       .optional()

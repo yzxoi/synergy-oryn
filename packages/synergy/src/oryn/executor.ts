@@ -266,6 +266,7 @@ export namespace OrynExecutor {
       exitCode: results[results.length - 1].exitCode,
       observations: [
         "execution used an isolated disposable checkout of the fixed source commit",
+        ...(experiment.dependencies ? [`dependency snapshot sha256:${experiment.dependencies}`] : []),
         ...(changed ? ["source changed during execution; evidence is inconclusive"] : []),
         ...(!active ? ["assignment inputs or control changed during execution; evidence is inconclusive"] : []),
         ...results.flatMap((r) => r.observations),

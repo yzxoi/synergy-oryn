@@ -88,6 +88,11 @@ export const builtinCommands: Array<{ command: string | string[]; describe: stri
       load: async () => (await import("./cmd/channel")).ChannelCommand as unknown as CommandModule,
     },
     {
+      command: "oryn",
+      describe: "prepare Oryn automation resources",
+      load: async () => (await import("./cmd/oryn")).OrynCommand as unknown as CommandModule,
+    },
+    {
       command: "holos",
       describe: "manage Holos identity and runtime",
       load: async () => (await import("./cmd/holos")).HolosCommand as unknown as CommandModule,

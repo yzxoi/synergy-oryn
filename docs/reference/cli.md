@@ -30,6 +30,7 @@ Generated from the CLI registration in `packages/synergy/src/cli/commands.ts`. C
 | `migrate` | move synergy data to a new location (alias for 'data move') |
 | `migration` | manage schema and data migrations |
 | `models` | list all available models |
+| `oryn` | prepare Oryn automation resources |
 | `plugin` | install, remove, update, and inspect plugins |
 | `send` | send a message to synergy |
 | `session` | manage sessions |
@@ -450,6 +451,11 @@ move synergy data to a new location
 | `--remove-original` (boolean) | remove original data after successful move |
 | `--dry-run` (boolean) | show plan without executing |
 
+## oryn
+
+prepare Oryn automation resources
+
+
 ## pack [output]
 
 pack synergy data into a zip archive
@@ -554,6 +560,14 @@ manage plugin runtime lifecycle
 
 list all known projects
 
+
+## seal-dependencies <source> <output>
+
+seal preinstalled Bun dependencies from a clean reviewed checkout; performs no installation or network access
+
+| Option | Description |
+| --- | --- |
+| `--json` (boolean) | Print the snapshot location, pinned digest and size as JSON |
 
 ## search <pattern>
 

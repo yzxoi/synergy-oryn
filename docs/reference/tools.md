@@ -1220,7 +1220,7 @@ Oryn case operations: submit engineering feedback (routed by host config), get/l
 
 Kind: `orchestration.task`
 
-Verification runs: read repository executionProfiles with oryn_case get, propose a plan (scenario, profile, commands, assertions), and execute it in a disposable checkout of the assigned commit. Commands share only approved writable output directories; tracked source remains read-only. Local bash runs are development aid — only receipts from this executor count as evidence.
+Verification runs: read repository executionProfiles with oryn_case get, propose a plan (scenario, profile, commands, assertions), and execute it in a disposable checkout of the assigned commit. Commands share only approved writable output directories; tracked source and any configured sealed dependencies remain read-only. Snapshot mismatches are environment gaps. Local bash runs are development aid — only receipts from this executor count as evidence.
 
 | Parameter | Type | Required | Description |
 | --- | --- | --- | --- |

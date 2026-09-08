@@ -270,3 +270,7 @@ Local source builds do not have signed release manifests; use an installed relea
 `synergy plugin` includes create, add, remove, retry-install, update, build, sign, pack, list, search, doctor, validate, dev, runtime, test, publish-market, entry, info, permissions, and approval commands. `synergy plugin approve <id>` fetches the server approval review for a configured plugin and submits the opaque `reviewToken` through `POST /api/plugins/approve`; it does not send manifest, capability, source, or path data. `list` and `info` show approval-disabled plugins with their canonical identity and `Needs approval` state. Installed plugins can also contribute their own top-level CLI commands. `synergy plugin retry-install <id>` re-queues a failed or pending `lifecycle.install`; the host delivers it at the next server start or plugin runtime reload. It errors instead when the plugin's lockfile generation no longer matches the installed generation — reinstall or update the plugin to retry in that case.
 
 The canonical authoring and command reference is [Plugin documentation](../plugins/README.md).
+
+## Oryn Dependency Preparation
+
+`synergy oryn seal-dependencies <source> <output> --json` creates an immutable-input snapshot from preinstalled Bun dependencies in a reviewed clean checkout. It does not install packages. See [sealed dependency inputs](../operations/oryn-deployment.md#sealed-dependency-inputs) for preparation, configuration, failure handling and limits.

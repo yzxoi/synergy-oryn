@@ -145,7 +145,19 @@ export const OrynCaseTool = Tool.define(
               {
                 caseId: record.id,
                 executionProfiles:
-                  binding.role !== "qa" ? OrynConfig.profiles(await OrynConfig.info(), record.repoAlias) : undefined,
+                  binding.role !== "qa"
+                    ? Object.fromEntries(
+                        Object.entries(OrynConfig.profiles(await OrynConfig.info(), record.repoAlias)).map(
+                          ([id, profile]) => [
+                            id,
+                            {
+                              ...profile,
+                              dependencySnapshots: profile.dependencySnapshots?.map(({ digest }) => ({ digest })),
+                            },
+                          ],
+                        ),
+                      )
+                    : undefined,
                 reviewReports,
                 reviewRequirements: attempt?.candidateSha
                   ? await OrynReviewPolicy.requirements(record, attempt).catch(() => ({
@@ -542,7 +554,7 @@ export const OrynCheckTool = Tool.define(
   "oryn_check",
   {
     description:
-      "Verification runs: read repository executionProfiles with oryn_case get, propose a plan (scenario, profile, commands, assertions), and execute it in a disposable checkout of the assigned commit. Commands share only approved writable output directories; tracked source remains read-only. Local bash runs are development aid — only receipts from this executor count as evidence.",
+      "Verification runs: read repository executionProfiles with oryn_case get, propose a plan (scenario, profile, commands, assertions), and execute it in a disposable checkout of the assigned commit. Commands share only approved writable output directories; tracked source and any configured sealed dependencies remain read-only. Snapshot mismatches are environment gaps. Local bash runs are development aid — only receipts from this executor count as evidence.",
     parameters: z.object({ input: CheckParameters }),
     async execute({ input: params }, ctx): Promise<Tool.ExecutionResult> {
       return execute(async () => {
