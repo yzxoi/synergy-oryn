@@ -3,7 +3,11 @@ import { OrynLabels, setLabelTransport, type LabelSnapshot } from "../../src/ory
 import { Case, Attempt, Assignment } from "../../src/oryn/schema"
 import { OrynStore } from "../../src/oryn/store"
 import { Config } from "../../src/config/config"
-import { tmpdir } from "./fixture"
+import { tmpdir, githubConfig } from "./fixture"
+import { OrynGithub } from "../../src/oryn/github"
+import { OrynGithubStore } from "../../src/oryn/github-store"
+import { OrynGithubRuntime, setGithubRuntimeTransport } from "../../src/oryn/github-runtime"
+import type { LabelRead } from "../../src/oryn/labels"
 
 const record = Case.parse({
   schemaVersion: 2,
@@ -211,4 +215,135 @@ test("repository label synchronization requires explicit installation opt-in", a
     await OrynLabels.syncCase(value.id)
     expect(remote.writes).toBe(0)
   })
+})
+
+test("existing contributor issues and queued fork PRs receive labels only under their current repository binding", async () => {
+  const repo = { owner: "acme", repo: "tracked", labels: true, githubAccount: "app", github: { enabled: true } }
+  await using config = await githubConfig({ oryn: { enabled: true, repositories: { target: repo } } })
+  const reads: LabelRead[] = []
+  let writes = 0
+  let revoke = false
+  setLabelTransport({
+    async observe(input) {
+      reads.push(input)
+      if (revoke) {
+        await Config.domainUpdate("runtime", { oryn: { enabled: false, repositories: { target: repo } } })
+      }
+      return { owned: true, labels: [] }
+    },
+    async apply(input) {
+      await input.beforeWrite()
+      writes++
+    },
+  })
+  try {
+    const snapshot = {
+      number: 100,
+      kind: "issue" as const,
+      title: "Question",
+      body: "Help",
+      labels: ["question"],
+      comments: [],
+      state: "open" as const,
+      updatedAt: new Date().toISOString(),
+    }
+    const issue = (await OrynGithub.accept({
+      accountId: "app",
+      repository: "acme/tracked",
+      repoAlias: "target",
+      snapshot,
+    }))!
+    await OrynLabels.syncCase(issue)
+    expect(reads[0]?.tracked).toBe(true)
+    expect(reads[0]?.labels).toContain("oryn:type/question")
+    expect(writes).toBe(1)
+    reads.length = 0
+    const pull = (await OrynGithub.accept({
+      accountId: "app",
+      repository: "acme/tracked",
+      repoAlias: "target",
+      snapshot: {
+        ...snapshot,
+        number: 101,
+        kind: "pull",
+        title: "feat: widget",
+        labels: [],
+        headSha: "b".repeat(40),
+        baseSha: "a".repeat(40),
+        baseRef: "dev",
+      },
+    }))!
+    await OrynLabels.syncCase(pull)
+    expect(reads[0]).toMatchObject({ tracked: true, kind: "pull", number: 101, candidateSha: "b".repeat(40) })
+    expect(reads[0]?.labels).toContain("oryn:type/feature")
+    expect(reads[0]?.labels).toContain("oryn:status/triage")
+    expect(writes).toBe(2)
+    const work = (await OrynGithubStore.get(pull))!
+    await OrynGithubStore.save({ ...work, state: "running" })
+    reads.length = 0
+    await OrynLabels.syncCase(pull)
+    expect(reads[0]?.labels).toContain("oryn:status/reviewing")
+    revoke = true
+    const before = writes
+    await OrynLabels.syncCase(pull)
+    expect(writes).toBe(before)
+  } finally {
+    setLabelTransport(undefined)
+  }
+})
+
+test("label-enabled intake retains draft PRs without requiring engineering admission", async () => {
+  await using config = await githubConfig({
+    oryn: {
+      enabled: true,
+      repositories: {
+        target: {
+          owner: "acme",
+          repo: "drafts",
+          githubAccount: "app",
+          labels: true,
+          github: { enabled: true, autoReview: false },
+        },
+      },
+    },
+  })
+  const id = await OrynGithub.accept({
+    accountId: "app",
+    repository: "acme/drafts",
+    repoAlias: "target",
+    snapshot: {
+      number: 1,
+      kind: "pull",
+      title: "feat: draft",
+      body: "",
+      state: "open",
+      draft: true,
+      updatedAt: new Date().toISOString(),
+      labels: [],
+      comments: [],
+      headSha: "a".repeat(40),
+      baseSha: "b".repeat(40),
+      baseRef: "dev",
+    },
+  })
+  expect(id).toBeDefined()
+  expect((await OrynStore.getCase(id!))?.engineeringSessionId).toBeUndefined()
+  const unexpected = async (): Promise<never> => {
+    throw new Error("Draft PR must not start engineering")
+  }
+  const previous = setGithubRuntimeTransport({
+    current: unexpected,
+    fetch: unexpected,
+    permission: async () => false,
+    findReview: unexpected,
+    review: unexpected,
+  })
+  try {
+    await OrynGithubRuntime.recover()
+    expect((await OrynStore.getCase(id!))?.control).toBe("active")
+    expect((await OrynStore.getCase(id!))?.engineeringSessionId).toBeUndefined()
+    expect((await OrynGithubStore.get(id!))?.failure).toBeUndefined()
+  } finally {
+    setGithubRuntimeTransport(previous)
+  }
 })

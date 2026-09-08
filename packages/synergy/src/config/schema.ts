@@ -572,7 +572,7 @@ export const OrynRepository = z
       .boolean()
       .optional()
       .describe(
-        "Synchronize Oryn-owned type/progress labels on bound issues and PRs; preserve existing priorities (default: false)",
+        "Synchronize emoji type/progress labels on Oryn-created and tracked contributor issues and PRs; preserve existing priorities (default: false)",
       ),
     defaultPriority: z
       .enum(["p0", "p1", "p2", "p3"])

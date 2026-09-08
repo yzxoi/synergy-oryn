@@ -174,6 +174,7 @@ export namespace OrynGithub {
     if (
       !existing &&
       item.kind === "pull" &&
+      !bound.config.labels &&
       (item.draft ||
         (bound.config.github?.autoReview === false &&
           !item.comments.some((comment) => !comment.bot && /^@oryn\s+(review|fix)\s*$/i.test(comment.body.trim()))))

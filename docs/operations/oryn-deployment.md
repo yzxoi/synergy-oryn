@@ -374,11 +374,17 @@ Oryn builds issue and PR bodies from Case observations, actual frozen Git change
 
 Draft-to-ready refreshes the PR description with current accepted verification and review before changing GitHub readiness. A transport failure after an attempted write is reconciled as an uncertain action, not blindly repeated. Evidence display is not proof that the full feedback pipeline, application behavior or live Feishu canary has passed.
 
+## GitHub installation and backfill
+
+For GitHub intake, verify the App is installed on the target owner and selected repository, not merely registered with valid credentials. Open-object backfill uses an unfiltered timestamp range; incremental polls retain their own watermark. After upgrading an installation that incorrectly completed an empty backfill, disable and save `backfill`, then enable and save it to request another complete scan. Existing thread identities deduplicate replayed work.
+
 ## Optional GitHub labels
 
 Set `oryn.repositories[alias].labels: true` in the installation config to enable label projection. It defaults to false. `defaultPriority` optionally selects the initial `p0`–`p3` label; leave it unset for `untriaged`. Existing `oryn:priority/*` labels are preserved, including priorities set by humans. Priorities on the issue and PR remain independently editable; this feature does not overwrite one with the other.
 
-The ordinary GitHub poll drives a bounded rotation of active Cases. The Host derives type and progress from current assignments/Attempt, and the provider verifies the App author, Case marker and pinned PR head/branch/base before writing. Only known Oryn type/status labels are replaced; other labels remain. Paused, taken-over, cancelled and closed Cases receive no new label writes. A label is a progress display, never a delivery check or merge permission; external head changes still require the engineering lifecycle to invalidate the candidate.
+The ordinary GitHub poll drives a bounded rotation of active Cases. Label targets include existing and future contributor Issues/PRs admitted through the configured repository binding, as well as Oryn-created artifacts. Draft PRs can be labeled without starting review. The Host derives progress from current work and assignments; the provider verifies open state and the pinned contributor PR head/base. App-authored artifacts outside tracked intake still require the original author, marker and branch checks. Only known Oryn type/status labels are replaced; other labels remain. Paused, taken-over, cancelled and closed Cases receive no new label writes. A label is a progress display, never a delivery check or merge permission; external head changes still require the engineering lifecycle to invalidate the candidate.
+
+The display catalog in `packages/synergy/src/oryn/label-catalog.ts` defines 17 emoji names, colors and descriptions, such as `🐛 oryn:type/bug`, `👀 oryn:status/reviewing` and `🎉 oryn:status/ready`. Canonical IDs remain stable in receipts; legacy plain names are still recognized. A completed external review may show ready for human attention; it does not establish delivery verification.
 
 Prepare label definitions on the authorized target before enabling this setting. From a trusted Oryn source checkout, with `bun`, `gh` and `rg` available, the following bootstrap preserves definitions that already exist. Replace the repository placeholder and run only with an account authorized to configure that repository:
 
@@ -387,7 +393,7 @@ set -euo pipefail
 ORYN_TARGET_REPO=owner/repo
 ORYN_LABEL_TMP=$(mktemp -d)
 trap 'rm -rf "$ORYN_LABEL_TMP"' EXIT
-bun -e 'import { OrynLabel } from "./packages/synergy/src/oryn/schema"; console.log(OrynLabel.options.join("\n"))' > "$ORYN_LABEL_TMP/desired"
+bun -e 'import { OrynLabelCatalog } from "./packages/synergy/src/oryn/label-catalog"; console.log(Object.values(OrynLabelCatalog.definitions).map((label) => label.name).join("\n"))' > "$ORYN_LABEL_TMP/desired"
 gh label list --repo "$ORYN_TARGET_REPO" --limit 1000 --json name --jq '.[].name' > "$ORYN_LABEL_TMP/existing"
 while IFS= read -r label; do
   if ! rg --fixed-strings --line-regexp --quiet -- "$label" "$ORYN_LABEL_TMP/existing"; then

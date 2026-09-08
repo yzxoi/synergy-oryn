@@ -4216,7 +4216,7 @@ export type OrynPublishOperationConfig =
 export type OrynRepositoryConfig = {
   github?: OrynGithubConfig
   /**
-   * Synchronize Oryn-owned type/progress labels on bound issues and PRs; preserve existing priorities (default: false)
+   * Synchronize emoji type/progress labels on Oryn-created and tracked contributor issues and PRs; preserve existing priorities (default: false)
    */
   labels?: boolean
   /**

@@ -2,6 +2,54 @@ import { expect, spyOn, test } from "bun:test"
 import { GitHubChannelAuth } from "../../../../src/channel/provider/github/api"
 import { OrynGithubIntake } from "../../../../src/channel/provider/github/oryn-intake"
 
+test("backfill reads all open issues without a timestamp filter while incremental scans preserve their watermark", async () => {
+  const auth = spyOn(GitHubChannelAuth, "resolveInstallationToken").mockResolvedValue("fixture-token")
+  const requested: URL[] = []
+  const fetch = spyOn(globalThis, "fetch").mockImplementation(
+    Object.assign(
+      async (url: URL | RequestInfo) => {
+        const parsed = new URL(String(url))
+        requested.push(parsed)
+        if (parsed.pathname.endsWith("/comments")) return Response.json([])
+        if (parsed.searchParams.get("since")?.startsWith("1970-")) return Response.json([])
+        return Response.json(
+          [
+            {
+              number: 7,
+              title: "Existing issue",
+              body: "Bug",
+              state: "open",
+              updated_at: "2026-09-08T01:00:00Z",
+              comments: 0,
+              labels: [],
+            },
+          ],
+          { headers: { link: '<https://api.github.com/repos/acme/widget/issues?state=open&page=2>; rel="next"' } },
+        )
+      },
+      { preconnect: globalThis.fetch.preconnect },
+    ),
+  )
+  try {
+    const transport = OrynGithubIntake.createTransport()
+    const backlog = await transport.page({
+      repository: "acme/widget",
+      page: 1,
+      state: "open",
+      since: new Date(0).toISOString(),
+    })
+    expect(backlog.items.map((item) => item.number)).toEqual([7])
+    expect(backlog.nextPage).toBe(2)
+    expect(requested[0]!.searchParams.has("since")).toBe(false)
+    const since = "2026-09-08T01:00:00.000Z"
+    await transport.page({ repository: "acme/widget", page: 2, state: "all", since })
+    expect(requested.find((url) => url.searchParams.get("state") === "all")?.searchParams.get("since")).toBe(since)
+  } finally {
+    fetch.mockRestore()
+    auth.mockRestore()
+  }
+})
+
 test("intake reads latest review and inline-comment pages with bound credentials and preserves recent maintainer commands", async () => {
   const auth = spyOn(GitHubChannelAuth, "resolveInstallationToken").mockResolvedValue("fixture-token")
   const requested: string[] = []

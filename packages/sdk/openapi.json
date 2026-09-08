@@ -37377,7 +37377,7 @@
             "$ref": "#/components/schemas/OrynGithubConfig"
           },
           "labels": {
-            "description": "Synchronize Oryn-owned type/progress labels on bound issues and PRs; preserve existing priorities (default: false)",
+            "description": "Synchronize emoji type/progress labels on Oryn-created and tracked contributor issues and PRs; preserve existing priorities (default: false)",
             "type": "boolean"
           },
           "defaultPriority": {

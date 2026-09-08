@@ -123,12 +123,16 @@ export namespace OrynGithubIntake {
     return {
       current,
       async page(input) {
+        const query = new URLSearchParams({
+          state: input.state ?? "all",
+          sort: "updated",
+          direction: "asc",
+          per_page: "20",
+          page: String(input.page),
+        })
+        if (input.state !== "open") query.set("since", input.since)
         const response = await GitHubChannelAuth.GitHubClient.sendPage<Issue[]>(
-          await descriptor(
-            input.repository,
-            `issues?state=${input.state ?? "all"}&sort=updated&direction=asc&per_page=20&page=${input.page}&since=${encodeURIComponent(input.since)}`,
-            input.signal,
-          ),
+          await descriptor(input.repository, `issues?${query}`, input.signal),
           input.signal,
         )
         const items: GithubSnapshot[] = []
