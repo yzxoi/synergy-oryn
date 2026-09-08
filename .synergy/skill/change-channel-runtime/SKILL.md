@@ -85,4 +85,6 @@ For credential-bearing Oryn Git changes, run `test/channel/provider/github/oryn-
 
 For Oryn GitHub changes, keep repository-qualified source identity, independent backlog/incremental checkpoints and current-head review claims intact. Exercise real engineering Session admission alongside provider pagination fixtures. Check permission revocation, bot feedback suppression, uncertain-publication reconciliation and operator-target replacement. Follow [GitHub intake and setup](../../../docs/decisions/implemented/feature/2026-09-08-oryn-github-loop-and-setup.md); external review never substitutes for delivery verification.
 
+Backfill provider fixtures must inspect the outgoing timestamp filter as well as pagination. Omit `since` for all-history open-object scans instead of encoding a sentinel date; preserve the exact watermark for incremental scans. A connected App identity alone does not establish repository installation access.
+
 For Feishu group discovery, run `test/channel/feishu-projects.test.ts` and `test/oryn/setup.test.ts`. Require complete bounded pagination before negative reconciliation; verify permission errors, repeated cursors and cancellation preserve existing ownership. Discovery must not create conversation work or change legacy Feishu Scope routing. Keep provider refresh capability, Settings actions and sidebar capability tests aligned.

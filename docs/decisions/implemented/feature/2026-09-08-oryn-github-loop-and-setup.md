@@ -20,6 +20,8 @@ The generated setup API exposes configured GitHub repositories and discovered Fe
 
 The event/permission separation follows [OpenClaw's dispatch workflow](https://github.com/openclaw/openclaw/blob/main/.github/workflows/clawsweeper-dispatch.yml) and [Clawsweeper skill](https://github.com/openclaw/openclaw/blob/main/.agents/skills/clawsweeper/SKILL.md). Independent review and delivery separation follows its [autoreview skill](https://github.com/openclaw/openclaw/blob/main/.agents/skills/autoreview/SKILL.md). Oryn retains human merge and adapts those ideas to outbound polling. [GitHub review API semantics](https://docs.github.com/en/rest/pulls/reviews#create-a-review-for-a-pull-request) determine commit and line anchoring.
 
+Open-object backfill omits the REST `since` filter; incremental scans retain their exact overlapping watermark. A live GitHub comparison returned an empty result for an epoch timestamp while the same open-object query without that filter returned existing work. The provider regression covers admission and pagination under that response pattern. This follows the optional filter contract in [GitHub's repository Issues API](https://docs.github.com/en/rest/issues/issues#list-repository-issues); an all-history scan must not depend on a sentinel date.
+
 ## Alternatives considered
 
 **A separate coordinator service.** Rejected because Boss Sessions, durable Inbox and existing admission already provide execution ownership; a second queue would add competing recovery state.

@@ -374,6 +374,10 @@ Oryn builds issue and PR bodies from Case observations, actual frozen Git change
 
 Draft-to-ready refreshes the PR description with current accepted verification and review before changing GitHub readiness. A transport failure after an attempted write is reconciled as an uncertain action, not blindly repeated. Evidence display is not proof that the full feedback pipeline, application behavior or live Feishu canary has passed.
 
+## GitHub installation and backfill
+
+For GitHub intake, verify the App is installed on the target owner and selected repository, not merely registered with valid credentials. Open-object backfill uses an unfiltered timestamp range; incremental polls retain their own watermark. After upgrading an installation that incorrectly completed an empty backfill, disable and save `backfill`, then enable and save it to request another complete scan. Existing thread identities deduplicate replayed work.
+
 ## Optional GitHub labels
 
 Set `oryn.repositories[alias].labels: true` in the installation config to enable label projection. It defaults to false. `defaultPriority` optionally selects the initial `p0`–`p3` label; leave it unset for `untriaged`. Existing `oryn:priority/*` labels are preserved, including priorities set by humans. Priorities on the issue and PR remain independently editable; this feature does not overwrite one with the other.
