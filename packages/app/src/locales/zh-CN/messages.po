@@ -14821,6 +14821,18 @@ msgid "settings.catalog.observability.searchTerms"
 msgstr "日志 | 跟踪 | 遥测 | 收集"
 
 #. js-lingui-explicit-id
+msgid "settings.catalog.oryn.description"
+msgstr "仓库自动化与人工介入通知。"
+
+#. js-lingui-explicit-id
+msgid "settings.catalog.oryn.label"
+msgstr "Oryn"
+
+#. js-lingui-explicit-id
+msgid "settings.catalog.oryn.searchTerms"
+msgstr "oryn | 设置 | QA | github | 飞书 | 审查 | 问题 | 通知"
+
+#. js-lingui-explicit-id
 msgid "settings.catalog.permissions.description"
 msgstr "默认权限模式和工具开关。"
 
@@ -17407,6 +17419,94 @@ msgstr "正在加载模型角色"
 #. js-lingui-explicit-id
 msgid "settings.models.roles.title"
 msgstr "模型角色"
+
+#. js-lingui-explicit-id
+msgid "settings.oryn.automation"
+msgstr "自动化"
+
+#. js-lingui-explicit-id
+msgid "settings.oryn.backfill"
+msgstr "包含已有的未关闭 Issue 和 PR"
+
+#. js-lingui-explicit-id
+msgid "settings.oryn.baseBranch"
+msgstr "目标分支"
+
+#. js-lingui-explicit-id
+msgid "settings.oryn.connections"
+msgstr "管理连接"
+
+#. js-lingui-explicit-id
+msgid "settings.oryn.description"
+msgstr "连接仓库反馈、独立 PR 审查和低噪声的人工介入通知。每个 PR 都由人类合并。"
+
+#. js-lingui-explicit-id
+msgid "settings.oryn.destination"
+msgstr "默认飞书会话或话题"
+
+#. js-lingui-explicit-id
+msgid "settings.oryn.directory"
+msgstr "服务器上的仓库目录"
+
+#. js-lingui-explicit-id
+msgid "settings.oryn.enabled"
+msgstr "启用 Oryn"
+
+#. js-lingui-explicit-id
+msgid "settings.oryn.fix"
+msgstr "自动修复已复现的 bug"
+
+#. js-lingui-explicit-id
+msgid "settings.oryn.fixDescription"
+msgstr "需要先配置验证环境。无法复现的问题会转交人工，不会覆盖贡献者的分支。"
+
+#. js-lingui-explicit-id
+msgid "settings.oryn.loading"
+msgstr "正在加载已连接的仓库和会话…"
+
+#. js-lingui-explicit-id
+msgid "settings.oryn.noChats"
+msgstr "连接飞书并将机器人加入群聊，然后在频道设置中刷新项目。与 Oryn 对话后即可选择相应话题。"
+
+#. js-lingui-explicit-id
+msgid "settings.oryn.noDestination"
+msgstr "不设置默认通知位置"
+
+#. js-lingui-explicit-id
+msgid "settings.oryn.noRepositories"
+msgstr "请先在管理连接中连接 GitHub App 频道并添加仓库。"
+
+#. js-lingui-explicit-id
+msgid "settings.oryn.notifications"
+msgstr "人工介入"
+
+#. js-lingui-explicit-id
+msgid "settings.oryn.notificationsDescription"
+msgstr "GitHub 任务只在这里发送需要决策和可交付的结果。飞书反馈仍在原会话中回复。"
+
+#. js-lingui-explicit-id
+msgid "settings.oryn.repository"
+msgstr "默认监听仓库"
+
+#. js-lingui-explicit-id
+msgid "settings.oryn.retry"
+msgstr "重试"
+
+#. js-lingui-explicit-id
+msgid "settings.oryn.review"
+msgstr "自动审查 PR"
+
+#. js-lingui-explicit-id
+msgid "settings.oryn.save"
+msgstr "保存 Oryn 设置"
+
+#. js-lingui-explicit-id
+msgid "settings.oryn.saved"
+msgstr "Oryn 设置已保存。"
+
+#. js-lingui-explicit-id
+msgid "settings.oryn.saving"
+msgstr "正在保存…"
 
 #. js-lingui-explicit-id
 msgid "settings.panel.action.cancel"
@@ -20035,6 +20135,10 @@ msgstr "查看笔记本"
 #. ── Tool trigger titles ────────────────────────────────────────────
 msgid "tool.title.notes"
 msgstr "查看笔记"
+
+#. ── Tool trigger titles ────────────────────────────────────────────
+msgid "tool.title.oryn-discover"
+msgstr "记录新发现"
 
 #. ── Tool trigger titles ────────────────────────────────────────────
 msgid "tool.title.paper"

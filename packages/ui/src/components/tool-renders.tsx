@@ -1,9 +1,16 @@
 import { useLingui } from "@lingui/solid"
 import { BasicTool } from "./basic-tool"
-import { ToolRegistry } from "./message-part"
+import { ToolRegistry, getToolInfo } from "./message-part"
 import { getLatticeToolPresentation } from "./tool/classifier"
 import { getSemanticIcon } from "./semantic-icon"
 import { TOOL_TITLE_DESC } from "./tool-title-descriptors"
+
+ToolRegistry.register({
+  name: "oryn_discover",
+  render(props) {
+    return <BasicTool {...props} trigger={getToolInfo("oryn_discover", props.input, props.metadata)} />
+  },
+})
 
 const PATHWAY_STEPS_DESCRIPTOR = { id: "tool.label.pathwaySteps", message: "{count} steps" }
 

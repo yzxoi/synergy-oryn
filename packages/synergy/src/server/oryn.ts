@@ -1,3 +1,5 @@
+import { OrynSetup, OrynSetupInput, OrynSetupView } from "../oryn/setup"
+import { reloadAfterConfigChange } from "./config-route"
 import { OrynControl } from "../oryn/control"
 import { Hono, type Context } from "hono"
 import { describeRoute, resolver, validator } from "hono-openapi"
@@ -126,9 +128,45 @@ function projectListItem(record: {
  * Minimal Oryn case surface. Reads are read-only projections of the store;
  * control is the single write path and is meant for authenticated human
  * operators — model tools never call it. The routes 404/403 when the Oryn
- * runtime is disabled so a dormant installation exposes nothing.
+ * runtime is disabled. Setup remains available so operators can configure
+ * an installation before enabling automation.
  */
 export const OrynRoute = new Hono()
+  .get(
+    "/setup",
+    describeRoute({
+      summary: "Read Oryn setup",
+      operationId: "oryn.setup.get",
+      responses: {
+        200: {
+          description: "Oryn configuration and available destinations",
+          content: { "application/json": { schema: resolver(OrynSetupView) } },
+        },
+      },
+    }),
+    async (c) => c.json(await OrynSetup.view()),
+  )
+  .put(
+    "/setup",
+    describeRoute({
+      summary: "Configure Oryn",
+      operationId: "oryn.setup.update",
+      responses: {
+        200: { description: "Saved setup", content: { "application/json": { schema: resolver(OrynSetupView) } } },
+        ...errors(400, 403, 409),
+      },
+    }),
+    validator("json", OrynSetupInput),
+    async (c) => {
+      try {
+        const { change } = await OrynSetup.save(c.req.valid("json"))
+        await reloadAfterConfigChange(change, "oryn.setup")
+        return c.json(await OrynSetup.view())
+      } catch (error) {
+        return handleError(c, error)
+      }
+    },
+  )
   .get(
     "/cases",
     describeRoute({

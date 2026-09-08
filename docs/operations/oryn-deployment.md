@@ -4,6 +4,24 @@ This runbook covers deploying the Oryn feedback-to-PR runtime on a single Linux 
 
 Oryn is dormant unless `oryn.enabled` is `true`. Deploy the reviewed synergy-oryn revision; an upstream Synergy installation alone does not contain these Oryn changes. Start with one test chat and one test repository. The deterministic pipeline and native Linux tests support pilot acceptance; live App authentication, the target repository's build environment and production-model decisions require the canary below.
 
+## Setup in the Application
+
+Connect the GitHub App and Feishu accounts in Settings → Channels first. Add the App-authorized repositories to the GitHub account and refresh Feishu projects after adding the bot to a group. A topic appears after Oryn has received a conversation there. Repository access and discovered destinations are installation-owned; no credentials are returned by the Oryn setup API.
+
+Open Settings → Oryn. Choose the default repository, its absolute server-side trusted checkout and target branch. The checkout's `origin` must match the selected repository and `origin/<branch>` must already resolve. Choose an optional Feishu group or topic for human intervention. Saving installs an explicit route for that group and selects threaded group sessions on the Feishu account. Other explicit repository configurations remain available in the advanced installation policy.
+
+Enable backfill to include existing open Issues and PRs, independent review to review contributor PRs, and automatic coding only when the repository's execution profiles and native containment are ready. These switches map to `oryn.repositories[alias].github.{enabled,backfill,autoReview,autoFix}`. The default alias and destination are `oryn.defaultRepoAlias` and `oryn.notifications.target`. Execution profiles, dependency snapshots and resource ceilings still require the preparation described below; the setup page does not authorize arbitrary commands.
+
+GitHub needs only outgoing HTTPS. Incremental changes continue while the open backlog is scanned. An exact standalone `@oryn review`, `@oryn fix` or `@oryn stop` comment requires repository write, maintain or admin permission; quoted commands and bot comments are not authority. External PR fixes are adopted into a separate PR, preserving the original commits. Humans merge every PR.
+
+A review identifies its base/head and publishes actionable line comments where the reported line exists in the changed diff. It includes each domain's recommendation, evidence assessment, questions and limitations. A review does not write a successful delivery check. Missing reproduction or environment evidence transfers work to a human. GitHub-origin handoffs and gated ready results use the selected Feishu destination; ordinary progress remains silent.
+
+Discoveries keep their source Case and version. Independent or blocking bugs create a private reproduction Case before any public Issue. Security findings stay private, environment gaps require environment repair, and current-change defects stay in the existing review. Exact local observations deduplicate; `maxDiscoveryDepth` and `maxDescendants` default to 2 and 8. Descendants share the root wall-clock deadline. Semantic deduplication across unrelated wording and aggregate token accounting still require operator judgment and monitoring.
+
+Back up the full runtime state, including `oryn/github`, `oryn/github_cursors`, `oryn/github_owned` and `oryn/discoveries`. A lost Review response leaves an ambiguous receipt; polling searches the App's review marker before settling it and never automatically resends an uncertain publication. Retain old receipts when updating PRs. Poll snapshots retain the latest 100 combined comments/reviews; use GitHub for complete discussion history.
+
+Run `bun run test test/oryn/github-inbox.test.ts test/oryn/github-runtime.test.ts test/oryn/github-review.test.ts test/oryn/discovery.test.ts test/oryn/setup.test.ts test/channel/provider/github/oryn-intake.test.ts` from `packages/synergy`. The setup browser test is `packages/app/test/components/settings/panels/OrynPanel.test.ts`. These tests use isolated state and synthetic remote responses; validate App permissions and the selected Feishu destination on the pilot before broad intake.
+
 ## Pilot Acceptance Order
 
 1. On the dedicated Linux account, prepare the reviewed fork checkout using Bun 1.3.14 and `bun dev prepare` from the repository root. Rust, Bubblewrap, usable namespaces and the process-resource setup below are required for candidate execution. A successful preparation command alone does not prove sandbox readiness.

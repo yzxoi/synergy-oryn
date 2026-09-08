@@ -1,3 +1,4 @@
+import { OrynPanel } from "./panels/OrynPanel"
 import {
   ErrorBoundary,
   createEffect,
@@ -938,6 +939,7 @@ export function SettingsPanel(props: SettingsPanelProps) {
         }}
       />
     ),
+    oryn: () => <OrynPanel onChannels={() => setActiveTab("channels")} />,
     "synergy-link": SynergyLinkPanel,
     usage: () => (
       <UsagePanel

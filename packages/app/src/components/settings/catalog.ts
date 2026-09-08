@@ -27,6 +27,7 @@ export const BUILTIN_SETTINGS_IDS = [
   "voice",
   "providers",
   "usage",
+  "oryn",
   "github",
   "synergy-link",
   "learning",
@@ -87,6 +88,18 @@ const SEARCH_TERMS_COMMENT =
   "Settings search aliases. The vertical bars separate aliases; preserve them in translation."
 
 const BUILTIN_SETTINGS_COPY = {
+  oryn: {
+    label: { id: "settings.catalog.oryn.label", message: "Oryn" },
+    description: {
+      id: "settings.catalog.oryn.description",
+      message: "Repository automation and human-intervention notifications.",
+    },
+    searchTerms: {
+      id: "settings.catalog.oryn.searchTerms",
+      message: "oryn | setup | QA | github | feishu | review | issues | notifications",
+      comment: SEARCH_TERMS_COMMENT,
+    },
+  },
   account: {
     label: { id: "settings.catalog.account.label", message: "Account" },
     description: {
@@ -535,6 +548,7 @@ export const BUILTIN_SETTINGS_SECTIONS: SettingsCatalogSection[] = [
   section("voice", "core", 25, "settings.voice", ["voice"]),
   section("providers", "core", 50, "providers.main", ["providers"]),
   section("usage", "core", 60, "settings.usage", ["providers"]),
+  section("oryn", "integrations", 4, "settings.oryn", ["runtime", "channels"]),
   section("github", "integrations", 5, "github.main", ["providers", "github"]),
   section("synergy-link", "integrations", 8, "synergyLink.main"),
   section("learning", "library", 10, "settings.learning", ["library"]),

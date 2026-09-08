@@ -105,7 +105,7 @@ for (const interruption of ["model", "issue"] as const)
         const has = (tool: string) => request.tools?.some((item) => item.function.name === tool)
         const text = content(request)
         const results = content(request, "tool")
-        if (has("oryn_reply")) {
+        if (has("oryn_reply") && !has("oryn_dispatch")) {
           if (text.includes("Capacity question"))
             return results.includes("entryId:")
               ? { text: "Capacity answer delivered" }

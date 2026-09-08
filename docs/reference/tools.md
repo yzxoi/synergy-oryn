@@ -86,6 +86,7 @@ Generated from the builtin tool registry in `packages/synergy/src/tool/registry.
 | `openai_image_gen` | `communication.visual` | Generate a new image from a text prompt and save it to output_path. Use it when the user wants a raster visual such as an illustration, photo, product shot, UI mockup, concept art, texture, sprite, me |
 | `oryn_case` | `orchestration.session` | Oryn case operations: submit engineering feedback (routed by host config), get/list your linked cases, amend acceptance details, or request human handoff. Identity and routing come from your session b |
 | `oryn_check` | `orchestration.task` | Verification runs: read repository executionProfiles with oryn_case get, propose a plan (scenario, profile, commands, assertions), and execute it in a disposable checkout of the assigned commit. Comma |
+| `oryn_discover` | `code.write` | Record a bug found during any Oryn stage. Supply observed/expected behavior, parent-Case evidence record IDs, and its relationship. The Host binds caller, repository and source version, deduplicates o |
 | `oryn_dispatch` | `orchestration.session` | Request the next engineering stage for your case (dispatch), or open a bounded rework round on the frozen candidate when review demands changes (rework). The host picks the agent, workspace, and froze |
 | `oryn_github_read` | `code.read` | Read bounded remote facts for one of your linked cases: the linked issue and pull request (title, state, author class), and CI status on the candidate. The host resolves the repository and refs from t |
 | `oryn_learn` | `knowledge.memory` | Propose a reusable lesson with accepted evidence from the current Attempt. The Host pins repository, source commits and an evidence digest. Re-propose after candidate freeze or changed evidence; promo |
@@ -1226,6 +1227,22 @@ Verification runs: read repository executionProfiles with oryn_case get, propose
 | --- | --- | --- | --- |
 | `input` | CheckParameters | yes |  |
 
+## oryn_discover
+
+Kind: `code.write`
+
+Record a bug found during any Oryn stage. Supply observed/expected behavior, parent-Case evidence record IDs, and its relationship. The Host binds caller, repository and source version, deduplicates observations and limits descendants. Current-change findings stay in the existing review; independent/blocking bugs enter a separate reproduction Case before any public issue or PR. Environment gaps and security reports never auto-publish. Returns the durable discovery and optional child Case; suspicion is not proof.
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `caseId` | string | yes |  |
+| `relation` | "current_change" \| "independent" \| "blocker" \| "environment" \| "security" | yes |  |
+| `summary` | string | yes |  |
+| `observed` | string | yes |  |
+| `expected` | string | yes |  |
+| `evidenceRefs` | string | yes |  |
+| `path` | string |  |  |
+
 ## oryn_dispatch
 
 Kind: `orchestration.session`
@@ -1244,6 +1261,13 @@ Read bounded remote facts for one of your linked cases: the linked issue and pul
 
 | Parameter | Type | Required | Description |
 | --- | --- | --- | --- |
+| `title` | - | yes |  |
+| `output` | JSON.stringify | yes |  |
+| `mode` | work.mode | yes |  |
+| `snapshot` | work.snapshot | yes |  |
+| `fingerprint` | work.fingerprint | yes |  |
+| `changedFiles` | changes | yes |  |
+| `metadata` | - | yes |  |
 | `callerSessionID` | ctx.sessionID | yes |  |
 | `caseId` | params.caseId | yes |  |
 | `title` | - | yes |  |

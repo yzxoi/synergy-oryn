@@ -22,6 +22,11 @@ mock.module("../../../src/components/basic-tool", () => ({
   },
 }))
 mock.module("../../../src/components/message-part", () => ({
+  getToolInfo: (tool: string, input: { summary?: string } = {}) => ({
+    icon: "activity",
+    title: tool,
+    subtitle: input.summary,
+  }),
   browserToolLabels: {},
   ToolRegistry: {
     register: (entry: { name: string; render: (props: Record<string, any>) => unknown }) => {
@@ -47,6 +52,7 @@ describe("Lattice tool renderers", () => {
       "boss_status",
       "channel_push",
       "lattice_submit",
+      "oryn_discover",
       "pathway_read",
       "pathway_write",
     ])

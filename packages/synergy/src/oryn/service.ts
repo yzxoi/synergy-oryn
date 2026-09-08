@@ -1,3 +1,8 @@
+import { MessageV2 } from "../session/message-v2"
+import { OrynGithub } from "./github"
+import { OrynDiscovery } from "./discovery"
+import { OrynNotifications } from "./notifications"
+import { OrynGithubStore } from "./github-store"
 import { OrynPublicText } from "./public-text"
 import { Log } from "../util/log"
 import { Lock } from "../util/lock"
@@ -75,6 +80,29 @@ async function assertStageAdmission(caseId: string, attemptId: string, stage: St
     OrynStore.listWorkerReports(caseId),
   ])
   if (!record || !attempt) throw storeError("INVALID_STAGE", "stage requires an existing case and Attempt")
+  const github = await OrynGithubStore.get(caseId)
+  if (github?.mode === "review") {
+    if (
+      stage !== "review" ||
+      github.state === "stopped" ||
+      github.snapshot.state !== "open" ||
+      github.snapshot.draft ||
+      attempt.candidateSha !== github.snapshot.headSha ||
+      attempt.baselineSha !== github.snapshot.baseSha
+    )
+      throw storeError("INVALID_STAGE", "External PR work only admits review of the current head and base")
+    return
+  }
+  if (stage === "code" && github) {
+    if (!(await OrynGithub.authorized(github, "code")))
+      throw storeError("NOT_AUTHORIZED", "Automatic fixes require operator opt-in")
+  }
+  if (stage === "code") {
+    const discovery = await OrynDiscovery.lineage(caseId)
+    const rootGithub = discovery ? await OrynGithubStore.get(discovery.rootCaseId) : undefined
+    if (rootGithub && !(await OrynGithub.authorized(rootGithub, "code")))
+      throw storeError("NOT_AUTHORIZED", "Root case repair authority was revoked")
+  }
   const accepted = reports.filter((report) =>
     assignments.some(
       (assignment) =>
@@ -166,6 +194,7 @@ export namespace OrynService {
   async function reporter(record: Case, key: string) {
     if (!record.sourceIds.includes(key)) return
     const source = await OrynStore.getSource(key)
+    if (source?.caseIds.includes(record.id) && (await OrynNotifications.operator(source.identity))) return "operator"
     const channel = await OrynStore.channelSource(key)
     const config = await OrynConfig.info()
     if (
@@ -190,6 +219,7 @@ export namespace OrynService {
 
   export async function queueReadyNotifications(caseId: string) {
     const queued: Awaited<ReturnType<typeof OrynStore.writeOutbox>>[] = []
+    await OrynNotifications.attach(caseId)
     const ready = await OrynReady.projection(caseId)
     if (!ready) return queued
     for (const key of ready.record.sourceIds) {
@@ -212,15 +242,25 @@ export namespace OrynService {
     if (record.control !== "human_owned" || !record.handoff || record.handoff.epoch !== record.epoch) return queued
     const config = await OrynConfig.info()
     if (!config?.enabled) return queued
+    await OrynNotifications.attach(record.id)
+    record = (await OrynStore.getCase(record.id))!
     for (const key of record.sourceIds) {
       if (!(await reporter(record, key))) continue
       const reason = handoffSummary(record)!.reason
+      const repository = config.repositories?.[record.repoAlias]
+      const work = await OrynGithubStore.get(record.id)
+      const number = record.pullNumbers.at(-1) ?? work?.number ?? record.issueNumber
+      const target =
+        repository && number
+          ? `https://github.com/${repository.owner}/${repository.repo}/${record.pullNumbers.length || work?.mode === "review" ? "pull" : "issues"}/${number}`
+          : undefined
+      const summary = OrynPublicText.violations(record.summary).length ? "Repository task" : record.summary
       queued.push(
         await OrynStore.writeOutbox({
           caseId: record.id,
           sourceKeyHash: key,
           kind: "needs_human",
-          text: `Oryn needs human input: ${reason}`,
+          text: `Oryn needs human input: ${reason}${(await OrynNotifications.operator((await OrynStore.getSource(key))!.identity)) ? `\n${summary}${target ? `\n${target}` : ""}` : ""}`,
           dedupKey: handoffKey(record),
         }),
       )
@@ -1096,7 +1136,68 @@ export namespace OrynService {
     text: string
   }): Promise<{ entryId: string; created: boolean }> {
     await requireEnabled()
-    const binding = await requireBinding(input.callerSessionID, ["qa"])
+    const binding = await requireBinding(input.callerSessionID, ["qa", "engineering"])
+    if (binding.role === "engineering") {
+      if (
+        !binding.caseId ||
+        (input.caseId && input.caseId !== binding.caseId) ||
+        !["answer", "clarification"].includes(input.kind)
+      )
+        throw storeError("NOT_AUTHORIZED", "Engineering replies require their bound GitHub source")
+      const work = await OrynGithubStore.get(binding.caseId)
+      const record = await requireActiveCase(binding.caseId)
+      if (record.engineeringSessionId !== input.callerSessionID || OrynPublicText.violations(input.text).length)
+        throw storeError("NOT_AUTHORIZED", "GitHub reply authority or text is invalid")
+      let identity = work?.mode === "issue" && work.state !== "stopped" ? binding.identity : undefined
+      let version = work?.fingerprint
+      if (!identity && input.turnID) {
+        const message = (await MessageV2.get({ sessionID: input.callerSessionID, messageID: input.turnID })).info
+        const repository = (await OrynConfig.info())?.repositories?.[record.repoAlias]
+        const number = message.metadata?.orynGithubNumber
+        if (
+          message.role === "user" &&
+          message.origin?.type === "system" &&
+          message.origin.detail === "oryn_github_owned" &&
+          typeof number === "number" &&
+          (number === record.issueNumber || record.pullNumbers.includes(number)) &&
+          repository?.githubAccount &&
+          message.metadata?.orynGithubRepository === `${repository.owner}/${repository.repo}` &&
+          typeof message.metadata?.orynGithubFingerprint === "string"
+        ) {
+          identity = {
+            provider: "github",
+            accountId: repository.githubAccount,
+            repo: `${repository.owner}/${repository.repo}`,
+            issueNumber: number,
+            chatId: `${repository.owner}/${repository.repo}#${number}`,
+          }
+          version = message.metadata.orynGithubFingerprint
+        }
+      }
+      if (
+        identity?.provider !== "github" ||
+        !identity.repo ||
+        !version ||
+        !(await OrynGithub.binding(identity.accountId, identity.repo))
+      )
+        throw storeError("NOT_AUTHORIZED", "The current turn has no authorized GitHub reply target")
+      await OrynStore.recordSource({ identity })
+      const key = sourceKey(identity)
+      await OrynStore.linkSourceToCase(key, record.id)
+      const { entry, created } = await OrynStore.writeOutbox({
+        caseId: record.id,
+        sourceKeyHash: key,
+        kind: input.kind,
+        text: input.text,
+        dedupKey: `github-reply:${version}:${input.kind}`,
+      })
+      if (work?.mode === "issue") {
+        using lock = await Lock.write(`oryn-github-thread:${work.repository}:${work.number}`)
+        const current = await OrynGithubStore.get(work.caseId)
+        if (current?.fingerprint === version) await OrynGithubStore.save({ ...current, state: "settled" })
+      }
+      return { entryId: entry.id, created }
+    }
     const caseId = input.caseId ?? binding.caseId
     if (caseId && binding.caseId && binding.caseId !== caseId) {
       throw storeError("NOT_AUTHORIZED", "case does not belong to this session")
@@ -1187,6 +1288,18 @@ export namespace OrynService {
     if (config.notifications?.kinds && !config.notifications.kinds.includes(entry.kind)) return suppress()
     const link = await OrynStore.getSource(entry.sourceKey)
     if (!link) return suppress()
+    if (link.identity.eventName === "oryn_operator" && !(await OrynNotifications.operator(link.identity)))
+      return suppress()
+    if (link.identity.provider === "github" && record) {
+      if (record.control !== "active") return suppress()
+      const work = await OrynGithubStore.get(record.id)
+      if (
+        work?.mode === "issue" &&
+        entry.dedupKey.startsWith("github-reply:") &&
+        !entry.dedupKey.startsWith(`github-reply:${work.fingerprint}:`)
+      )
+        return suppress()
+    }
     if (entry.kind === "ready" || (entry.caseId && entry.kind === "needs_human")) {
       const ready = entry.kind === "ready" && entry.caseId ? await OrynReady.projection(entry.caseId) : undefined
       const current =

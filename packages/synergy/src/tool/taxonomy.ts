@@ -157,6 +157,7 @@ const REGISTRY: Record<string, ToolTaxonomyEntry> = {
   oryn_result: entry("orchestration.session", { stateful: true }),
   oryn_reply: entry("communication.deliver", { stateful: true, externalIO: true }),
   oryn_check: entry("orchestration.task", { stateful: true }),
+  oryn_discover: entry("code.write", { stateful: true }),
   oryn_github_read: entry("code.read", { externalIO: true }),
   oryn_publish: entry("communication.publish", { stateful: true, externalIO: true }),
   oryn_learn: entry("knowledge.memory", { stateful: true }),

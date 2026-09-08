@@ -235,7 +235,7 @@ export function classifyTool(
   input: Record<string, any> = {},
   metadata: Record<string, any> = {},
 ): ClassifiedTool {
-  const category = classifySemanticCategory(toolName, input)
+  const category = classifySemanticCategory(toolName === "oryn_discover" ? "write" : toolName, input)
 
   const spec = CATEGORIES[category]
 

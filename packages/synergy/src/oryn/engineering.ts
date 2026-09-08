@@ -1,3 +1,4 @@
+import { OrynGithubStore } from "./github-store"
 import path from "node:path"
 import { realpath } from "node:fs/promises"
 import { Identifier } from "../id/id"
@@ -165,10 +166,14 @@ export namespace OrynEngineering {
     const source = sources.find(
       (item) =>
         item &&
-        item.identity.provider === "feishu" &&
-        OrynConfig.resolveRepoAlias(config, { accountId: item.identity.accountId, chatId: item.identity.chatId }) ===
-          record.repoAlias,
+        (item.identity.provider === "feishu"
+          ? OrynConfig.resolveRepoAlias(config, item.identity) === record.repoAlias
+          : repository.github?.enabled &&
+            repository.githubAccount === item.identity.accountId &&
+            item.identity.repo === `${repository.owner}/${repository.repo}`),
     )
+    const github = await OrynGithubStore.get(caseId)
+    if (github?.state === "stopped") return block("github_thread_stopped")
     if (!source) return block("source_route_unavailable")
     let directory: string
     let baselineSha: string
@@ -181,6 +186,11 @@ export namespace OrynEngineering {
       if ((await realpath(root)) !== directory) return block("repository_root_required")
       const current = record.activeAttemptId ? await OrynStore.getAttempt(caseId, record.activeAttemptId) : undefined
       baselineSha =
+        (github?.mode === "review"
+          ? github.snapshot.baseSha
+          : github?.mode === "repair"
+            ? github.snapshot.headSha
+            : undefined) ??
         start.baselineSha ??
         current?.baselineSha ??
         (await git(directory, [
@@ -196,6 +206,9 @@ export namespace OrynEngineering {
     }
     const { scope } = await Scope.fromDirectory(directory)
     if (scope.type !== "project" || scope.directory !== directory) return block("repository_scope_unavailable")
+    if (github?.mode === "review" && github.snapshot.headSha) {
+      await git(directory, ["cat-file", "-e", `${github.snapshot.headSha}^{commit}`])
+    }
     if (start.state === "started") {
       try {
         const session = await Session.get(start.sessionId)
@@ -210,6 +223,14 @@ export namespace OrynEngineering {
     }
     await OrynStore.linkSourceToCase(source.key, caseId)
     const opened = await openReserved(start, { identity: source.identity, scope, baselineSha })
+    if (github?.mode === "review" && github.snapshot.headSha) {
+      const attempt = (await OrynStore.getAttempt(caseId, opened.attemptId))!
+      await OrynStore.mutateAttempt(caseId, attempt.id, (value) => ({
+        ...value,
+        candidateSha: github.snapshot.headSha,
+        disposition: "candidate_frozen",
+      }))
+    }
     start = (await get(caseId))!
     using _caseLock = await Lock.write(`oryn-case:${caseId}`)
     const latest = await OrynStore.getCase(caseId)
@@ -220,7 +241,7 @@ export namespace OrynEngineering {
       fn: async () => {
         await SessionInbox.deliverUnique({
           sessionID: opened.sessionID,
-          deliveryKey: `oryn-start:${caseId}`,
+          deliveryKey: github ? `oryn-github:${github.fingerprint}` : `oryn-start:${caseId}`,
           mode: "task",
           message: {
             role: "user",
@@ -230,7 +251,7 @@ export namespace OrynEngineering {
             parts: [
               {
                 type: "text",
-                text: `Investigate Oryn case ${caseId}.\nAttempt: ${opened.attemptId}\nRepository: ${record.repoAlias}\nBaseline: ${baselineSha}\nSummary: ${record.summary}\nObserved: ${record.observed ?? "not supplied"}\nExpected: ${record.expected ?? "clarification required"}\nRead the current case and dispatch the next allowed stage. Worker reports arrive through Inbox; do not poll. If acceptance or environment is insufficient, request human handoff. Human merge is required.`,
+                text: `Investigate Oryn case ${caseId}.\nAttempt: ${opened.attemptId}\nRepository: ${record.repoAlias}\nBaseline: ${baselineSha}\nSummary: ${record.summary}\nObserved: ${record.observed ?? "not supplied"}\nExpected: ${record.expected ?? "clarification required"}\n${github ? `GitHub mode: ${github.mode}. Read oryn_github_read and the github field of oryn_case. External review mode only dispatches the required independent review domains, then uses publish_review; it never runs the repair or delivery pipeline. Issue mode classifies the feedback, answers questions using oryn_reply, and reproduces bugs before requesting code. Repair mode preserves the adopted contribution and creates a separate PR. ` : ""}Read the current case and dispatch the next allowed stage. Worker reports arrive through Inbox; do not poll. If acceptance or environment is insufficient, request human handoff. Human merge is required.`,
               },
             ],
             metadata: { orynCaseId: caseId, orynAttemptId: opened.attemptId },
@@ -243,15 +264,43 @@ export namespace OrynEngineering {
     return { state: "started", ...opened }
   }
 
+  export async function activeCaseIds() {
+    const config = await OrynConfig.info()
+    const ids = new Set<string>()
+    for (const record of await OrynStore.listCases({ control: "active" })) {
+      if (!config?.repositories?.[record.repoAlias] || !record.engineeringSessionId) continue
+      const work = await OrynGithubStore.get(record.id)
+      if (work && work.state !== "running") continue
+      if (
+        record.activeAttemptId &&
+        (await OrynStore.getAttempt(record.id, record.activeAttemptId))?.disposition === "ready"
+      )
+        continue
+      const session = await Session.get(record.engineeringSessionId).catch(() => undefined)
+      if (session && !session.time.archived) ids.add(record.id)
+    }
+    return ids
+  }
+
   export async function recover() {
     if (!(await OrynConfig.enabled())) return { started: 0, blocked: 0, failed: 0 }
     const counts = { started: 0, blocked: 0, failed: 0 }
     const started = new Set<string>()
-    for (const record of await OrynStore.listCases({ control: "active" })) {
+    const records = await OrynStore.listCases({ control: "active" })
+    let running = (await activeCaseIds()).size
+    const incomplete = await OrynStore.incompleteClaims()
+    for (const record of records) {
+      if (await OrynGithubStore.get(record.id)) continue
+      const source = record.sourceIds[0] ? await OrynStore.getSource(record.sourceIds[0]) : undefined
+      if (source?.identity.provider === "github" && incomplete.some((claim) => claim.caseId === record.id)) continue
+      if (!record.engineeringSessionId && running >= ((await OrynConfig.info())?.limits?.maxActiveCases ?? 4)) continue
       try {
         const result = await start(record.id)
         counts[result.state]++
-        if (result.state === "started") started.add(record.id)
+        if (result.state === "started") {
+          started.add(record.id)
+          if (!record.engineeringSessionId) running++
+        }
       } catch (error) {
         log.warn("engineering startup recovery failed", {
           caseId: record.id,

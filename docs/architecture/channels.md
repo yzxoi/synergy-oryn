@@ -50,6 +50,12 @@ Oryn code workers prepare local commits through `oryn_result` with `input.kind: 
 
 The Oryn delivery gate derives minimum review domains from the verified Git diff between the original Case baseline and the frozen candidate. General review is mandatory; sensitive paths additionally require security, persistence, Channel or publishing review. Deleted paths participate, and domains requested during earlier Attempts remain required. Engineering and review workers read `reviewRequirements` through `oryn_case get`; unreadable candidate state returns an unavailable result and blocks delivery. Path classification is a minimum, so semantic risks outside those rules need additional review. The policy version participates in review Assignment and report fingerprints; an older policy cannot satisfy the gate or resume its reviewer as current. See [Host review requirements](../decisions/implemented/bug-fix/2026-09-08-oryn-required-review-domains.md).
 
+## Oryn GitHub Intake and Setup
+
+Explicit GitHub repository bindings replace ordinary conversation dispatch with durable Oryn intake. Incremental and backlog cursors are separate, and repository-qualified source identities preserve existing Issues. External PR review freezes the current head/base and dispatches independent required domains through Boss; a combined current-head COMMENT review is separate from the owned-PR delivery gate. Maintainer commands require live repository permission. Owned Issue/PR updates use the original engineering Inbox, while repair adoption preserves contributor commits in a separate Case and PR.
+
+The installation setup API discovers connected-account repositories and persisted Feishu chats/topics, validates a trusted local Git root and base ref, and stores an explicit default route and optional operator notification destination. Operator targets apply only to GitHub-origin Cases. Pending notifications to a replaced target are suppressed; reporter replies keep their original target. Independent discoveries persist lineage and reproduction work in existing Storage. See the [GitHub loop and setup decision](../decisions/implemented/feature/2026-09-08-oryn-github-loop-and-setup.md) for publication recovery, permissions and limits.
+
 ## Provider and Transport Lifecycle
 
 Every provider declares one lifecycle:

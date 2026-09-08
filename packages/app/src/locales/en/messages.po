@@ -14821,6 +14821,18 @@ msgid "settings.catalog.observability.searchTerms"
 msgstr "log | trace | telemetry | collection"
 
 #. js-lingui-explicit-id
+msgid "settings.catalog.oryn.description"
+msgstr "Repository automation and human-intervention notifications."
+
+#. js-lingui-explicit-id
+msgid "settings.catalog.oryn.label"
+msgstr "Oryn"
+
+#. js-lingui-explicit-id
+msgid "settings.catalog.oryn.searchTerms"
+msgstr "oryn | setup | QA | github | feishu | review | issues | notifications"
+
+#. js-lingui-explicit-id
 msgid "settings.catalog.permissions.description"
 msgstr "Default permission mode and tool toggles."
 
@@ -17407,6 +17419,94 @@ msgstr "Model roles are loading"
 #. js-lingui-explicit-id
 msgid "settings.models.roles.title"
 msgstr "Model roles"
+
+#. js-lingui-explicit-id
+msgid "settings.oryn.automation"
+msgstr "Automation"
+
+#. js-lingui-explicit-id
+msgid "settings.oryn.backfill"
+msgstr "Include existing open issues and PRs"
+
+#. js-lingui-explicit-id
+msgid "settings.oryn.baseBranch"
+msgstr "Target branch"
+
+#. js-lingui-explicit-id
+msgid "settings.oryn.connections"
+msgstr "Manage connections"
+
+#. js-lingui-explicit-id
+msgid "settings.oryn.description"
+msgstr "Connect repository feedback, independent PR reviews and quiet human-intervention notifications. Humans merge every PR."
+
+#. js-lingui-explicit-id
+msgid "settings.oryn.destination"
+msgstr "Default Feishu chat or topic"
+
+#. js-lingui-explicit-id
+msgid "settings.oryn.directory"
+msgstr "Repository checkout on the server"
+
+#. js-lingui-explicit-id
+msgid "settings.oryn.enabled"
+msgstr "Enable Oryn"
+
+#. js-lingui-explicit-id
+msgid "settings.oryn.fix"
+msgstr "Automatically fix reproduced bugs"
+
+#. js-lingui-explicit-id
+msgid "settings.oryn.fixDescription"
+msgstr "Requires configured verification environments. Unreproducible bugs go to a human; contributor branches are never overwritten."
+
+#. js-lingui-explicit-id
+msgid "settings.oryn.loading"
+msgstr "Loading connected repositories and chats…"
+
+#. js-lingui-explicit-id
+msgid "settings.oryn.noChats"
+msgstr "Connect Feishu, add the bot to a chat, then refresh projects in Channels. Topics appear after a conversation with Oryn."
+
+#. js-lingui-explicit-id
+msgid "settings.oryn.noDestination"
+msgstr "No default destination"
+
+#. js-lingui-explicit-id
+msgid "settings.oryn.noRepositories"
+msgstr "Connect a GitHub App channel and add its repositories in Manage connections first."
+
+#. js-lingui-explicit-id
+msgid "settings.oryn.notifications"
+msgstr "Human intervention"
+
+#. js-lingui-explicit-id
+msgid "settings.oryn.notificationsDescription"
+msgstr "GitHub tasks send only decisions and ready results here. Feishu feedback keeps replies in its original conversation."
+
+#. js-lingui-explicit-id
+msgid "settings.oryn.repository"
+msgstr "Default monitored repository"
+
+#. js-lingui-explicit-id
+msgid "settings.oryn.retry"
+msgstr "Retry"
+
+#. js-lingui-explicit-id
+msgid "settings.oryn.review"
+msgstr "Automatically review PRs"
+
+#. js-lingui-explicit-id
+msgid "settings.oryn.save"
+msgstr "Save Oryn settings"
+
+#. js-lingui-explicit-id
+msgid "settings.oryn.saved"
+msgstr "Oryn settings saved."
+
+#. js-lingui-explicit-id
+msgid "settings.oryn.saving"
+msgstr "Saving…"
 
 #. js-lingui-explicit-id
 msgid "settings.panel.action.cancel"
@@ -20035,6 +20135,10 @@ msgstr "View notebooks"
 #. ── Tool trigger titles ────────────────────────────────────────────
 msgid "tool.title.notes"
 msgstr "View notes"
+
+#. ── Tool trigger titles ────────────────────────────────────────────
+msgid "tool.title.oryn-discover"
+msgstr "Record discovery"
 
 #. ── Tool trigger titles ────────────────────────────────────────────
 msgid "tool.title.paper"

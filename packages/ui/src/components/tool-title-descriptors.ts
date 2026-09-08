@@ -6,6 +6,7 @@ function d(id: string, message: string): MessageDescriptor {
 
 // ── Tool trigger titles ────────────────────────────────────────────
 export const TOOL_TITLE_DESC: Record<string, MessageDescriptor> = {
+  oryn_discover: d("tool.title.oryn-discover", "Record discovery"),
   // File ops
   read: d("tool.title.read", "Read file"),
   view_file: d("tool.title.view-file", "View File"),

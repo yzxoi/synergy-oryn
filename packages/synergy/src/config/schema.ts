@@ -552,8 +552,22 @@ export const OrynPublishOperation = z
   .meta({ ref: "OrynPublishOperationConfig" })
 export type OrynPublishOperation = z.infer<typeof OrynPublishOperation>
 
+export const OrynGithub = z
+  .object({
+    enabled: z.boolean().optional().describe("Route repository polling into Oryn instead of ordinary Channel agents"),
+    backfill: z.boolean().optional().describe("Include existing open issues and PRs (default: true)"),
+    autoReview: z.boolean().optional().describe("Review existing and future non-draft PRs (default: true)"),
+    autoFix: z
+      .boolean()
+      .optional()
+      .describe("Allow verified issue fixes and confirmed discoveries (default: false); human merge remains required"),
+  })
+  .strict()
+  .meta({ ref: "OrynGithubConfig" })
+
 export const OrynRepository = z
   .object({
+    github: OrynGithub.optional().describe("GitHub intake, review and repair policy"),
     labels: z
       .boolean()
       .optional()
@@ -625,6 +639,20 @@ export const OrynLimits = z
     processResources: OrynProcessResources.optional().describe(
       "Linux cgroup ceilings for every Oryn check and worker Bash command",
     ),
+    maxDiscoveryDepth: z
+      .number()
+      .int()
+      .min(0)
+      .max(8)
+      .optional()
+      .describe("Maximum descendant discovery depth (default: 2)"),
+    maxDescendants: z
+      .number()
+      .int()
+      .min(0)
+      .max(100)
+      .optional()
+      .describe("Maximum discoveries per root case (default: 8)"),
     maxActiveCases: z.number().int().min(1).optional().describe("Maximum concurrently active cases (default: 4)"),
     maxConcurrentWorkers: z
       .number()
@@ -721,6 +749,15 @@ export type OrynExecutionProfile = z.infer<typeof OrynExecutionProfile>
 
 export const OrynNotifications = z
   .object({
+    target: z
+      .object({
+        accountId: z.string().min(1),
+        chatId: z.string().min(1),
+        threadId: z.string().min(1).optional(),
+      })
+      .strict()
+      .optional()
+      .describe("Operator-selected Feishu destination for GitHub-origin human intervention and ready notices"),
     kinds: z
       .array(z.enum(["answer", "clarification", "accepted", "needs_human", "ready", "released"]))
       .optional()
@@ -751,6 +788,7 @@ export type OrynLearning = z.infer<typeof OrynLearning>
 
 export const Oryn = z
   .object({
+    defaultRepoAlias: z.string().min(1).optional().describe("Default repository selected in Oryn settings"),
     enabled: z
       .boolean()
       .optional()
@@ -779,11 +817,11 @@ export const Oryn = z
   .strict()
   .superRefine((value, ctx) => {
     if (value.enabled !== true) return
-    if (!value.routes?.length) {
+    if (!value.routes?.length && !Object.values(value.repositories ?? {}).some((repo) => repo.github?.enabled)) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ["routes"],
-        message: "oryn.routes is required when oryn.enabled is true",
+        message: "Enable a Feishu route or a GitHub repository when Oryn is enabled",
       })
     }
     if (!value.repositories || Object.keys(value.repositories).length === 0) {

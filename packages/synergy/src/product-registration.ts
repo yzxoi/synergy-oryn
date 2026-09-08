@@ -1,3 +1,11 @@
+import { OrynDiscovery } from "./oryn/discovery"
+import { OrynEngineering } from "./oryn/engineering"
+import { GitHubChannelAuth } from "./channel/provider/github/api"
+import { setGithubRuntimeTransport, OrynGithubRuntime } from "./oryn/github-runtime"
+import { fetchOrynReview } from "./channel/provider/github/oryn-fetch"
+import { OrynGithub } from "./oryn/github"
+import { OrynGithubIntake } from "./channel/provider/github/oryn-intake"
+import { setGithubRepositoryPoller } from "./channel/provider/github/poll"
 /**
  * L4 product manifest: the single static list through which built-in product
  * domains attach to the harness core. Every real entry point loads this module
@@ -171,12 +179,58 @@ RuntimeReloadExecutor.setExecutor((input, options) => RuntimeReload.reload(input
 // L4 assembly: the Oryn publish ledger consumes the GitHub provider through
 // an injected transport so the oryn domain stays acyclic (the provider owns
 // credential access; tokens are never returned to model callers).
+setGithubRepositoryPoller(async (input) => {
+  const handled = await OrynGithub.scan({ ...input, transport: OrynGithubIntake.createTransport() })
+  if (handled) await OrynGithubRuntime.recover()
+  return handled
+})
+setGithubRuntimeTransport({
+  current: OrynGithubIntake.current,
+  fetch: fetchOrynReview,
+  async permission(repository, login) {
+    const result = await OrynGithubIntake.read<{ permission: string }>(
+      repository,
+      `collaborators/${encodeURIComponent(login)}/permission`,
+    )
+    return ["admin", "maintain", "write"].includes(result.permission)
+  },
+  async findReview(repository, number, marker) {
+    const slug = await GitHubChannelAuth.getAppSlug()
+    for (let page = 1; page <= 20; page++) {
+      const reviews = await OrynGithubIntake.read<Array<{ id: number; body: string; user: { login: string } }>>(
+        repository,
+        `pulls/${number}/reviews?per_page=100&page=${page}`,
+      )
+      const found = reviews.find(
+        (review) => review.user.login === `${slug}[bot]` && review.body.trimEnd().endsWith(`\n${marker}`),
+      )
+      if (found) return found.id
+      if (reviews.length < 100) return
+    }
+  },
+  async review(input) {
+    const result = await OrynGithubIntake.write<{ id: number }>(input.repository, `pulls/${input.number}/reviews`, {
+      event: "COMMENT",
+      commit_id: input.headSha,
+      body: input.body,
+      ...(input.comments?.length ? { comments: input.comments } : {}),
+    })
+    if (!Number.isInteger(result.id) || result.id <= 0) throw new Error("Invalid review receipt")
+    return result.id
+  },
+})
 setTransport(OrynGithubPublish.createTransport())
 setLabelTransport(OrynGithubLabels.createTransport())
 setGithubPollReconciler(async () => {
   const { OrynPublish } = await import("./oryn/publish")
   await OrynPublish.reconcileAllAmbiguous()
   await OrynLabels.syncAll()
+  await OrynDiscovery.recover()
+  await OrynEngineering.recover()
+  await OrynGithubRuntime.recover()
+  const { OrynService } = await import("./oryn/service")
+  await OrynService.recoverHandoffs()
+  await OrynService.drainOutbox()
 })
 RuntimeReloadExecutor.setGlobalExecutor((input, options) => RuntimeReload.reloadGlobal(input, options))
 

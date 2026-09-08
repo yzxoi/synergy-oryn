@@ -1,3 +1,5 @@
+import { OrynGithubStore } from "./github-store"
+import { OrynGithub } from "./github"
 import { isOrynAgent } from "../agent/builtin-oryn"
 import { ProcessRegistry } from "../process/registry"
 import type { Session } from "../session"
@@ -22,6 +24,8 @@ export namespace OrynControl {
     if (!binding.caseId || !(await OrynConfig.enabled())) return false
     const record = await OrynStore.getCase(binding.caseId)
     if (!record || record.control !== "active") return false
+    const github = await OrynGithubStore.get(record.id)
+    if (github && !(await OrynGithub.authorized(github, "run"))) return false
     if (await OrynBudget.reason(record)) return false
     if (binding.role === "engineering")
       return (

@@ -378,7 +378,8 @@ export namespace Channel {
     QuestionCardBridge.init()
     ChannelOutbound.init({ getProvider })
     ChannelOryn.initialize(
-      async (accountId) => (await status())[connectionKey("feishu", accountId)]?.status === "connected",
+      async (accountId, channelType = "feishu") =>
+        (await status())[connectionKey(channelType, accountId)]?.status === "connected",
     )
   }
   async function connectAccount(input: ConnectContext & { reconnectAttempt?: number }): Promise<void> {

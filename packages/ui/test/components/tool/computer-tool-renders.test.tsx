@@ -16,6 +16,11 @@ mock.module("../../../src/components/basic-tool", () => ({
   },
 }))
 mock.module("../../../src/components/message-part", () => ({
+  getToolInfo: (tool: string, input: { summary?: string } = {}) => ({
+    icon: "activity",
+    title: tool,
+    subtitle: input.summary,
+  }),
   ToolRegistry: {
     register: (entry: { name: string; render: (props: Record<string, unknown>) => unknown }) =>
       registrations.set(entry.name, entry.render),

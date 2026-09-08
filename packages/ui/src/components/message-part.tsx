@@ -1,3 +1,4 @@
+import { ORYN_TOOL_ICONS } from "./icon"
 import { getComputerToolPresentation } from "./tool/classifier"
 import {
   Component,
@@ -361,6 +362,8 @@ export function getToolInfo(tool: string, input: any = {}, metadata: any = {}): 
   if (isAnysearchToolName(tool)) return getAnysearchToolInfo(tool, input)
 
   switch (tool) {
+    case "oryn_discover":
+      return { icon: ORYN_TOOL_ICONS.oryn_discover, title: TOOL_TITLE_DESC.oryn_discover, subtitle: input.summary }
     case "read":
       return {
         icon: "glasses",

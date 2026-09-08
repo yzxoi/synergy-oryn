@@ -54,7 +54,7 @@ export function attachmentScenario(options: { baseline: string; repair: boolean 
     const has = (name: string) => request.tools?.some((tool) => tool.function.name === name)
     const text = content(request)
     const results = content(request, "tool")
-    if (has("oryn_reply")) {
+    if (has("oryn_reply") && !has("oryn_dispatch")) {
       if (!results.includes("caseId:"))
         return {
           tool: "oryn_case",

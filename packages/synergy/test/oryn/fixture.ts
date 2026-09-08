@@ -5,6 +5,7 @@ import { SessionProcessor } from "../../src/session/processor"
 import { ToolExecutor } from "../../src/session/tool-executor"
 import { ToolTaskScheduler } from "../../src/session/tool-scheduler"
 import { Config } from "../../src/config/config"
+import { ChannelGithub } from "../../src/config/schema"
 import { ConfigDomain } from "../../src/config/domain"
 import { Provider } from "../../src/provider/provider"
 import { Lock } from "../../src/util/lock"
@@ -127,4 +128,29 @@ export async function runCheck(request: Parameters<typeof OrynService.runCheck>[
   })
   if (result.state !== "completed" || !output) throw failure ?? new Error(result.error ?? "check did not complete")
   return output
+}
+
+export async function githubConfig(config: Partial<Config.Info>) {
+  const repositories = Object.values(config.oryn?.repositories ?? {})
+  return globalConfig({
+    ...config,
+    channel: {
+      ...config.channel,
+      github: ChannelGithub.parse({
+        type: "github",
+        accounts: Object.fromEntries(
+          repositories.map((repo) => [
+            repo.githubAccount ?? "app",
+            {
+              enabled: true,
+              workspaceDir: repo.directory ?? process.env.SYNERGY_TEST_HOME!,
+              repositories: repositories
+                .filter((other) => other.githubAccount === repo.githubAccount)
+                .map((other) => `${other.owner}/${other.repo}`),
+            },
+          ]),
+        ),
+      }),
+    },
+  })
 }

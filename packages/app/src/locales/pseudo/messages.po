@@ -14821,6 +14821,18 @@ msgid "settings.catalog.observability.searchTerms"
 msgstr ""
 
 #. js-lingui-explicit-id
+msgid "settings.catalog.oryn.description"
+msgstr ""
+
+#. js-lingui-explicit-id
+msgid "settings.catalog.oryn.label"
+msgstr ""
+
+#. js-lingui-explicit-id
+msgid "settings.catalog.oryn.searchTerms"
+msgstr ""
+
+#. js-lingui-explicit-id
 msgid "settings.catalog.permissions.description"
 msgstr ""
 
@@ -17406,6 +17418,94 @@ msgstr ""
 
 #. js-lingui-explicit-id
 msgid "settings.models.roles.title"
+msgstr ""
+
+#. js-lingui-explicit-id
+msgid "settings.oryn.automation"
+msgstr ""
+
+#. js-lingui-explicit-id
+msgid "settings.oryn.backfill"
+msgstr ""
+
+#. js-lingui-explicit-id
+msgid "settings.oryn.baseBranch"
+msgstr ""
+
+#. js-lingui-explicit-id
+msgid "settings.oryn.connections"
+msgstr ""
+
+#. js-lingui-explicit-id
+msgid "settings.oryn.description"
+msgstr ""
+
+#. js-lingui-explicit-id
+msgid "settings.oryn.destination"
+msgstr ""
+
+#. js-lingui-explicit-id
+msgid "settings.oryn.directory"
+msgstr ""
+
+#. js-lingui-explicit-id
+msgid "settings.oryn.enabled"
+msgstr ""
+
+#. js-lingui-explicit-id
+msgid "settings.oryn.fix"
+msgstr ""
+
+#. js-lingui-explicit-id
+msgid "settings.oryn.fixDescription"
+msgstr ""
+
+#. js-lingui-explicit-id
+msgid "settings.oryn.loading"
+msgstr ""
+
+#. js-lingui-explicit-id
+msgid "settings.oryn.noChats"
+msgstr ""
+
+#. js-lingui-explicit-id
+msgid "settings.oryn.noDestination"
+msgstr ""
+
+#. js-lingui-explicit-id
+msgid "settings.oryn.noRepositories"
+msgstr ""
+
+#. js-lingui-explicit-id
+msgid "settings.oryn.notifications"
+msgstr ""
+
+#. js-lingui-explicit-id
+msgid "settings.oryn.notificationsDescription"
+msgstr ""
+
+#. js-lingui-explicit-id
+msgid "settings.oryn.repository"
+msgstr ""
+
+#. js-lingui-explicit-id
+msgid "settings.oryn.retry"
+msgstr ""
+
+#. js-lingui-explicit-id
+msgid "settings.oryn.review"
+msgstr ""
+
+#. js-lingui-explicit-id
+msgid "settings.oryn.save"
+msgstr ""
+
+#. js-lingui-explicit-id
+msgid "settings.oryn.saved"
+msgstr ""
+
+#. js-lingui-explicit-id
+msgid "settings.oryn.saving"
 msgstr ""
 
 #. js-lingui-explicit-id
@@ -20034,6 +20134,10 @@ msgstr ""
 
 #. ── Tool trigger titles ────────────────────────────────────────────
 msgid "tool.title.notes"
+msgstr ""
+
+#. ── Tool trigger titles ────────────────────────────────────────────
+msgid "tool.title.oryn-discover"
 msgstr ""
 
 #. ── Tool trigger titles ────────────────────────────────────────────
