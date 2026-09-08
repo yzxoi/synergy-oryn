@@ -5,6 +5,8 @@ import { Session } from "../../src/session"
 import { OrynService } from "../../src/oryn/service"
 import { OrynStore } from "../../src/oryn/store"
 import { OrynPublish, setTransport } from "../../src/oryn/publish"
+import { OrynControl } from "../../src/oryn/control"
+import { OrynReady } from "../../src/oryn/ready"
 import { OrynLearning, setMemoryPromoter } from "../../src/oryn/learn"
 import type { PublishExecuteInput, PublishExecuteResult, PublishTransport } from "../../src/oryn/publish"
 import { tmpdir, runCheck } from "./fixture"
@@ -19,9 +21,125 @@ async function proposedReadyLesson(root: string) {
     invalidation: "when the evidence is superseded",
     evidenceRefs: [seeded.baselineRunId],
   })
-  await OrynStore.mutateAttempt(seeded.caseId, seeded.attemptId, (draft) => ({ ...draft, disposition: "ready" }))
+  await acknowledgeReady(seeded)
   return { ...seeded, ...proposed }
 }
+
+async function acknowledgeReady(seeded: Frozen) {
+  await OrynStore.mutateAttempt(seeded.caseId, seeded.attemptId, (draft) => ({ ...draft, disposition: "ready" }))
+  await OrynStore.attachRemoteRefs(seeded.caseId, { pullNumber: 55 })
+  const record = (await OrynStore.getCase(seeded.caseId))!
+  await OrynStore.writeAction({
+    caseId: record.id,
+    operation: "mark_ready",
+    payloadDigest: "fixture",
+    expectedHead: seeded.candidateSha,
+    expectedRevision: record.revision,
+    epoch: record.epoch,
+    readyTarget: {
+      attemptId: seeded.attemptId,
+      repository: "acme/widget",
+      branch: `codex/oryn/${record.id}`,
+      baseBranch: "dev",
+      deliveryCheck: false,
+    },
+    requestKey: "learning-ready",
+    state: "acknowledged",
+    remoteRefs: { pullNumber: 55 },
+  })
+  OrynReady.setVerifier(async () => true)
+}
+
+describe("current delivery learning gate", () => {
+  test.each(["unacknowledged", "paused", "epoch", "attempt", "remote"] as const)(
+    "%s delivery cannot promote a lesson",
+    async (change) => {
+      await withLearnScope({ verifiedMemory: true }, async (root) => {
+        const seeded = await proposedReadyLesson(root)
+        const record = (await OrynStore.getCase(seeded.caseId))!
+        if (change === "unacknowledged") {
+          const action = (await OrynStore.listActions({ caseId: record.id }))[0]
+          await OrynStore.mutateAction(action.id, (draft) => ({ ...draft, state: "ambiguous" }))
+        }
+        if (change === "paused")
+          await OrynStore.mutateCase(record.id, record.revision, (draft) => ({ ...draft, control: "paused" }))
+        if (change === "epoch")
+          await OrynStore.mutateCase(record.id, record.revision, (draft) => ({ ...draft, epoch: draft.epoch + 1 }))
+        if (change === "attempt")
+          await OrynService.rework({
+            callerSessionID: seeded.engineeringSessionId,
+            caseId: record.id,
+            reason: "new delivery required",
+          })
+        if (change === "remote") OrynReady.setVerifier(async () => false)
+        const writes: string[] = []
+        setMemoryPromoter({
+          async promote({ id }, commit) {
+            return commit(() => {
+              writes.push(id)
+              return id
+            })
+          },
+          async remove() {},
+        })
+        await expect(OrynLearning.promoteCase(record.id)).rejects.toMatchObject({ data: { code: "INVALID_STAGE" } })
+        expect(writes).toEqual([])
+        expect((await OrynStore.getLearning(seeded.learningId))?.promotionState).toBe("proposed")
+      })
+    },
+  )
+})
+
+test.each(["preparation", "remote confirmation"] as const)(
+  "pause completes during memory %s and prevents the pending commit",
+  async (phase) => {
+    await withLearnScope({ verifiedMemory: true }, async (root) => {
+      const seeded = await proposedReadyLesson(root)
+      const entered = Promise.withResolvers<void>()
+      const release = Promise.withResolvers<void>()
+      let confirmations = 0
+      OrynReady.setVerifier(async () => {
+        confirmations++
+        if (phase === "remote confirmation" && confirmations === 2) {
+          entered.resolve()
+          await release.promise
+        }
+        return true
+      })
+      const writes: string[] = []
+      setMemoryPromoter({
+        async promote({ id }, commit) {
+          if (phase === "preparation") {
+            entered.resolve()
+            await release.promise
+          }
+          return commit(() => {
+            writes.push(id)
+            return id
+          })
+        },
+        async remove() {},
+      })
+      const promotion = OrynLearning.promoteCase(seeded.caseId)
+      const failure = promotion.then(
+        () => undefined,
+        (error: unknown) => error,
+      )
+      try {
+        await entered.promise
+        const record = (await OrynStore.getCase(seeded.caseId))!
+        await OrynControl.change({ caseId: record.id, expectedRevision: record.revision, action: "pause" })
+        expect((await OrynStore.getCase(record.id))?.control).toBe("paused")
+        expect(writes).toEqual([])
+      } finally {
+        release.resolve()
+        expect(await failure).toMatchObject({ data: { code: "INVALID_STAGE" } })
+      }
+      expect(writes).toEqual([])
+      expect((await OrynStore.getLearning(seeded.learningId))?.promotionState).toBe("proposed")
+    })
+  },
+)
 
 describe("learning side-effect recovery", () => {
   test.each(["archived", "agent", "parent"] as const)(
@@ -62,8 +180,8 @@ describe("learning side-effect recovery", () => {
         await OrynStore.mutateCase(record.id, record.revision, (draft) => ({ ...draft, control }))
         let removals = 0
         setMemoryPromoter({
-          async promote({ id }) {
-            return id
+          async promote({ id }, commit) {
+            return commit(() => id)
           },
           async remove() {
             removals++
@@ -113,8 +231,8 @@ describe("learning side-effect recovery", () => {
         }
         let removals = 0
         setMemoryPromoter({
-          async promote({ id }) {
-            return id
+          async promote({ id }, commit) {
+            return commit(() => id)
           },
           async remove() {
             removals++
@@ -150,8 +268,8 @@ describe("learning side-effect recovery", () => {
       const workerSessionId = worker.sessionId
       if (!workerSessionId) throw new Error("fixture worker has no Session")
       setMemoryPromoter({
-        async promote({ id }) {
-          return id
+        async promote({ id }, commit) {
+          return commit(() => id)
         },
         async remove() {},
       })
@@ -206,8 +324,8 @@ describe("learning side-effect recovery", () => {
       }))
       const removed: string[] = []
       setMemoryPromoter({
-        async promote({ id }) {
-          return id
+        async promote({ id }, commit) {
+          return commit(() => id)
         },
         async remove(id) {
           removed.push(id)
@@ -263,14 +381,16 @@ describe("learning side-effect recovery", () => {
       const memories = new Map<string, string>()
       let interrupted = true
       setMemoryPromoter({
-        async promote(input) {
-          const id = input.id
-          memories.set(id, input.content)
-          if (interrupted) {
-            interrupted = false
-            throw new Error("lost memory acknowledgment")
-          }
-          return id
+        async promote(input, commit) {
+          return commit(() => {
+            const id = input.id
+            memories.set(id, input.content)
+            if (interrupted) {
+              interrupted = false
+              throw new Error("lost memory acknowledgment")
+            }
+            return id
+          })
         },
         async remove(id) {
           memories.delete(id)
@@ -289,10 +409,11 @@ describe("learning side-effect recovery", () => {
       const seeded = await proposedReadyLesson(root)
       const memories = new Map<string, string>()
       setMemoryPromoter({
-        async promote(input) {
-          const id = input.id
-          memories.set(id, input.content)
-          throw new Error("lost memory acknowledgment")
+        async promote(input, commit) {
+          return commit(() => {
+            memories.set(input.id, input.content)
+            throw new Error("lost memory acknowledgment")
+          })
         },
         async remove(id) {
           memories.delete(id)
@@ -318,13 +439,14 @@ describe("learning side-effect recovery", () => {
       const memories = new Map<string, string>()
       let writes = 0
       setMemoryPromoter({
-        async promote(input) {
+        async promote(input, commit) {
           writes++
           entered.resolve()
           await release.promise
-          const id = input.id
-          memories.set(id, input.content)
-          return id
+          return commit(() => {
+            memories.set(input.id, input.content)
+            return input.id
+          })
         },
         async remove(id) {
           memories.delete(id)
@@ -382,6 +504,7 @@ async function withLearnScope<T>(learning: { verifiedMemory?: boolean }, fn: (ro
     return await ScopeContext.provide({ scope, fn: () => fn(tmp.path) })
   } finally {
     setMemoryPromoter(previous)
+    OrynReady.setVerifier(async () => false)
   }
 }
 
@@ -564,9 +687,11 @@ describe("OrynLearning", () => {
       const seeded = await seedFrozen(root)
       const written: string[] = []
       setMemoryPromoter({
-        async promote({ id, title }) {
-          written.push(title)
-          return id
+        async promote({ id, title }, commit) {
+          return commit(() => {
+            written.push(title)
+            return id
+          })
         },
         async remove() {},
       })
@@ -611,9 +736,11 @@ describe("OrynLearning", () => {
       const written: Array<{ id: string; title: string; content: string }> = []
       const removed: string[] = []
       setMemoryPromoter({
-        async promote({ id, title, content }) {
-          written.push({ id, title, content })
-          return id
+        async promote({ id, title, content }, commit) {
+          return commit(() => {
+            written.push({ id, title, content })
+            return id
+          })
         },
         async remove(memoryId) {
           removed.push(memoryId)
@@ -627,10 +754,7 @@ describe("OrynLearning", () => {
         invalidation: "when receipts gain per-assert granularity",
         evidenceRefs: [seeded.baselineRunId],
       })
-      await OrynStore.mutateAttempt(seeded.caseId, seeded.attemptId, (d) => ({
-        ...d,
-        disposition: "ready" as const,
-      }))
+      await acknowledgeReady(seeded)
       const promoted = await OrynLearning.promoteCase(seeded.caseId)
       expect(promoted.promoted).toBe(1)
       expect(written).toHaveLength(1)

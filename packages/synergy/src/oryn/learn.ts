@@ -3,6 +3,7 @@ import { externalIdentityHash } from "../util/identity"
 import { OrynStore, storeError } from "./store"
 import { OrynConfig } from "./config"
 import { OrynBudget } from "./budget"
+import { OrynReady } from "./ready"
 import { Session } from "../session"
 import type { LearningCandidate } from "./schema"
 
@@ -14,7 +15,10 @@ import type { LearningCandidate } from "./schema"
  * idempotency, so `oryn.learning.autoReward` stays unimplemented by design.
  */
 export type MemoryPromoter = {
-  promote(input: { id: string; title: string; content: string }): Promise<string>
+  promote(
+    input: { id: string; title: string; content: string },
+    commit: (write: () => string) => Promise<string>,
+  ): Promise<string>
   remove(memoryId: string, expected: { title: string; content: string }): Promise<void>
 }
 
@@ -73,10 +77,8 @@ async function requireOwner(sessionID: string, caseId: string) {
 
 export namespace OrynLearning {
   /**
-   * Worker/engineering proposal of a reusable lesson. Evidence refs are
-   * host-validated against real case records (runs, reviews, reports,
-   * attempts) — a lesson without case evidence is rejected, and raw chat
-   * text never enters the candidate. Idempotent per identical lesson.
+   * Proposals retain model-authored lesson text and references to Case
+   * records. Record membership alone does not establish semantic truth.
    */
   export async function propose(input: {
     callerSessionID: string
@@ -115,21 +117,14 @@ export namespace OrynLearning {
     return { learningId: candidate.id, created: true }
   }
 
-  /**
-   * Host promotion after a case reaches a delivered attempt. Gated by
-   * `oryn.learning.verifiedMemory` (default false), so a deployment must
-   * explicitly opt in before anything reaches shared memory. Candidates
-   * carry their own invalidation condition and case-scoped evidence, and a
-   * merged-but-unreleased fix never reads as generally available because
-   * the memory text states the outcome version it was verified at.
-   */
+  /** Promotion requires current local delivery and a fresh remote observation. */
   export async function promoteCase(caseId: string): Promise<{ promoted: number; skipped: number }> {
     const oryn = await OrynConfig.info()
     if (!oryn?.enabled || oryn.learning?.verifiedMemory !== true) return { promoted: 0, skipped: 0 }
-    const ready = (await OrynStore.listAttempts(caseId)).find((a) => a.disposition === "ready")
-    if (!ready) {
-      throw storeError("INVALID_STAGE", "promotion requires a delivered (ready) attempt", { caseId })
-    }
+    const ready = await OrynReady.projection(caseId)
+    if (!ready || !(await OrynReady.confirm(ready)))
+      throw storeError("INVALID_STAGE", "promotion requires a current confirmed delivery", { caseId })
+    const proofDigest = externalIdentityHash(JSON.stringify(ready))
     const writer = promoter
     if (!writer) return { promoted: 0, skipped: 0 }
     let promoted = 0
@@ -142,14 +137,29 @@ export namespace OrynLearning {
         continue
       }
       const input = memoryInput(candidate)
-      const memoryId = await writer.promote(input)
-      if (memoryId !== input.id)
-        throw storeError("EVIDENCE_INSUFFICIENT", "memory writer returned a different learning identity")
-      await OrynStore.mutateLearning(candidate.id, (d) => ({
-        ...d,
-        promotionState: "promoted" as const,
-        memoryRef: memoryId,
-      }))
+      let committed = false
+      const memoryId = await writer.promote(input, async (write) => {
+        if (committed) throw storeError("EVIDENCE_INSUFFICIENT", "memory writer attempted repeated commit")
+        const proof = await OrynReady.projection(caseId)
+        if (!proof || externalIdentityHash(JSON.stringify(proof)) !== proofDigest || !(await OrynReady.confirm(proof)))
+          throw storeError("INVALID_STAGE", "delivery changed before memory promotion", { caseId })
+        using _case = await Lock.write(`oryn-case:${caseId}`)
+        const current = await OrynReady.projection(caseId)
+        if (!current || externalIdentityHash(JSON.stringify(current)) !== proofDigest)
+          throw storeError("INVALID_STAGE", "delivery changed before memory commit", { caseId })
+        const id = write()
+        if (id !== input.id)
+          throw storeError("EVIDENCE_INSUFFICIENT", "memory writer returned a different learning identity")
+        await OrynStore.mutateLearning(candidate.id, (d) => ({
+          ...d,
+          promotionState: "promoted" as const,
+          memoryRef: id,
+        }))
+        committed = true
+        return id
+      })
+      if (!committed || memoryId !== input.id)
+        throw storeError("EVIDENCE_INSUFFICIENT", "memory writer did not complete the authorized commit")
       promoted++
     }
     return { promoted, skipped }

@@ -19,14 +19,18 @@ function existing(id: string, expected: Content) {
 }
 
 export const OrynMemory = {
-  async promote(input: Content & { id: string }) {
+  async promote(input: Content & { id: string }, commit: (write: () => string) => Promise<string>) {
     using _lock = await Lock.write(`oryn-library-memory:${input.id}`)
-    if (existing(input.id, input)) return input.id
-    const embedding = await Embedding.generate({ id: input.id, text: `${input.title}\n${input.content}` })
-    if (!existing(input.id, input)) {
-      LibraryDB.Memory.insert({ ...input, category: "knowledge", recallMode: "contextual" }, embedding)
-    }
-    return input.id
+    const embedding = existing(input.id, input)
+      ? undefined
+      : await Embedding.generate({ id: input.id, text: `${input.title}\n${input.content}` })
+    return await commit(() => {
+      if (!existing(input.id, input)) {
+        if (!embedding) throw new Error("Oryn memory disappeared before commit; retry is required")
+        LibraryDB.Memory.insert({ ...input, category: "knowledge", recallMode: "contextual" }, embedding)
+      }
+      return input.id
+    })
   },
   async remove(id: string, expected: Content) {
     using _lock = await Lock.write(`oryn-library-memory:${id}`)
