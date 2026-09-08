@@ -310,14 +310,24 @@ async function collectLcovFiles(packageRoot: string, relPath: string): Promise<s
  * process-level (crash/kill), so fall back to the output tail.
  */
 export function extractFailureSignals(detail: string, maxFails = 30): string[] {
-  const lines = detail.split("\n")
+  const lines = detail.split("\n").map((line) => Bun.stripANSI(line))
   const signals: string[] = []
   let fails = 0
   let externalizedBlock = false
   for (let index = 0; index < lines.length; index++) {
     const trimmed = lines[index]!.trim()
     if (trimmed.startsWith("(fail) ")) {
-      if (fails < maxFails) signals.push(lines[index]!)
+      if (fails < maxFails) {
+        signals.push(lines[index]!)
+        let start = index
+        while (start > 0 && index - start < 40) {
+          const previous = lines[start - 1]!.trim()
+          if (previous.startsWith("(pass) ") || previous.startsWith("(fail) ") || previous.startsWith("##[")) break
+          start--
+        }
+        const context = lines.slice(start, index).join("\n").trim()
+        if (context) signals.push(context.slice(-6000))
+      }
       fails++
     } else if (trimmed.startsWith("error: ")) {
       // Keep the error line plus its immediate context (assertion diff,

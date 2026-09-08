@@ -167,8 +167,11 @@ Set `oryn.limits.processResources` in the installation runtime domain to bound e
 During host provisioning, an administrator starts the dedicated account's user manager and enables lingering so it survives logout. Use the dedicated account's numeric UID in a `user@<uid>.service` override with `[Service]` and `Delegate=cpu memory pids`, reload systemd, and start that manager before starting Oryn. Apply this to the dedicated account, not every user's manager. A manager restart stops that account's units, so complete provisioning before production work. CPU delegation needs explicit verification on older distributions. For an ephemeral CI host, the equivalent setup is:
 
 ```bash
-sudo systemctl start "user@$(id -u).service"
-sudo systemctl set-property --runtime "user@$(id -u).service" "Delegate=cpu memory pids"
+oryn_unit="user@$(id -u).service"
+sudo install -d "/run/systemd/system/${oryn_unit}.d"
+printf '[Service]\nDelegate=cpu memory pids\n' | sudo tee "/run/systemd/system/${oryn_unit}.d/oryn.conf" > /dev/null
+sudo systemctl daemon-reload
+sudo systemctl restart "$oryn_unit"
 ```
 
 A starting policy for the 20-core/80-GB pilot is shown below. The numbers are proposed limits, not measured capacity. Keep heavy check admission at two, account for simultaneous worker Bash commands, and configure a dedicated-user aggregate memory/CPU/task ceiling with systemd so the sum of independent scopes cannot consume the entire VPS. Scope creation uses the user manager, so a limit applied only to the Oryn server service does not cover its sibling scopes; place aggregate limits on the dedicated user's parent slice. For example, reserve host capacity by starting below 64 GiB and 16 CPUs for that user's total workload, then tune from observed peaks.
