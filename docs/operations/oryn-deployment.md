@@ -2,11 +2,30 @@
 
 This runbook covers deploying the Oryn feedback-to-PR runtime on a single Linux host: environment preflight, channel test-app setup, minimal GitHub App scopes, quotas, silent-notification behavior, delivery-check gating, and backup/recovery. All identifiers, paths, and IDs in this document are placeholders — substitute per-deployment values and never commit real secrets, chat IDs, or account IDs.
 
-Oryn is dormant unless `oryn.enabled` is `true`. Every preflight step below assumes a stock Synergy deployment already runs successfully; if the baseline runtime is unhealthy, fix that first — Oryn does not debug the host it runs on.
+Oryn is dormant unless `oryn.enabled` is `true`. Deploy the reviewed synergy-oryn revision; an upstream Synergy installation alone does not contain these Oryn changes. Start with one test chat and one test repository. The deterministic pipeline and native Linux tests support pilot acceptance; live App authentication, the target repository's build environment and production-model decisions require the canary below.
+
+## Pilot Acceptance Order
+
+1. On the dedicated Linux account, prepare the reviewed fork checkout using Bun 1.3.14 and `bun dev prepare` from the repository root. Rust, Bubblewrap, usable namespaces and the process-resource setup below are required for candidate execution. A successful preparation command alone does not prove sandbox readiness.
+2. Use a dedicated `SYNERGY_HOME` consistently for preparation and runtime startup. For example, `SYNERGY_HOME=/srv/oryn/runtime` places configuration under `/srv/oryn/runtime/.synergy/config/synergy.d/`; it is a home prefix, not the final hidden directory. Keep the runtime checkout separate from the target repository checkout and all worker directories.
+3. Configure the model/provider domains, embedding in `00-general.jsonc`, both Channel accounts in `90-channels.jsonc`, and the Oryn routes, trusted repository checkout, execution profiles and budgets in `120-runtime.jsonc`. Use the sections below for the actual values and dependency preparation. Keep Oryn disabled until these inputs are ready.
+4. Run the deterministic pipeline acceptance command below on the reviewed checkout. On Linux, also run the native sandbox/resource suites described below. These use isolated test homes and local fixtures; they do not validate the credentials configured for the pilot.
+5. Enable the single-chat Oryn route. For source-based acceptance, start from the fork root with `SYNERGY_HOME=/srv/oryn/runtime bun dev server --hostname 127.0.0.1 --port 4098`. Keep this foreground process under the dedicated account; a service supervisor must preserve the same home, checkout, Bun path and credential environment. Do not run two servers against the same home. This is the source acceptance command, not an upstream package installation.
+6. In the test chat, ask one ordinary usage question, submit one known reproducible defect and submit one report lacking reproduction details. Require a direct answer for the question, an Issue and independently checked PR for the defect, and a specific request for human input for the incomplete report. Check that all replies remain on their originating topic and no worker/tool progress is posted.
+7. On the test repository, exercise a rejected candidate followed by repair on the same PR. Confirm the PR head, test evidence and independent review refer to the same candidate SHA; inspect the Mermaid summary and optional status labels. Humans retain merge responsibility. Configure the optional delivery check in the order specified below.
+8. Before expanding intake, restart only the dedicated pilot runtime with work in progress and verify the original Case, Issue and PR are reused. Confirm GitHub polling resumes. Inspect ambiguous Feishu sends manually: the outbox deliberately avoids automatic resends, so a lost send acknowledgment can require manual notification recovery.
+
+From `packages/synergy`, the repeatable data-flow acceptance command is:
+
+```bash
+bun run test test/oryn/feishu-ingress.test.ts test/oryn/model-pipeline.test.ts test/oryn/engineering-pipeline.test.ts test/oryn/success-pipeline.test.ts test/oryn/process-restart.test.ts test/oryn/pr-restart.test.ts test/oryn/outbox.test.ts
+```
+
+These experiments cover topic ownership, duplicate intake, real Boss/worker handoff, baseline failure and candidate success, independent review, repair, remote-write uncertainty, runtime death and quiet replies. Feishu/GitHub transports and model choices are simulated; a green result is evidence of the implemented data flow, not live end-to-end acceptance.
 
 Oryn authorization must be configured in the installation-owned `120-runtime.jsonc` domain. Project-local configuration and scoped overrides do not authorize Oryn repositories, execution profiles, publication or budgets. Do not copy a candidate repository's configuration into the installation. Configure model roles through installation model settings; Oryn agent IDs, prompts and role definitions are reserved. See [installation policy](../decisions/implemented/architecture/2026-09-08-oryn-installation-policy.md) for the enforced scope and remaining execution checks.
 
-Worker source separation is covered by [versioned-workspace tests](../decisions/implemented/architecture/2026-09-08-oryn-versioned-worker-workspaces.md). Every new worker needs enough disk for a worktree; repro/code pin baseline and verify/review pin candidate. Historical main-checkout workers must be stopped and replaced, not rebound while active. Git filters, submodules and dirty overlays require a contained execution path that is not delivered by these checks. Aggregate resource accounting, target-specific dependency acceptance and full pipeline validation are still required before this runbook can be treated as deployment acceptance.
+Worker source separation is covered by [versioned-workspace tests](../decisions/implemented/architecture/2026-09-08-oryn-versioned-worker-workspaces.md). Every new worker needs enough disk for a worktree; repro/code pin baseline and verify/review pin candidate. Historical main-checkout workers must be stopped and replaced, not rebound while active. Git filters, submodules and dirty overlays require a contained execution path that is not delivered by these checks. Before pilot intake, configure the aggregate user-slice limits below and validate the target repository’s dependencies; the deterministic pipeline does not establish its build compatibility.
 
 The shared check runner bounds output and manages ordinary Unix descendants, as described in [check process lifecycle](../decisions/implemented/bug-fix/2026-09-08-owned-check-process-lifecycle.md). Checks use an explicit sandbox policy with read-only source, private disposable HOME/temp paths and restricted networking; see [check containment](../decisions/implemented/bug-fix/2026-09-08-oryn-check-containment.md). Check-heavy and profile limits now use [ToolScheduler resource admission](../decisions/implemented/architecture/2026-09-08-oryn-check-resource-admission.md); these counters do not include coder Bash/background processes. Model turns separately use the foreground reservation described below. Worker Bash uses its own strict Host policy, described below; these process policies do not establish complete deployment acceptance.
 
@@ -16,7 +35,7 @@ Automatic Feishu Case startup requires `oryn.repositories[alias].directory` to n
 
 Case submission returns separate acceptance and engineering startup results. Missing or mismatched setup leaves a durable blocked reason visible through `oryn_case` get; it does not use the QA directory. Correct the setup and resubmit the same request or restart the dedicated test runtime to retry. Startup preserves its reserved Session/Attempt and baseline across retries; it does not switch or reset the checkout. The engineering root reads that configured checkout, so keep it under operator control; this path does not yet provide frozen candidate execution.
 
-Run `bun test test/oryn/engineering-start.test.ts test/session/creation-recovery.test.ts` from `packages/synergy` to verify creation interruption, replay, origin validation and cancellation against temporary repositories. It holds Session leases to avoid invoking a live model. The full execution and publishing pipeline remains under integration review; this runbook is not yet evidence of a production-ready deployment.
+Run `bun test test/oryn/engineering-start.test.ts test/session/creation-recovery.test.ts` from `packages/synergy` to verify creation interruption, replay, origin validation and cancellation against temporary repositories. It holds Session leases to avoid invoking a live model. Use the pilot acceptance sequence above for the complete deterministic pipeline and the subsequent live canary.
 
 Code workers prepare a commit with `oryn_result` / `input.kind: commit_candidate`, supplying the assignment identity, stable request key, conventional title and explicit relative file paths. The Host returns the full candidate SHA and local branch for the subsequent candidate report. Use the same request after interruption; changed requests or changed source require inspection. The Host does not execute repository commit hooks, and repositories with Git filters or submodules need separate support. Independent checks and review remain required. Do not grant the worker shell write access to the common Git directory to make `git commit` succeed.
 
@@ -46,9 +65,9 @@ Before starting candidate work, verify the actual helper through the native Oryn
 
 ## Network and Ports
 
-- Run the Synergy server on its own port behind the deployment's reverse proxy; Oryn adds no new listening port.
+- Bind the Synergy server to loopback on its own port; Oryn adds no new listening port. A public reverse proxy is unnecessary for this deployment.
 - Check subprocesses have no host network access. Feishu, GitHub and model connections belong to the runtime; installing dependencies and network-dependent tests need separate, authorized execution support.
-- Feishu and GitHub callbacks follow the existing Channel provider requirements; Oryn adds no additional inbound webhook endpoint (GitHub observation is poll-based).
+- Feishu uses the provider's outbound WebSocket connection and GitHub uses outbound HTTPS polling. Configure Feishu event reception in long-connection mode. No public inbound IP or webhook endpoint is needed for this path; the host must reach Feishu, GitHub and the selected model/embedding services.
 
 ## Channel Test Apps
 
@@ -89,6 +108,30 @@ Minimal permissions for the Oryn publish transport:
 Do not grant Administration or protection-bypass privileges. GitHub does not provide an independent deny-merge permission alongside these write permissions; human review requirements and the Host operation allowlist must enforce the merge policy. Oryn exposes no merge or release operation.
 
 Install the App on the target repositories (placeholder `owner/repo`), set the app credentials in the runtime environment (`SYNERGY_GITHUB_APP_ID`, `SYNERGY_GITHUB_APP_PRIVATE_KEY`), and confirm `resolveInstallation` succeeds before enabling `oryn.repositories`.
+
+Also configure an enabled GitHub Channel account with a non-empty repository list in `90-channels.jsonc`. App credentials and Oryn repository mappings alone do not start the background poll loop. Oryn's unresolved-publication reconciliation and label synchronization are attached to that loop after a successful repository poll. Retain polling while disabling the ordinary GitHub Channel's automatic conversation/review agents:
+
+```jsonc
+{
+  "channel": {
+    "github": {
+      "type": "github",
+      "accounts": {
+        "oryn-poll": {
+          "enabled": true,
+          "repositories": ["owner/repo"],
+          "workspaceDir": "/srv/oryn/github-channel",
+          "pollingIntervalMs": 300000,
+          "autoReview": false,
+          "autoRespond": false,
+        },
+      },
+    },
+  },
+}
+```
+
+Merge this with the Feishu account in the same Channel domain. The two flags suppress ordinary GitHub event-triggered sessions; they do not disable Oryn's assignment-based reviewers or its polling reconciliation. This pilot routes new work through Feishu; automatic intake of arbitrary GitHub comments is not enabled by this configuration. A failed GitHub poll delays reconciliation, so inspect account health when an uncertain publication or status label remains unchanged beyond its polling interval.
 
 Oryn pushes through the Host-installed Git executable to the configured repository's explicit `https://github.com/owner/repo.git` URL. The publishing process does not inherit personal Git config, proxy variables, SSH settings, custom CA overrides or candidate hooks. Provision direct outbound HTTPS and a working system trust store for Git; changing `origin` or a worker environment does not configure publication. GitHub Enterprise and proxy-only publication require a separate reviewed transport configuration and are not supported by this path. Candidate objects must remain available until publication settles. Temporary bare repositories contain no persisted installation token; normal completion/cancellation removes them. After a Host crash, remove leftover `oryn-push-*` cache directories only while that runtime is stopped.
 
@@ -252,7 +295,7 @@ Never register `oryn/delivery` as a required check before the deployment has obs
 
 Readiness is tied to a Case-owned PR, frozen candidate SHA, branch/base and the configured App identity. The publisher records the PR target before dispatch. A lost response is reconciled from the remote non-draft PR and, when enabled, its App-owned delivery check; unresolved or changed candidates pause instead of replaying writes. Successful settlement restores the attempt outcome and deduplicated per-source notifications after interruption. CI observation includes pending checks and paginated check results; the App's own delivery check is excluded from independent CI.
 
-GitHub's ready mutation has no expected-head parameter. The transport checks the head before and in the mutation result, but it cannot make the remote transition atomic with concurrent pushes. Required checks and human review must remain tied to the current head. Publication receipts pin the Attempt and repository/base/check settings; changes leave unresolved actions for reconciliation. Full review-policy changes during unresolved publication still need operator reconciliation; this is not a claim that the remaining pipeline acceptance work is complete.
+GitHub's ready mutation has no expected-head parameter. The transport checks the head before and in the mutation result, but it cannot make the remote transition atomic with concurrent pushes. Required checks and human review must remain tied to the current head. Publication receipts pin the Attempt and repository/base/check settings; changes leave unresolved actions for reconciliation. Review-policy changes during unresolved publication require operator reconciliation before resuming automation.
 
 ## Learning write recovery
 
