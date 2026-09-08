@@ -206,6 +206,31 @@ export const Attempt = z
   .strict()
 export type Attempt = z.infer<typeof Attempt>
 
+export const AttemptTransition = z
+  .object({
+    schemaVersion: z.literal(2),
+    kind: z.enum(["rework", "resume"]),
+    expectedControl: CaseControl,
+    input: z
+      .object({
+        caseId: z.string(),
+        fromAttemptId: z.string(),
+        invalidationReason: z.string(),
+        nextBaselineSha: z.string(),
+        countRepair: z.boolean(),
+        countNoProgress: z.boolean(),
+      })
+      .strict(),
+    epoch: z.number().int().nonnegative(),
+    expectedRevision: z.number().int().nonnegative(),
+    repairRounds: z.number().int().nonnegative(),
+    noProgressRounds: z.number().int().nonnegative(),
+    next: Attempt,
+  })
+  .strict()
+
+export type AttemptTransition = z.infer<typeof AttemptTransition>
+
 export const Assignment = z
   .object({
     schemaVersion: z.literal(1),

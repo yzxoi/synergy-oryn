@@ -9,6 +9,7 @@ import { BossService } from "../boss/boss"
 import { OrynStore, sourceKey, storeError } from "./store"
 import { OrynCandidate } from "./candidate"
 import { OrynControl } from "./control"
+import { OrynOwnership } from "./ownership"
 import { OrynResume } from "./resume"
 import { OrynConfig } from "./config"
 import { OrynEngineering } from "./engineering"
@@ -510,6 +511,7 @@ export namespace OrynService {
       try {
         const started = await OrynEngineering.start(record.id)
         if (started.state !== "started" || !started.sessionID) continue
+        await OrynOwnership.prepare(record.id)
         const recovery = await OrynResume.request(started.sessionID)
         if (recovery === "exhausted")
           await requestHandoff({

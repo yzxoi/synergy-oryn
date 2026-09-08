@@ -5,6 +5,7 @@ import { Storage } from "../../src/storage/storage"
 import { ConfigDomain } from "../../src/config/domain"
 import { Config } from "../../src/config/config"
 import { BossService } from "../../src/boss/boss"
+import { OrynOwnership } from "../../src/oryn/ownership"
 import { OrynControl } from "../../src/oryn/control"
 import { OrynEngineering } from "../../src/oryn/engineering"
 import { scriptedModel } from "./fixtures/model"
@@ -524,3 +525,187 @@ test("engineering recovery continues an unanswered report after an earlier termi
     expect((await SessionInbox.list(input.rootId)).map((item) => item.mode)).toEqual(["steer"])
   })
 })
+
+for (const action of ["takeover", "cancel", "handoff"] as const)
+  test(`resume after ${action} creates a fresh Attempt and engineering task while preserving old workers`, async () => {
+    await fixture(async ({ rootId, caseId, attemptId, dispatch }) => {
+      const previous = await dispatch()
+      const oldTask = await SessionInbox.deliverUnique({
+        sessionID: rootId,
+        deliveryKey: "obsolete-engineering",
+        mode: "task",
+        message: { role: "user", parts: [{ type: "text", text: "Continue the old attempt" }] },
+      })
+      const record = (await OrynStore.getCase(caseId))!
+      const stopped =
+        action === "handoff"
+          ? await OrynService.requestHandoff({
+              callerSessionID: rootId,
+              caseId,
+              reason: "Reporter platform requires human inspection",
+            })
+          : await OrynControl.change({ caseId, expectedRevision: record.revision, action })
+      const resumed = await OrynControl.change({ caseId, expectedRevision: stopped.revision, action: "resume" })
+      expect(resumed.activeAttemptId).not.toBe(attemptId)
+      expect(resumed.engineeringSessionId).toBe(rootId)
+      expect((await OrynStore.getAttempt(caseId, attemptId))?.disposition).toBe("superseded")
+      expect(await OrynControl.canRun(await Session.get(previous.workerSessionId))).toBe(false)
+      const inbox = await SessionInbox.list(rootId)
+      expect(inbox.some((item) => item.id === oldTask.itemID)).toBe(false)
+      expect(inbox.some((item) => item.deliveryKey === `oryn-ownership:${caseId}:${resumed.epoch}`)).toBe(true)
+      const current = await dispatch()
+      expect(current.assignmentId).not.toBe(previous.assignmentId)
+      expect(current.workerSessionId).not.toBe(previous.workerSessionId)
+      expect((await OrynStore.getAssignment(caseId, current.assignmentId))?.epoch).toBe(resumed.epoch)
+      expect(await OrynStore.listAttempts(caseId)).toHaveLength(2)
+      await OrynService.recoverEngineeringTurns({ caseId })
+      expect(await OrynStore.listAttempts(caseId)).toHaveLength(2)
+    })
+  })
+
+test("ownership task admission stays closed until interrupted Inbox preparation recovers", async () => {
+  await fixture(async ({ rootId, caseId, dispatch }) => {
+    await dispatch()
+    const record = (await OrynStore.getCase(caseId))!
+    const stopped = await OrynControl.change({ caseId, expectedRevision: record.revision, action: "takeover" })
+    const prepare = spyOn(OrynOwnership, "prepare").mockRejectedValue(new Error("fixture interrupted before Inbox"))
+    try {
+      await OrynControl.change({ caseId, expectedRevision: stopped.revision, action: "resume" })
+    } finally {
+      prepare.mockRestore()
+    }
+    expect(await OrynControl.canRun(await Session.get(rootId))).toBe(false)
+    expect((await OrynService.recoverEngineeringTurns({ caseId })).failed).toBe(0)
+    const item = (await SessionInbox.list(rootId)).find((item) => item.deliveryKey?.startsWith("oryn-ownership:"))!
+    expect(item).toBeDefined()
+    expect(await OrynControl.canRun(await Session.get(rootId))).toBe(true)
+    await SessionInbox.materializeItem(item)
+    await SessionInbox.commitReady(rootId, [item.id])
+    await OrynService.recoverEngineeringTurns({ caseId })
+    expect(
+      (await Session.messages({ sessionID: rootId }))
+        .filter((item) => item.info.role === "user" && item.info.isRoot)
+        .map((item) => item.info.id),
+    ).toEqual([item.messageID])
+    expect(await OrynStore.listAttempts(caseId)).toHaveLength(2)
+  })
+})
+
+test("a persisted human resume recovers after losing the Case pointer write", async () => {
+  await fixture(async ({ rootId, caseId, dispatch }) => {
+    await dispatch()
+    const record = (await OrynStore.getCase(caseId))!
+    const stopped = await OrynControl.change({ caseId, expectedRevision: record.revision, action: "cancel" })
+    const write = Storage.write
+    const fault = spyOn(Storage, "write").mockImplementation(async (key, value) => {
+      if (key.join("/") === OrynPath.caseInfo(caseId).join("/")) throw new Error("fixture lost Case update")
+      return write(key, value)
+    })
+    try {
+      await expect(
+        OrynControl.change({ caseId, expectedRevision: stopped.revision, action: "resume" }),
+      ).rejects.toThrow("fixture lost Case update")
+    } finally {
+      fault.mockRestore()
+    }
+    const intent = (await OrynStore.ownershipResume(caseId, stopped.epoch))!
+    expect((await OrynStore.getCase(caseId))?.control).toBe("cancelled")
+    expect((await OrynStore.recoverAttemptTransitions()).failed).toBe(0)
+    expect((await OrynStore.getCase(caseId))?.activeAttemptId).toBe(intent.next.id)
+    expect(await OrynControl.canRun(await Session.get(rootId))).toBe(false)
+    await OrynService.recoverEngineeringTurns({ caseId })
+    expect(await OrynControl.canRun(await Session.get(rootId))).toBe(true)
+    expect(await OrynStore.listAttempts(caseId)).toHaveLength(2)
+  })
+})
+
+test("a resumed ownership task dispatches a new worker and consumes its report through the model tools", async () => {
+  let caseId = ""
+  await using model = scriptedModel((request) => {
+    const has = (name: string) => request.tools?.some((item) => item.function.name === name)
+    const text = request.messages
+      .map((message) => (typeof message.content === "string" ? message.content : JSON.stringify(message.content)))
+      .join("\n")
+    const results = request.messages
+      .filter((message) => message.role === "tool")
+      .map((message) => JSON.stringify(message.content))
+      .join("\n")
+    if (has("oryn_dispatch")) {
+      expect(text).toContain("Human control resumed Oryn case")
+      if (results.includes("control: human_owned")) return { text: "Human handoff recorded" }
+      if (results.includes("needs_human"))
+        return {
+          tool: "oryn_case",
+          input: {
+            input: {
+              action: "request_handoff",
+              caseId,
+              reason: "Resumed investigation still requires the reporter platform",
+            },
+          },
+        }
+      const reportId = /Oryn repro result ([^\s]+) for assignment/.exec(text)?.[1]
+      if (reportId) return { tool: "oryn_result", input: { input: { kind: "get", caseId, reportId } } }
+      if (!results.includes("assignmentId:"))
+        return {
+          tool: "oryn_dispatch",
+          input: { input: { action: "dispatch", caseId, stage: "repro", requestKey: "repro" } },
+        }
+      return { text: "Waiting for the current worker result" }
+    }
+    if (has("oryn_check")) {
+      if (results.includes("reportId:")) return { text: "Current result submitted" }
+      const attemptId = /Attempt: ([^\s]+)/.exec(text)?.[1]
+      const assignmentId = /Oryn assignment ([^\s]+)/.exec(text)?.[1]
+      if (!attemptId || !assignmentId) throw new Error("Missing current worker identity")
+      return {
+        tool: "oryn_result",
+        input: {
+          input: {
+            kind: "repro",
+            caseId,
+            attemptId,
+            assignmentId,
+            requestKey: "current-result",
+            outcome: "needs_human",
+            summary: "Reporter platform remains unavailable",
+            limitations: ["Requires the reporter platform"],
+          },
+        },
+      }
+    }
+    return { text: "Fixture summary" }
+  }, 48)
+  await fixture(
+    async (input) => {
+      caseId = input.caseId
+      const previous = await input.dispatch()
+      const record = (await OrynStore.getCase(caseId))!
+      const stopped = await OrynControl.change({ caseId, expectedRevision: record.revision, action: "takeover" })
+      const resumed = await OrynControl.change({ caseId, expectedRevision: stopped.revision, action: "resume" })
+      await SessionManager.wake(input.rootId)
+      const current = (await OrynStore.listAssignments(caseId)).find((item) => item.epoch === resumed.epoch)!
+      expect(current).toBeDefined()
+      expect(current.id).not.toBe(previous.assignmentId)
+      await SessionManager.wake(current.sessionId!)
+      await SessionManager.wake(input.rootId)
+      expect(model.errors).toEqual([])
+      expect((await OrynStore.getAssignment(caseId, current.id))?.acceptedReportId).toBeDefined()
+      expect((await OrynStore.getAssignment(caseId, previous.assignmentId))?.acceptedReportId).toBeUndefined()
+      expect((await OrynStore.getCase(caseId))?.handoff?.reason).toBe(
+        "Resumed investigation still requires the reporter platform",
+      )
+      expect(model.steps.some((step) => "tool" in step && step.tool === "oryn_dispatch")).toBe(true)
+    },
+    Config.Info.parse({
+      model: "oryn-fixture/qa",
+      mid_model: "oryn-fixture/qa",
+      thinking_model: "oryn-fixture/qa",
+      mini_model: "oryn-fixture/qa",
+      nano_model: "oryn-fixture/qa",
+      enabled_providers: ["oryn-fixture"],
+      provider: { "oryn-fixture": model.config },
+      embedding: { apiKey: "fixture-only", model: "fixture-embedding", baseURL: model.config.api },
+    }),
+  )
+}, 60000)

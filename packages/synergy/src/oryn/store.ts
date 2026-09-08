@@ -5,7 +5,15 @@ import { Storage } from "../storage/storage"
 import { NamedError } from "@ericsanchezok/synergy-util/error"
 import z from "zod"
 import { OrynPath } from "./path"
-import { Attempt, ChannelSource, OutboxEntry, RunReceipt, ReviewReport, WorkerReport } from "./schema"
+import {
+  Attempt,
+  AttemptTransition,
+  ChannelSource,
+  OutboxEntry,
+  RunReceipt,
+  ReviewReport,
+  WorkerReport,
+} from "./schema"
 import type { CheckPlan } from "./schema"
 import type {
   ActionReceipt,
@@ -83,27 +91,6 @@ export function sourceKey(identity: SourceIdentity): string {
 function now(): number {
   return Date.now()
 }
-
-const AttemptTransition = z
-  .object({
-    schemaVersion: z.literal(1),
-    input: z
-      .object({
-        caseId: z.string(),
-        fromAttemptId: z.string(),
-        invalidationReason: z.string(),
-        nextBaselineSha: z.string(),
-        countRepair: z.boolean(),
-        countNoProgress: z.boolean(),
-      })
-      .strict(),
-    epoch: z.number().int().nonnegative(),
-    expectedRevision: z.number().int().nonnegative(),
-    repairRounds: z.number().int().nonnegative(),
-    noProgressRounds: z.number().int().nonnegative(),
-    next: Attempt,
-  })
-  .strict()
 
 export namespace OrynStore {
   /**
@@ -387,22 +374,49 @@ export namespace OrynStore {
     expectedRevision: number,
     action: "pause" | "resume" | "takeover" | "cancel",
   ): Promise<Case> {
-    return mutateCase(caseId, expectedRevision, (record) => {
-      if (record.control === "closed") throw storeError("HUMAN_OWNED", "case is closed", { caseId })
-      const nextControl: CaseControl =
-        action === "pause"
-          ? "paused"
-          : action === "resume"
-            ? "active"
-            : action === "takeover"
-              ? "human_owned"
-              : "cancelled"
-      return {
-        ...record,
-        control: nextControl,
-        epoch: action === "takeover" || action === "cancel" ? record.epoch + 1 : record.epoch,
-      }
-    })
+    using _lock = await Lock.write(`oryn-case:${caseId}`)
+    const record = await getCase(caseId)
+    if (!record) throw storeError("NOT_AUTHORIZED", "Case not found")
+    if (record.revision !== expectedRevision)
+      throw storeError("STALE_REVISION", "Case revision changed", { caseId, expectedRevision })
+    if (record.control === "closed") throw storeError("HUMAN_OWNED", "case is closed", { caseId })
+    if (action === "pause" && ["human_owned", "cancelled"].includes(record.control))
+      throw storeError("HUMAN_OWNED", "Resume ownership explicitly before pausing automation")
+    if (action === "resume" && record.activeAttemptId && ["human_owned", "cancelled"].includes(record.control)) {
+      const previous = await getAttempt(caseId, record.activeAttemptId)
+      if (!previous) throw storeError("INVALID_STAGE", "Ownership resume is missing its previous Attempt")
+      return (
+        await applyAttemptTransition(
+          {
+            caseId,
+            fromAttemptId: previous.id,
+            invalidationReason: "Human requested a new ownership attempt",
+            nextBaselineSha: previous.candidateSha ?? previous.baselineSha,
+            countRepair: false,
+            countNoProgress: false,
+          },
+          "resume",
+          record,
+        )
+      ).case
+    }
+    const nextControl: CaseControl =
+      action === "pause"
+        ? "paused"
+        : action === "resume"
+          ? "active"
+          : action === "takeover"
+            ? "human_owned"
+            : "cancelled"
+    const updated = {
+      ...record,
+      revision: record.revision + 1,
+      control: nextControl,
+      epoch: action === "takeover" || action === "cancel" ? record.epoch + 1 : record.epoch,
+      updatedAt: now(),
+    }
+    await writeCase(updated)
+    return updated
   }
 
   /**
@@ -1147,7 +1161,30 @@ export namespace OrynStore {
     using _lock = await Lock.write(`oryn-case:${input.caseId}`)
     const record = await getCase(input.caseId)
     if (!record) throw storeError("NOT_AUTHORIZED", `case ${input.caseId} not found`)
-    const key = OrynPath.attemptTransition(input.caseId, input.fromAttemptId)
+    return applyAttemptTransition(input, "rework", record)
+  }
+
+  function transitionKey(input: { caseId: string; fromAttemptId: string }, kind: "rework" | "resume", epoch: number) {
+    return OrynPath.attemptTransition(input.caseId, kind === "resume" ? `resume_${epoch}` : input.fromAttemptId)
+  }
+
+  export async function ownershipResume(caseId: string, epoch: number) {
+    try {
+      const value = AttemptTransition.parse(await Storage.read(OrynPath.attemptTransition(caseId, `resume_${epoch}`)))
+      if (value.kind !== "resume" || value.epoch !== epoch || value.input.caseId !== caseId)
+        throw storeError("INVALID_STAGE", "Ownership resume identity changed")
+      return value
+    } catch (error) {
+      if (!(error instanceof Storage.NotFoundError)) throw error
+    }
+  }
+
+  async function applyAttemptTransition(
+    input: z.infer<typeof AttemptTransition>["input"],
+    kind: "rework" | "resume",
+    record: Case,
+  ): Promise<{ previous: Attempt; next: Attempt; case: Case }> {
+    const key = transitionKey(input, kind, record.epoch)
     let transition: z.infer<typeof AttemptTransition> | undefined
     try {
       transition = AttemptTransition.parse(await Storage.read(key))
@@ -1159,7 +1196,10 @@ export namespace OrynStore {
       Object.entries(input).some(([key, value]) => transition!.input[key as keyof typeof input] !== value)
     )
       throw storeError("INVALID_STAGE", "Attempt transition input changed")
-    if (record.control !== "active" || (transition && transition.epoch !== record.epoch))
+    if (
+      (transition && (transition.epoch !== record.epoch || transition.kind !== kind)) ||
+      (kind === "rework" && record.control !== "active")
+    )
       throw storeError("HUMAN_OWNED", "Attempt transition ownership changed")
     if (transition && record.activeAttemptId === transition.next.id) {
       const previous = await getAttempt(input.caseId, input.fromAttemptId)
@@ -1168,6 +1208,8 @@ export namespace OrynStore {
       await writeCase(record)
       return { previous, next, case: record }
     }
+    if (transition && record.control !== transition.expectedControl)
+      throw storeError("HUMAN_OWNED", "Attempt transition control changed")
     if (record.activeAttemptId !== input.fromAttemptId)
       throw storeError("INVALID_STAGE", "rotation targets a non-active attempt", { caseId: input.caseId })
     const previous = await getAttempt(input.caseId, input.fromAttemptId)
@@ -1175,12 +1217,15 @@ export namespace OrynStore {
     if (!transition) {
       const ts = now()
       transition = {
-        schemaVersion: 1,
+        schemaVersion: 2,
+        kind,
+        expectedControl: record.control,
         input,
         epoch: record.epoch,
         expectedRevision: record.revision,
         repairRounds: record.repairRounds + (input.countRepair ? 1 : 0),
-        noProgressRounds: input.countNoProgress ? record.noProgressRounds + 1 : 0,
+        noProgressRounds:
+          kind === "resume" ? record.noProgressRounds : input.countNoProgress ? record.noProgressRounds + 1 : 0,
         next: {
           schemaVersion: 1,
           id: Identifier.ascending("oryn_attempt"),
@@ -1224,6 +1269,7 @@ export namespace OrynStore {
       ...record,
       revision: record.revision + 1,
       activeAttemptId: next.id,
+      control: "active",
       repairRounds: transition.repairRounds,
       noProgressRounds: transition.noProgressRounds,
       updatedAt: now(),
@@ -1234,24 +1280,30 @@ export namespace OrynStore {
 
   export async function recoverAttemptTransitions() {
     const result = { recovered: 0, failed: 0 }
-    for (const record of await listCases({ control: "active" })) {
+    for (const record of await listCases()) {
       for (const fromId of await Storage.scan(OrynPath.attemptTransitionsRoot(record.id))) {
         try {
           const transition = AttemptTransition.parse(await Storage.read(OrynPath.attemptTransition(record.id, fromId)))
           if (
             transition.input.caseId !== record.id ||
-            transition.input.fromAttemptId !== fromId ||
+            transitionKey(transition.input, transition.kind, transition.epoch).at(-1) !== fromId ||
             transition.next.caseId !== record.id
           )
             throw storeError("INVALID_STAGE", "Attempt transition does not belong to its storage key")
+          using _lock = await Lock.write(`oryn-case:${record.id}`)
           const current = await getCase(record.id)
-          if (!current || current.control !== "active") break
+          if (!current || current.control === "closed") break
           if (
             transition.epoch !== current.epoch ||
-            ![fromId, transition.next.id].includes(current.activeAttemptId ?? "")
+            ![transition.input.fromAttemptId, transition.next.id].includes(current.activeAttemptId ?? "")
           )
             continue
-          await rotateAttempt(transition.input)
+          if (
+            current.control !== transition.expectedControl &&
+            !(current.control === "active" && current.activeAttemptId === transition.next.id)
+          )
+            continue
+          await applyAttemptTransition(transition.input, transition.kind, current)
           result.recovered++
         } catch {
           result.failed++

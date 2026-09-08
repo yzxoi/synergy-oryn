@@ -7,6 +7,7 @@ import { SessionManager } from "../session/manager"
 import { ToolScheduler } from "../session/tool-scheduler"
 import { Lock } from "../util/lock"
 import { Log } from "../util/log"
+import { OrynOwnership } from "./ownership"
 import { OrynConfig } from "./config"
 import { OrynStore, storeError } from "./store"
 import type { Case } from "./schema"
@@ -20,7 +21,11 @@ export namespace OrynControl {
     const record = await OrynStore.getCase(binding.caseId)
     if (!record || record.control !== "active") return false
     if (binding.role === "engineering")
-      return record.engineeringSessionId === session.id && session.agentOverride === "oryn-work"
+      return (
+        record.engineeringSessionId === session.id &&
+        session.agentOverride === "oryn-work" &&
+        (await OrynOwnership.admitted(record))
+      )
     if (binding.role !== "worker") return false
     const assignment = (await OrynStore.listAssignments(record.id)).find((item) => item.sessionId === session.id)
     if (

@@ -4,7 +4,7 @@ import { OrynPath } from "./path"
 import type { Migration } from "../migration"
 import { MigrationRegistry } from "../migration/registry"
 import { z } from "zod"
-import { ActionReceipt, Case, OutboxEntry } from "./schema"
+import { ActionReceipt, AttemptTransition, Case, OutboxEntry } from "./schema"
 
 const log = Log.create({ service: "oryn.migration" })
 
@@ -134,6 +134,33 @@ export const migrations: Migration[] = [
           await Storage.write(OrynPath.caseInfo(id), Case.parse({ ...legacy, schemaVersion: 2 }))
         }
         progress(index + 1, ids.length)
+      }
+    },
+  },
+  {
+    id: "20260908-oryn-attempt-transition-purpose",
+    description: "Version Attempt transitions with their control purpose and expected ownership state",
+    version: "1.0.0",
+    domain: "oryn",
+    dependsOn: ["20260907-oryn-baseline"],
+    async up(progress) {
+      const legacySchema = AttemptTransition.omit({ kind: true, expectedControl: true }).extend({
+        schemaVersion: z.literal(1),
+      })
+      const cases = await Storage.scan(OrynPath.casesRoot())
+      for (const [index, caseId] of cases.entries()) {
+        for (const id of await Storage.scan(OrynPath.attemptTransitionsRoot(caseId))) {
+          const key = OrynPath.attemptTransition(caseId, id)
+          const raw = await Storage.read<unknown>(key)
+          if (!AttemptTransition.safeParse(raw).success) {
+            const legacy = legacySchema.parse(raw)
+            await Storage.write(
+              key,
+              AttemptTransition.parse({ ...legacy, schemaVersion: 2, kind: "rework", expectedControl: "active" }),
+            )
+          }
+        }
+        progress(index + 1, cases.length)
       }
     },
   },
