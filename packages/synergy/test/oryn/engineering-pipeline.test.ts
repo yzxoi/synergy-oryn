@@ -153,6 +153,7 @@ test(
         nano_model: "oryn-fixture/qa",
         enabled_providers: ["oryn-fixture"],
         provider: { "oryn-fixture": model.config },
+        embedding: { apiKey: "fixture-only", model: "fixture-embedding", baseURL: model.config.api },
         channel: {
           feishu: {
             type: "feishu",
@@ -224,6 +225,9 @@ test(
               diagnostics.push({
                 agent: (await Session.get(id)).agentOverride,
                 running: SessionManager.isRunning(id),
+                executionPhase: SessionManager.getRuntime(id)?.executionPhase,
+                loopPhase: SessionManager.getRuntime(id)?.owner?.phase,
+                aborted: SessionManager.getRuntime(id)?.owner?.lease.signal.aborted,
                 inbox: await SessionInbox.list(id),
                 messages: (await Session.messages({ sessionID: id })).map((m) => ({
                   role: m.info.role,
@@ -239,6 +243,7 @@ test(
               })
             throw new Error(JSON.stringify({ record, steps: model.steps, diagnostics }).slice(0, 30000))
           }
+          expect(model.embeddings.length).toBeGreaterThan(0)
           const assignments = await OrynStore.listAssignments(record.id)
           expect(assignments).toHaveLength(1)
           expect(assignments[0].stage).toBe("repro")

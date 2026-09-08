@@ -74,6 +74,7 @@ test(
         nano_model: "oryn-fixture/qa",
         enabled_providers: ["oryn-fixture"],
         provider: { "oryn-fixture": model.config },
+        embedding: { apiKey: "fixture-only", model: "fixture-embedding", baseURL: model.config.api },
         channel: {
           feishu: {
             type: "feishu",
@@ -130,6 +131,7 @@ test(
               }).slice(-12000),
             )
           }
+          expect(model.embeddings.length).toBeGreaterThan(0)
           expect(mock.replies).toHaveLength(1)
           expect(mock.replies[0]).toMatchObject({
             accountId,

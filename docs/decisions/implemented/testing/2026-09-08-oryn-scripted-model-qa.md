@@ -12,6 +12,8 @@ A reusable loopback HTTP fixture accepts OpenAI-compatible model requests and re
 
 The first scenario submits a bug when the approved repository directory is absent, reads the actual returned Case identity, requests human handoff and verifies the Host sends one persisted explanation. It verifies human ownership, absence of a PR, silent internal output and duplicate-event handling. The replay check waits for the existing QA task to settle and counts only QA requests, since auxiliary model work has a separate lifecycle.
 
+The same fixture serves the OpenAI-compatible embedding endpoint, and each model scenario installs it through the embedding configuration domain. Memory recall remains real, including its recorded provider operation, but receives deterministic normalized 384-dimensional vectors derived from input bytes. These vectors carry no semantic quality claim. Scenarios assert that recall reached the fixture so a silent fallback cannot satisfy the test. Chat and embedding requests have separate bounded counters.
+
 The fixture binds only loopback on an ephemeral port, bounds the number of successful model requests, captures protocol errors and closes its own server. Installation configuration and the original Feishu provider are restored; provider caches reload when the fixture installs or restores model configuration so a later scenario cannot reuse a closed endpoint; fixture-owned QA Sessions are cancelled, awaited and removed. It requires no production credentials or external model endpoint.
 
 ## Alternatives considered

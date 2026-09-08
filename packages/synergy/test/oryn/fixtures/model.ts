@@ -10,8 +10,11 @@ const Request = z.object({
 export type ModelRequest = z.infer<typeof Request>
 export type ModelStep = { text: string } | { tool: string; input: Record<string, unknown> }
 
+const EmbeddingRequest = z.object({ model: z.string(), input: z.union([z.string(), z.array(z.string())]) })
+
 export function scriptedModel(respond: (request: ModelRequest) => ModelStep | Promise<ModelStep>, maxRequests = 64) {
   const requests: ModelRequest[] = []
+  const embeddings: z.infer<typeof EmbeddingRequest>[] = []
   const errors: string[] = []
   const steps: ModelStep[] = []
   let abortedRequests = 0
@@ -20,7 +23,25 @@ export function scriptedModel(respond: (request: ModelRequest) => ModelStep | Pr
     port: 0,
     async fetch(request) {
       try {
-        if (new URL(request.url).pathname !== "/v1/chat/completions") throw new Error("unexpected model endpoint")
+        const endpoint = new URL(request.url).pathname
+        if (endpoint === "/v1/embeddings") {
+          const body = EmbeddingRequest.parse(await request.json())
+          if (embeddings.length >= maxRequests) throw new Error("scripted embedding request budget exhausted")
+          embeddings.push(body)
+          const inputs = Array.isArray(body.input) ? body.input : [body.input]
+          return Response.json({
+            object: "list",
+            model: body.model,
+            data: inputs.map((input, index) => {
+              const digest = new Bun.CryptoHasher("sha256").update(input).digest()
+              const vector = Array.from({ length: 384 }, (_, i) => digest[i % digest.length] - 127.5)
+              const magnitude = Math.hypot(...vector)
+              return { object: "embedding", index, embedding: vector.map((value) => value / magnitude) }
+            }),
+            usage: { prompt_tokens: inputs.length, total_tokens: inputs.length },
+          })
+        }
+        if (endpoint !== "/v1/chat/completions") throw new Error("unexpected model endpoint")
         const body = Request.parse(await request.json())
         if (requests.length >= maxRequests) throw new Error("scripted model request budget exhausted")
         requests.push(body)
@@ -64,6 +85,7 @@ export function scriptedModel(respond: (request: ModelRequest) => ModelStep | Pr
   })
   return {
     requests,
+    embeddings,
     errors,
     steps,
     get abortedRequests() {
