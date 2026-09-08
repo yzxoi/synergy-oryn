@@ -85,7 +85,7 @@ Generated from the builtin tool registry in `packages/synergy/src/tool/registry.
 | `openai_image_edit` | `communication.visual` | Edit or transform existing images with a text prompt and save the result to output_path. Use it when the user wants to modify, restyle, composite, expand, clean up, or create a variation from one or m |
 | `openai_image_gen` | `communication.visual` | Generate a new image from a text prompt and save it to output_path. Use it when the user wants a raster visual such as an illustration, photo, product shot, UI mockup, concept art, texture, sprite, me |
 | `oryn_case` | `orchestration.session` | Oryn case operations: submit engineering feedback (routed by host config), get/list your linked cases, amend acceptance details, or request human handoff. Identity and routing come from your session b |
-| `oryn_check` | `orchestration.task` | Verification runs: propose a check plan (scenario, profile, commands, assertions), execute it through the trusted executor in your assigned workspace, or read a plan. Local runs you did with bash are  |
+| `oryn_check` | `orchestration.task` | Verification runs: read repository executionProfiles with oryn_case get, propose a plan (scenario, profile, commands, assertions), and execute it in a disposable checkout of the assigned commit. Comma |
 | `oryn_dispatch` | `orchestration.session` | Request the next engineering stage for your case (dispatch), or open a bounded rework round on the frozen candidate when review demands changes (rework). The host picks the agent, workspace, and froze |
 | `oryn_github_read` | `code.read` | Read bounded remote facts for one of your linked cases: the linked issue and pull request (title, state, author class), and CI status on the candidate. The host resolves the repository and refs from t |
 | `oryn_learn` | `knowledge.memory` | Propose a reusable lesson from this case for host promotion into shared memory. Every claim must cite case records as evidence; raw chat text, private logs, and credentials are rejected. Promotion onl |
@@ -1220,7 +1220,7 @@ Oryn case operations: submit engineering feedback (routed by host config), get/l
 
 Kind: `orchestration.task`
 
-Verification runs: propose a check plan (scenario, profile, commands, assertions), execute it through the trusted executor in your assigned workspace, or read a plan. Local runs you did with bash are development aid — only receipts from this executor count as evidence.
+Verification runs: read repository executionProfiles with oryn_case get, propose a plan (scenario, profile, commands, assertions), and execute it in a disposable checkout of the assigned commit. Commands share only approved writable output directories; tracked source remains read-only. Local bash runs are development aid — only receipts from this executor count as evidence.
 
 | Parameter | Type | Required | Description |
 | --- | --- | --- | --- |

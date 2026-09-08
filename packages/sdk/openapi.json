@@ -37359,6 +37359,16 @@
             "description": "What this profile is for, e.g. server-side unit tests",
             "type": "string"
           },
+          "writableDirectories": {
+            "description": "Relative build-output directories in a disposable check checkout (for example dist, coverage). Must not overlap tracked source, symlink ancestors or Git/agent metadata; all other source remains read-only",
+            "maxItems": 32,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 240
+            }
+          },
           "requiredCapabilities": {
             "description": "Isolation capabilities the host must verify before this profile may run",
             "type": "array",

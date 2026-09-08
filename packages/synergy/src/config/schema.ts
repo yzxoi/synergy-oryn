@@ -665,6 +665,13 @@ export type OrynIsolationMode = z.infer<typeof OrynIsolationMode>
 export const OrynExecutionProfile = z
   .object({
     description: z.string().optional().describe("What this profile is for, e.g. server-side unit tests"),
+    writableDirectories: z
+      .array(z.string().min(1).max(240))
+      .max(32)
+      .optional()
+      .describe(
+        "Relative build-output directories in a disposable check checkout (for example dist, coverage). Must not overlap tracked source, symlink ancestors or Git/agent metadata; all other source remains read-only",
+      ),
     requiredCapabilities: z
       .array(z.enum(["uid", "namespace", "seccomp", "cgroup", "browser", "network_egress"]))
       .optional()

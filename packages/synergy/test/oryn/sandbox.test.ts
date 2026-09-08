@@ -5,6 +5,43 @@ import { OrynSandbox } from "../../src/oryn/sandbox"
 import { tmpdir } from "../fixture/fixture"
 
 test.skipIf(!["darwin", "linux"].includes(process.platform))(
+  "Oryn experiments allow only selected build directories while source and metadata stay read-only",
+  async () => {
+    await using dir = await tmpdir()
+    await mkdir(join(dir.path, "dist"))
+    await mkdir(join(dir.path, ".git"))
+    await Bun.write(join(dir.path, "source.txt"), "frozen")
+    await Bun.write(join(dir.path, ".git", "config"), "protected")
+    const result = await OrynSandbox.execute({
+      argv: [
+        "bun",
+        "-e",
+        `
+        import {writeFileSync,symlinkSync} from 'node:fs';
+        writeFileSync('dist/output.txt', 'built');
+        symlinkSync('../source.txt','dist/escape');
+        const denied=[];
+        for(const file of ['source.txt','.git/config','unapproved.txt','dist/escape']) {
+          try { writeFileSync(file,'changed') } catch { denied.push(file) }
+        }
+        console.log(JSON.stringify(denied));
+      `,
+      ],
+      cwd: dir.path,
+      writableRoots: [join(dir.path, "dist")],
+      timeoutMs: 5000,
+      abort: new AbortController().signal,
+      profile: { commandAllowlist: ["bun"] },
+    })
+    expect(result.exitCode, result.stderr).toBe(0)
+    expect(JSON.parse(result.stdout)).toEqual(["source.txt", ".git/config", "unapproved.txt", "dist/escape"])
+    expect(await Bun.file(join(dir.path, "dist", "output.txt")).text()).toBe("built")
+    expect(await Bun.file(join(dir.path, "source.txt")).text()).toBe("frozen")
+  },
+  10000,
+)
+
+test.skipIf(!["darwin", "linux"].includes(process.platform))(
   "Oryn checks preserve an ordinary nonzero process result",
   async () => {
     await using dir = await tmpdir()

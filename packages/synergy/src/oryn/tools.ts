@@ -144,6 +144,8 @@ export const OrynCaseTool = Tool.define(
             output: JSON.stringify(
               {
                 caseId: record.id,
+                executionProfiles:
+                  binding.role !== "qa" ? OrynConfig.profiles(await OrynConfig.info(), record.repoAlias) : undefined,
                 reviewReports,
                 reviewRequirements: attempt?.candidateSha
                   ? await OrynReviewPolicy.requirements(record, attempt).catch(() => ({
@@ -540,7 +542,7 @@ export const OrynCheckTool = Tool.define(
   "oryn_check",
   {
     description:
-      "Verification runs: propose a check plan (scenario, profile, commands, assertions), execute it through the trusted executor in your assigned workspace, or read a plan. Local runs you did with bash are development aid — only receipts from this executor count as evidence.",
+      "Verification runs: read repository executionProfiles with oryn_case get, propose a plan (scenario, profile, commands, assertions), and execute it in a disposable checkout of the assigned commit. Commands share only approved writable output directories; tracked source remains read-only. Local bash runs are development aid — only receipts from this executor count as evidence.",
     parameters: z.object({ input: CheckParameters }),
     async execute({ input: params }, ctx): Promise<Tool.ExecutionResult> {
       return execute(async () => {

@@ -1,10 +1,11 @@
 import { existsSync } from "node:fs"
 import { mkdtemp, realpath, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
-import { isAbsolute, join } from "node:path"
+import { isAbsolute, join, relative, sep } from "node:path"
 import type { OrynExecutionProfile } from "../config/schema"
 import { SandboxBackend } from "../sandbox/backend"
 import { storeError } from "./store"
+import { OrynGit } from "./git"
 
 export const SYSTEM_READ_ROOTS = [
   "/bin",
@@ -33,6 +34,8 @@ export namespace OrynSandbox {
     timeoutMs: number
     abort: AbortSignal
     profile: OrynExecutionProfile
+    writableRoots?: string[]
+    readableRoots?: string[]
   }) {
     input.abort.throwIfAborted()
     if (input.profile.isolation && input.profile.isolation !== "sandbox")
@@ -54,6 +57,12 @@ export namespace OrynSandbox {
     const scratch = await realpath(await mkdtemp(join(tmpdir(), "oryn-check-")))
     try {
       const workspace = await realpath(input.cwd)
+      const writableRoots = await Promise.all((input.writableRoots ?? []).map((root) => realpath(root)))
+      for (const root of writableRoots) {
+        const path = relative(workspace, root)
+        if (!path || path === ".." || path.startsWith(`..${sep}`) || isAbsolute(path))
+          throw storeError("NOT_AUTHORIZED", "check output directory is outside the experiment")
+      }
       const wrapper = SandboxBackend.prepareWrapper({
         command: process.platform === "linux" ? "/bin/sh" : await realpath(command),
         args:
@@ -73,11 +82,16 @@ export namespace OrynSandbox {
         permissionProfile: {
           fileSystem: {
             workspace,
-            readableRoots: [workspace, await realpath(command), ...SYSTEM_READ_ROOTS.filter(existsSync)],
-            writableRoots: [scratch],
+            readableRoots: [
+              workspace,
+              await realpath(command),
+              ...SYSTEM_READ_ROOTS.filter(existsSync),
+              ...(input.readableRoots ?? []),
+            ],
+            writableRoots: [scratch, ...writableRoots],
             readOnlySubpaths: [],
             unreadableGlobs: [],
-            protectedMetadataNames: [],
+            protectedMetadataNames: [".git", ".agents", ".codex", ".synergy"],
             protectedPaths: [],
             dataDenyRoots: [],
             includePlatformDefaults: false,
@@ -91,7 +105,16 @@ export namespace OrynSandbox {
       }
       return await SandboxBackend.executeAsync(wrapper, {
         cwd: workspace,
-        env: { HOME: scratch, TMPDIR: scratch, TMP: scratch, TEMP: scratch, PATH: searchPath, LANG: "C.UTF-8" },
+        env: {
+          ...OrynGit.environment(),
+          GIT_OPTIONAL_LOCKS: "0",
+          HOME: scratch,
+          TMPDIR: scratch,
+          TMP: scratch,
+          TEMP: scratch,
+          PATH: searchPath,
+          LANG: "C.UTF-8",
+        },
         inheritEnv: false,
         networkMode: "restricted",
         fallbackPolicy: "deny",

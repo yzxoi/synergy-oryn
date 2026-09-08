@@ -4298,6 +4298,10 @@ export type OrynExecutionProfileConfig = {
    */
   description?: string
   /**
+   * Relative build-output directories in a disposable check checkout (for example dist, coverage). Must not overlap tracked source, symlink ancestors or Git/agent metadata; all other source remains read-only
+   */
+  writableDirectories?: Array<string>
+  /**
    * Isolation capabilities the host must verify before this profile may run
    */
   requiredCapabilities?: Array<"uid" | "namespace" | "seccomp" | "cgroup" | "browser" | "network_egress">

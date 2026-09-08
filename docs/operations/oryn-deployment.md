@@ -6,9 +6,9 @@ Oryn is dormant unless `oryn.enabled` is `true`. Every preflight step below assu
 
 Oryn authorization must be configured in the installation-owned `120-runtime.jsonc` domain. Project-local configuration and scoped overrides do not authorize Oryn repositories, execution profiles, publication or budgets. Do not copy a candidate repository's configuration into the installation. Configure model roles through installation model settings; Oryn agent IDs, prompts and role definitions are reserved. See [installation policy](../decisions/implemented/architecture/2026-09-08-oryn-installation-policy.md) for the enforced scope and remaining execution checks.
 
-Worker source separation is covered by [versioned-workspace tests](../decisions/implemented/architecture/2026-09-08-oryn-versioned-worker-workspaces.md). Every new worker needs enough disk for a worktree; repro/code pin baseline and verify/review pin candidate. Historical main-checkout workers must be stopped and replaced, not rebound while active. Git filters, submodules and dirty overlays require a contained execution path that is not delivered by these checks. Broader resource accounting, build/experiment staging and full pipeline validation are still required before this runbook can be treated as deployment acceptance.
+Worker source separation is covered by [versioned-workspace tests](../decisions/implemented/architecture/2026-09-08-oryn-versioned-worker-workspaces.md). Every new worker needs enough disk for a worktree; repro/code pin baseline and verify/review pin candidate. Historical main-checkout workers must be stopped and replaced, not rebound while active. Git filters, submodules and dirty overlays require a contained execution path that is not delivered by these checks. Broader resource accounting, dependency provisioning and full pipeline validation are still required before this runbook can be treated as deployment acceptance.
 
-The shared check runner bounds output and manages ordinary Unix descendants, as described in [check process lifecycle](../decisions/implemented/bug-fix/2026-09-08-owned-check-process-lifecycle.md). Checks use an explicit sandbox policy with read-only source, private disposable HOME/temp paths and restricted networking; see [check containment](../decisions/implemented/bug-fix/2026-09-08-oryn-check-containment.md). Check-heavy and profile limits now use [ToolScheduler resource admission](../decisions/implemented/architecture/2026-09-08-oryn-check-resource-admission.md); these counters do not yet include coder Bash/background processes or reserve QA model capacity. Worker Bash uses its own strict Host policy, described below; these process policies do not establish complete deployment acceptance.
+The shared check runner bounds output and manages ordinary Unix descendants, as described in [check process lifecycle](../decisions/implemented/bug-fix/2026-09-08-owned-check-process-lifecycle.md). Checks use an explicit sandbox policy with read-only source, private disposable HOME/temp paths and restricted networking; see [check containment](../decisions/implemented/bug-fix/2026-09-08-oryn-check-containment.md). Check-heavy and profile limits now use [ToolScheduler resource admission](../decisions/implemented/architecture/2026-09-08-oryn-check-resource-admission.md); these counters do not include coder Bash/background processes. Model turns separately use the foreground reservation described below. Worker Bash uses its own strict Host policy, described below; these process policies do not establish complete deployment acceptance.
 
 ## Engineering Checkout and Startup
 
@@ -24,7 +24,7 @@ Code workers prepare a commit with `oryn_result` / `input.kind: commit_candidate
 
 `oryn_check` defaults to local `sandbox` isolation. Explicit `worktree` and `external_vm` execution are rejected: directory separation is insufficient and no VM execution transport is connected. macOS uses a deny-default Seatbelt profile; Linux requires the built helper and Bubblewrap with usable user/PID/network namespaces and seccomp. A missing or rejected wrapper cannot fall back to an unwrapped command, regardless of ordinary interactive sandbox fallback settings.
 
-The local check profile exposes the pinned source read-only, plus system executables/libraries and the approved executable. Each command gets a private, disposable HOME and temporary directory; token, SSH agent, provider, proxy and language injection variables are absent. Host network access is denied. Commands needing source writes, dependency downloads, persistent build outputs or a browser need a separately implemented execution profile; do not interpret their environment failure as a reproduced bug.
+The local check profile exposes a disposable checkout of the pinned commit, plus system executables/libraries and the approved executable. Tracked source remains read-only. Installation-selected output directories are writable and shared by the commands in that check plan. Each command gets a private disposable HOME/temp directory, with ambient credentials and Git configuration excluded. Host network access is denied. Dependency provisioning, persistent cross-run build caches, source overlays and browser execution need separate support; do not interpret those environment gaps as a reproduced bug.
 
 | Declared capability                          | Local check behavior                                                                                                             |
 | -------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
@@ -90,6 +90,33 @@ Do not grant Administration or protection-bypass privileges. GitHub does not pro
 Install the App on the target repositories (placeholder `owner/repo`), set the app credentials in the runtime environment (`SYNERGY_GITHUB_APP_ID`, `SYNERGY_GITHUB_APP_PRIVATE_KEY`), and confirm `resolveInstallation` succeeds before enabling `oryn.repositories`.
 
 Oryn pushes through the Host-installed Git executable to the configured repository's explicit `https://github.com/owner/repo.git` URL. The publishing process does not inherit personal Git config, proxy variables, SSH settings, custom CA overrides or candidate hooks. Provision direct outbound HTTPS and a working system trust store for Git; changing `origin` or a worker environment does not configure publication. GitHub Enterprise and proxy-only publication require a separate reviewed transport configuration and are not supported by this path. Candidate objects must remain available until publication settles. Temporary bare repositories contain no persisted installation token; normal completion/cancellation removes them. After a Host crash, remove leftover `oryn-push-*` cache directories only while that runtime is stopped.
+
+## Disposable Build Experiments
+
+Set `oryn.executionProfiles[profileId].writableDirectories` in the installation runtime domain to the relative output directories that a check needs. For example:
+
+```jsonc
+{
+  "oryn": {
+    "executionProfiles": {
+      "build": {
+        "commandAllowlist": ["bun", "git"],
+        "writableDirectories": ["dist", "coverage", "packages/synergy/dist"],
+        "timeoutSeconds": 600,
+        "maxConcurrent": 1,
+      },
+    },
+  },
+}
+```
+
+Merge these fields into the existing installation configuration. An absent or empty directory list keeps all experiment source read-only. A repository's `testProfiles` restricts which installation profiles it may execute; unset permits the configured profiles, while an empty list permits none. Engineering and worker Agents discover these profiles through `oryn_case get`; QA does not receive the engineering configuration.
+
+Each check plan gets a fresh private Git checkout built from the assigned commit's objects, with its own index/configuration and detached HEAD. It does not copy ignored/untracked files, local dependency installations, candidate hooks or host Git configuration. Commands in the same plan share approved output directories; separate plans, Cases and baseline/candidate runs do not. Only output paths free of tracked source and symlink ancestors are allowed. Parent traversal and Git/agent metadata paths are rejected. Source edits and symlink escapes remain denied by the OS sandbox; changed source or ownership makes evidence inconclusive. Plans requesting source overlays are rejected because no patch-application mechanism supplies that evidence.
+
+The checkout and outputs are removed after the plan settles and owned processes stop. No persistent artifact retention or dependency cache is implied. Prepare dependencies through a separately reviewed provisioning mechanism; the runner does not borrow the configured checkout's `node_modules` or run network-enabled installation scripts. Following a Host crash, inspect leftover `oryn-experiment-*` temporary directories only while the runtime is stopped and its owned processes are confirmed terminated; automatic orphan discovery is not implemented.
+
+Run `bun run test test/oryn/experiment.test.ts test/oryn/workspaces.test.ts test/oryn/sandbox.test.ts test/oryn/tools.test.ts` from `packages/synergy`. The native tests build and execute real TypeScript through `Bun.build()`, inspect the exact Git HEAD, reject source/metadata writes, prove separate experiments and check cleanup. Linux CI additionally exercises the `bun build` CLI. On macOS, Bun CLI ancestor-directory discovery can be denied even with a valid project manifest; `Bun.build()` is verified without widening host-directory reads. A target-specific build failure remains an environment gap unless independent evidence establishes a product defect.
 
 ## Model Capacity
 

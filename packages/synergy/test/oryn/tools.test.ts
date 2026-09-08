@@ -80,7 +80,11 @@ async function caseFixture(
         ? {
             enabled: true,
             routes: [{ feishuAccount: "tools", repoAlias: "widget" }],
-            repositories: { widget: { owner: "acme", repo: "widget", baseBranch: "dev" } },
+            repositories: { widget: { owner: "acme", repo: "widget", baseBranch: "dev", testProfiles: ["quick"] } },
+            executionProfiles: {
+              quick: { commandAllowlist: ["bun"], writableDirectories: ["dist"] },
+              other: { commandAllowlist: ["node"] },
+            },
           }
         : { enabled: false },
     },
@@ -115,6 +119,19 @@ test("disabled Oryn rejects a previously bound worker's case reads", async () =>
     await expect(
       tool.execute({ input: { action: "get", caseId: own } }, context(callerSessionID)),
     ).rejects.toMatchObject({ code: "NOT_AUTHORIZED" })
+  })
+})
+
+test("engineering can inspect its repository check profiles while QA cannot", async () => {
+  await caseFixture(true, async ({ callerSessionID, own }) => {
+    const tool = await OrynCaseTool.init()
+    const read = () => tool.execute({ input: { action: "get", caseId: own } }, context(callerSessionID))
+    expect(JSON.parse((await read()).output).executionProfiles).toEqual({
+      quick: { commandAllowlist: ["bun"], writableDirectories: ["dist"] },
+    })
+    const binding = (await OrynStore.sessionSourceBinding(callerSessionID))!
+    await OrynStore.bindSessionSource({ sessionID: callerSessionID, identity: binding.identity!, role: "qa" })
+    expect(JSON.parse((await read()).output).executionProfiles).toBeUndefined()
   })
 })
 

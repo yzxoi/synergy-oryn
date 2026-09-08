@@ -10,6 +10,16 @@ export namespace OrynConfig {
     return (await info())?.enabled === true
   }
 
+  export function profiles(config: Config.Info["oryn"], repoAlias: string) {
+    const repository = config?.repositories?.[repoAlias]
+    if (!config?.enabled || !repository) return {}
+    return Object.fromEntries(
+      Object.entries(config.executionProfiles ?? {}).filter(
+        ([id]) => !repository.testProfiles || repository.testProfiles.includes(id),
+      ),
+    )
+  }
+
   /**
    * Resolve the repoAlias for an inbound source. Explicit routes only: the
    * first route whose account matches and whose optional chat allowlist

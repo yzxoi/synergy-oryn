@@ -29,8 +29,11 @@ async function fixture(
       oryn: {
         enabled: true,
         routes: [{ feishuAccount: "test", repoAlias: "repo" }],
-        repositories: { repo: { owner: "test", repo: "repo" } },
-        executionProfiles: { fixture: { commandAllowlist: ["bun"], timeoutSeconds: 10 } },
+        repositories: { repo: { owner: "test", repo: "repo", testProfiles: ["fixture"] } },
+        executionProfiles: {
+          fixture: { commandAllowlist: ["bun"], writableDirectories: ["dist"], timeoutSeconds: 10 },
+          other: { commandAllowlist: ["bun"] },
+        },
       },
     },
   })
@@ -105,6 +108,49 @@ async function run(
 }
 
 describe("Oryn per-assignment workspaces", () => {
+  test("check commands share disposable outputs and retain the frozen source identity in their receipt", async () => {
+    await fixture(async (input) => {
+      const worker = await OrynService.dispatch({
+        callerSessionID: input.rootId,
+        caseId: input.caseId,
+        stage: "repro",
+        requestKey: "build-output",
+      })
+      const plan = await OrynService.proposeCheck({
+        callerSessionID: worker.workerSessionId,
+        caseId: input.caseId,
+        attemptId: input.attemptId,
+        assignmentId: worker.assignmentId,
+        scenario: "build and consume an output from the pinned source",
+        profileId: "fixture",
+        argv: [
+          ["bun", "-e", "await Bun.write('dist/result.txt',await Bun.file('behavior.txt').text())"],
+          [
+            "bun",
+            "-e",
+            "if(await Bun.file('dist/result.txt').text()!=='baseline')process.exit(1);console.log('output verified')",
+          ],
+        ],
+        checks: ["the second command consumes this check's built output"],
+      })
+      const result = await runCheck({
+        callerSessionID: worker.workerSessionId,
+        caseId: input.caseId,
+        attemptId: input.attemptId,
+        assignmentId: worker.assignmentId,
+        planId: plan.planId,
+        lane: "baseline",
+        abort: new AbortController().signal,
+      })
+      const receipt = (await OrynStore.getRun(input.caseId, result.runId))!
+      expect(receipt.outcome).toBe("passed")
+      expect(receipt.actualSha).toBe(input.baseline)
+      expect(receipt.observations).toContain("stdout: output verified\n")
+      const assignment = (await OrynStore.getAssignment(input.caseId, worker.assignmentId))!
+      expect(await Bun.file(`${assignment.workspaceRef}/dist/result.txt`).exists()).toBe(false)
+    })
+  })
+
   test("direct check execution without scheduler admission is rejected", async () => {
     await fixture(async (input) => {
       const worker = await OrynService.dispatch({
@@ -136,6 +182,28 @@ describe("Oryn per-assignment workspaces", () => {
         }),
       ).rejects.toThrow("scheduler admission")
       expect((await OrynStore.getCheckPlan(input.caseId, plan.planId))?.status).toBe("proposed")
+      const restricted = await OrynService.proposeCheck({
+        callerSessionID: worker.workerSessionId,
+        caseId: input.caseId,
+        attemptId: input.attemptId,
+        assignmentId: worker.assignmentId,
+        scenario: "profile belongs to another repository",
+        profileId: "other",
+        argv: [["bun", "--print", "1"]],
+        checks: ["must not execute"],
+      })
+      await expect(
+        runCheck({
+          callerSessionID: worker.workerSessionId,
+          caseId: input.caseId,
+          attemptId: input.attemptId,
+          assignmentId: worker.assignmentId,
+          planId: restricted.planId,
+          lane: "baseline",
+          abort: new AbortController().signal,
+        }),
+      ).rejects.toMatchObject({ data: { code: "ENVIRONMENT_UNAVAILABLE" } })
+      expect((await OrynStore.getCheckPlan(input.caseId, restricted.planId))?.status).toBe("proposed")
     })
   })
 
@@ -177,6 +245,40 @@ describe("Oryn per-assignment workspaces", () => {
       expect(result.outcome).toBe("inconclusive")
       expect(receipt?.infrastructureFailure).toBe(true)
       expect(receipt?.observations).toContain("process output truncated; evidence is inconclusive")
+    })
+  })
+
+  test("unsupported source overlays cannot produce an applied-overlay receipt", async () => {
+    await fixture(async (input) => {
+      const worker = await OrynService.dispatch({
+        callerSessionID: input.rootId,
+        caseId: input.caseId,
+        stage: "repro",
+        requestKey: "source-overlay",
+      })
+      const plan = await OrynService.proposeCheck({
+        callerSessionID: worker.workerSessionId,
+        caseId: input.caseId,
+        attemptId: input.attemptId,
+        assignmentId: worker.assignmentId,
+        scenario: "requires a source patch that is not applied by the runner",
+        profileId: "fixture",
+        argv: [["bun", "--print", "1"]],
+        checks: ["must not claim an overlay was applied"],
+        overlay: true,
+      })
+      await expect(
+        runCheck({
+          callerSessionID: worker.workerSessionId,
+          caseId: input.caseId,
+          attemptId: input.attemptId,
+          assignmentId: worker.assignmentId,
+          planId: plan.planId,
+          lane: "baseline",
+          abort: new AbortController().signal,
+        }),
+      ).rejects.toMatchObject({ data: { code: "ENVIRONMENT_UNAVAILABLE" } })
+      expect((await OrynStore.getCheckPlan(input.caseId, plan.planId))?.status).toBe("proposed")
     })
   })
 

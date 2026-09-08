@@ -9,6 +9,7 @@ import { OrynEvidence } from "./evidence"
 import { OrynStore, storeError } from "./store"
 import { OrynConfig } from "./config"
 import { OrynBudget } from "./budget"
+import { OrynExperiment } from "./experiment"
 import type { RunReceipt } from "./schema"
 
 /**
@@ -35,11 +36,12 @@ async function runOne(
   timeoutSeconds: number,
   abort: AbortSignal,
   profile: OrynExecutionProfile,
+  experiment: { readableRoots: string[]; writableRoots: string[] },
 ): Promise<RunOneResult> {
   const startedAt = Date.now()
   let blocked = false
   const result = await ToolScheduler.trackPhysicalExecution(() =>
-    OrynSandbox.execute({ argv, cwd, timeoutMs: timeoutSeconds * 1000, abort, profile }),
+    OrynSandbox.execute({ argv, cwd, timeoutMs: timeoutSeconds * 1000, abort, profile, ...experiment }),
   ).catch((error) => {
     if (!(error instanceof EnforcementError.SandboxBlocked)) throw error
     blocked = true
@@ -81,10 +83,11 @@ export namespace OrynExecutor {
     const binding = await OrynStore.sessionSourceBinding(input.callerSessionID)
     if (binding?.role !== "worker" || binding.caseId !== input.caseId)
       throw storeError("NOT_AUTHORIZED", "only the bound worker can request check resources")
-    const [assignment, plan, oryn] = await Promise.all([
+    const [assignment, plan, oryn, record] = await Promise.all([
       OrynStore.getAssignment(input.caseId, input.assignmentId),
       OrynStore.getCheckPlan(input.caseId, input.planId),
       OrynConfig.info(),
+      OrynStore.getCase(input.caseId),
     ])
     if (!oryn?.enabled) throw storeError("NOT_AUTHORIZED", "Oryn is disabled")
     if (
@@ -94,7 +97,9 @@ export namespace OrynExecutor {
       plan?.attemptId !== input.attemptId
     )
       throw storeError("NOT_AUTHORIZED", "check admission requires matching worker and plan")
-    const profile = oryn.executionProfiles?.[plan.profileId]
+    if (plan.overlay)
+      throw storeError("ENVIRONMENT_UNAVAILABLE", "source overlays require a supported patch-application mechanism")
+    const profile = record ? OrynConfig.profiles(oryn, record.repoAlias)[plan.profileId] : undefined
     if (!profile) throw storeError("ENVIRONMENT_UNAVAILABLE", "check profile is unavailable")
     return {
       executor: "local_process" as const,
@@ -176,7 +181,8 @@ export namespace OrynExecutor {
     }
 
     const oryn = await OrynConfig.info()
-    const profile = oryn?.executionProfiles?.[plan.profileId]
+    const record = await OrynStore.getCase(input.caseId)
+    const profile = record ? OrynConfig.profiles(oryn, record.repoAlias)[plan.profileId] : undefined
     if (!profile) {
       throw storeError("ENVIRONMENT_UNAVAILABLE", `execution profile "${plan.profileId}" is not configured`)
     }
@@ -207,17 +213,24 @@ export namespace OrynExecutor {
     const before = await OrynGit.snapshot(cwd)
     if (before.sha !== expectedSha || before.dirty)
       throw storeError("INVALID_STAGE", "check workspace does not match its clean fixed commit")
+    await using experiment = await OrynExperiment.prepare({
+      source: cwd,
+      sha: expectedSha,
+      profile,
+      abort: input.abort,
+    })
     const timeoutSeconds = profile.timeoutSeconds ?? 1800
     const results: RunOneResult[] = []
     for (const command of plan.argv) {
       await currentInputs()
-      const result = await runOne(command, cwd, timeoutSeconds, input.abort, profile)
+      const result = await runOne(command, experiment.directory, timeoutSeconds, input.abort, profile, experiment)
       results.push(result)
       if (result.timedOut || result.aborted || result.truncated || result.blocked) break
     }
 
     const after = await OrynGit.snapshot(cwd).catch(() => undefined)
-    const changed = !after || after.sha !== before.sha || after.tree !== before.tree || after.dirty
+    const changed =
+      !after || after.sha !== before.sha || after.tree !== before.tree || after.dirty || (await experiment.changed())
     const active = await currentInputs().then(
       (sha) => sha === expectedSha,
       () => false,
@@ -252,6 +265,7 @@ export namespace OrynExecutor {
       endedAt: results[results.length - 1].endedAt,
       exitCode: results[results.length - 1].exitCode,
       observations: [
+        "execution used an isolated disposable checkout of the fixed source commit",
         ...(changed ? ["source changed during execution; evidence is inconclusive"] : []),
         ...(!active ? ["assignment inputs or control changed during execution; evidence is inconclusive"] : []),
         ...results.flatMap((r) => r.observations),
