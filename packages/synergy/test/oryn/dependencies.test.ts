@@ -48,7 +48,7 @@ test("experiments materialize a pinned dependency snapshot instead of borrowing 
   expect(await Bun.file(join(experiment.directory, "node_modules", "fixture-math", "index.js")).text()).toBe(content)
 })
 
-async function fixture() {
+async function fixture(extraFiles = 0, workspaces: unknown = ["packages/*"]) {
   const repo = await tmpdir({ git: true })
   const artifacts = await tmpdir()
   await Bun.write(join(repo.path, ".gitignore"), "node_modules/\n.synergy/\n.env\n")
@@ -57,7 +57,7 @@ async function fixture() {
     JSON.stringify({
       name: "fixture",
       private: true,
-      workspaces: ["packages/*"],
+      workspaces,
       dependencies: { "fixture-math": "1.0.0", "fixture-local": "workspace:*" },
     }),
   )
@@ -69,6 +69,9 @@ async function fixture() {
     join(repo.path, "src/main.ts"),
     'import { answer } from "fixture-math"; import { offset } from "fixture-local"; console.log(answer + offset)',
   )
+  for (let index = 0; index < extraFiles; index++) {
+    await Bun.write(join(repo.path, "src/listing", `${index}-${"entry".repeat(38)}.txt`), "")
+  }
   await commit(repo.path)
   await Bun.write(join(repo.path, "node_modules/fixture-math/index.js"), "exports.answer = 40")
   await Bun.write(
@@ -107,6 +110,34 @@ async function commit(directory: string) {
   await Bun.$`git add .`.cwd(directory).quiet()
   await Bun.$`git -c core.hooksPath=/dev/null commit --no-gpg-sign -m fixture`.cwd(directory).quiet()
 }
+
+test("dependency sealing accepts complete Git trees larger than a diagnostic output buffer", async () => {
+  const f = await fixture(4096)
+  const listing = await OrynGit.read(f.repo.path, ["ls-tree", "-rz", "--full-tree", "HEAD"])
+  expect(Buffer.byteLength(listing)).toBeGreaterThan(1024 * 1024)
+  expect(listing).toContain(`src/listing/4095-${"entry".repeat(38)}.txt\0`)
+  const manifest = await Bun.file(join(f.sealed.directory, "manifest.json")).json()
+  expect(manifest.inputs.map((input: { path: string }) => input.path)).toContain("packages/local/package.json")
+  expect(f.sealed.files).toBeGreaterThan(0)
+})
+
+test("object workspace declarations seal and invalidate when their catalog changes", async () => {
+  const f = await fixture(0, { packages: ["packages/*"], catalog: { "fixture-math": "1.0.0" } })
+  await using experiment = await f.prepare()
+  expect(await Bun.file(join(experiment.directory, "node_modules/fixture-math/index.js")).text()).toContain("40")
+  const path = join(f.repo.path, "package.json")
+  const manifest = await Bun.file(path).json()
+  manifest.workspaces.catalog["fixture-math"] = "2.0.0"
+  await Bun.write(path, JSON.stringify(manifest))
+  await commit(f.repo.path)
+  await expect(f.prepare()).rejects.toMatchObject({ data: { code: "ENVIRONMENT_UNAVAILABLE" } })
+})
+
+test("malformed object workspace declarations are rejected", async () => {
+  for (const workspaces of [{ catalog: {} }, { packages: [42] }, { packages: "packages/*" }]) {
+    await expect(fixture(0, workspaces)).rejects.toMatchObject({ data: { code: "ENVIRONMENT_UNAVAILABLE" } })
+  }
+})
 
 async function rewriteManifest(
   f: Awaited<ReturnType<typeof fixture>>,

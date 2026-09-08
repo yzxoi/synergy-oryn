@@ -15101,6 +15101,18 @@ msgid "settings.channels.feishu.empty"
 msgstr ""
 
 #. js-lingui-explicit-id
+msgid "settings.channels.feishu.refresh"
+msgstr ""
+
+#. js-lingui-explicit-id
+msgid "settings.channels.feishu.refreshed"
+msgstr ""
+
+#. js-lingui-explicit-id
+msgid "settings.channels.feishu.refreshing"
+msgstr ""
+
+#. js-lingui-explicit-id
 msgid "settings.channels.feishu.title"
 msgstr ""
 

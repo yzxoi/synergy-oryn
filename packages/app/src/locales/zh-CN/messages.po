@@ -15101,6 +15101,18 @@ msgid "settings.channels.feishu.empty"
 msgstr "尚未配置飞书账号。"
 
 #. js-lingui-explicit-id
+msgid "settings.channels.feishu.refresh"
+msgstr "刷新群列表"
+
+#. js-lingui-explicit-id
+msgid "settings.channels.feishu.refreshed"
+msgstr "群列表已刷新，请在 Oryn 设置中选择通知群。"
+
+#. js-lingui-explicit-id
+msgid "settings.channels.feishu.refreshing"
+msgstr "正在刷新群列表…"
+
+#. js-lingui-explicit-id
 msgid "settings.channels.feishu.title"
 msgstr "飞书"
 
