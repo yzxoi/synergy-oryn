@@ -102,8 +102,10 @@ export namespace OrynDiscovery {
     const independent = ["independent", "blocker"].includes(input.relation)
     if (
       input.relation === "security" ||
-      depth > (config.limits?.maxDiscoveryDepth ?? 2) ||
-      all.filter((item) => item.rootCaseId === rootCaseId).length >= (config.limits?.maxDescendants ?? 8)
+      (independent &&
+        (depth > (config.limits?.maxDiscoveryDepth ?? 2) ||
+          all.filter((item) => item.rootCaseId === rootCaseId && item.childCaseId).length >=
+            (config.limits?.maxDescendants ?? 8)))
     )
       discovery.state = "needs_human"
     if (independent && discovery.state !== "needs_human") {

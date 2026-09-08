@@ -54,6 +54,7 @@ test("discoveries preserve lineage, deduplicate reproduction work and retain pri
   expect(security.childCaseId).toBeUndefined()
   const local = await OrynDiscovery.propose(sessionID, { ...input, relation: "current_change" })
   expect(local.childCaseId).toBeUndefined()
+  expect(local.state).toBe("recorded")
   await OrynDiscovery.recover()
   expect((await OrynStore.getCase(first.childCaseId!))?.sourceIds).toEqual(parent.sourceIds)
 })
