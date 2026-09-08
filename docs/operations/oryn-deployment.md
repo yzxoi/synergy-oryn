@@ -59,9 +59,11 @@ To exercise model-driven QA without model or Feishu credentials, run `bun run te
 4. Set `groupSessionScope` to `group_thread` on the Oryn-bound account so each topic gets its own QA session; other accounts keep their existing scoping.
 5. Set a non-empty `oryn.routes[].chats` allowlist to restrict intake to the intended test chats. An omitted or empty `chats` list matches the whole configured account; it does not disable intake. Accounts without a matching Oryn route keep ordinary Synergy routing.
 
-#Run `bun run test test/oryn/model-pipeline.test.ts test/oryn/engineering-pipeline.test.ts` to include the real engineering root, Boss worker, independent worktree, baseline check receipt and report-driven human handoff. The attachment assertion passes on the supplied baseline; the expected outcome is a request for the failing input and client version, not a claimed bug fix. Both scenarios use only loopback model and captured Feishu transport.
+Run `bun run test test/oryn/model-pipeline.test.ts test/oryn/engineering-pipeline.test.ts` to include the real engineering root, Boss worker, independent worktree, baseline check receipt and report-driven human handoff. The attachment assertion passes on the supplied baseline; the expected outcome is a request for the failing input and client version, not a claimed bug fix. Both scenarios use only loopback model and captured Feishu transport.
 
 A human handoff records its reason in the Case and shows the public-safe projection in the Oryn task detail. The Host queues one result per linked reporter, so the QA model does not need to send a second notice. Startup repairs a missing intent after interrupted persistence; it never automatically replays an ambiguous send. Resuming the Case suppresses a queued old handoff, and disabled notification kinds are settled as suppressed rather than sent later. Inspect the engineering task when the public reason is redacted.
+
+Ready notifications contain the PR link and candidate SHA from an acknowledged publication. Before sending, Oryn rechecks the remote PR, current CI and local delivery gate; GitHub observation failure leaves the intent pending. Restart recovery repairs missing intents and preserves confirmed or ambiguous legacy outcomes. Run `bun run test test/oryn/publish.test.ts test/oryn/action-migration.test.ts test/oryn/outbox.test.ts` for publication and notification regressions; these use simulated GitHub and Feishu transports.
 
 ## GitHub App
 

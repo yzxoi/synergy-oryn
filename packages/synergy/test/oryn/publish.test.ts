@@ -58,8 +58,11 @@ type Frozen = { caseId: string; engineeringSessionId: string; attemptId: string;
 async function seedFrozen(root: string): Promise<Frozen> {
   const identity = feishuIdentity(`chat_${Math.random().toString(36).slice(2, 8)}`)
   await OrynStore.bindSessionSource({ sessionID: "ses_qa_pub", identity, role: "qa" })
+  const turnID = `turn_${identity.messageId}`
+  await OrynStore.recordChannelTurn({ sessionID: "ses_qa_pub", rootID: turnID, identity, chatType: "group" })
   const submitted = await OrynService.submitCase({
     callerSessionID: "ses_qa_pub",
+    turnID,
     requestKey: `rk_${Math.random().toString(36).slice(2, 8)}`,
     kind: "bug",
     summary: "publish pipeline case",
@@ -212,10 +215,15 @@ function fakeTransport(input: {
   onExecute?: (call: PublishExecuteInput) => Promise<PublishExecuteResult>
 }): PublishTransport & { calls: PublishExecuteInput[] } {
   const calls: PublishExecuteInput[] = []
+  let draft = input.draft ?? true
   return {
     calls,
     async execute(call): Promise<PublishExecuteResult> {
-      if (input.onExecute) return input.onExecute(call)
+      if (input.onExecute) {
+        const result = await input.onExecute(call)
+        if (call.operation === "mark_ready") draft = false
+        return result
+      }
       calls.push(call)
       switch (call.operation) {
         case "ensure_issue":
@@ -227,6 +235,7 @@ function fakeTransport(input: {
         case "publish_review":
           return { refs: { pullNumber: call.pullNumber } }
         case "mark_ready":
+          draft = false
           return { refs: { pullNumber: call.pullNumber, checkRunId: 9001 } }
         default:
           return { refs: {} }
@@ -250,7 +259,7 @@ function fakeTransport(input: {
           title: "fix: forwarded message",
           headSha: head,
           headBranch: `codex/oryn/${input.marker.slice("<!-- oryn:".length, -" -->".length)}`,
-          draft: input.draft ?? true,
+          draft,
           baseRef: "dev",
           state: "open",
           markerPresent: true,
@@ -610,6 +619,274 @@ describe("OrynPublish ledger", () => {
 })
 
 describe("Oryn ready publication and recovery", () => {
+  test("QA cannot announce readiness without an acknowledged publication", async () => {
+    await withPubScope(async (root) => {
+      const seeded = await seedFrozen(root)
+      await expect(
+        OrynService.reply({ callerSessionID: "ses_qa_pub", caseId: seeded.caseId, kind: "ready", text: "It is ready" }),
+      ).rejects.toMatchObject({ data: { code: "EVIDENCE_INSUFFICIENT" } })
+      expect((await OrynStore.listPendingOutbox()).filter((entry) => entry.caseId === seeded.caseId)).toEqual([])
+    })
+  })
+
+  test("ready publication sends immediately and QA cannot duplicate the Host result", async () => {
+    await withPubScope(async (root) => {
+      const seeded = await seedFrozen(root)
+      await verifyFrozen(seeded)
+      await OrynStore.attachRemoteRefs(seeded.caseId, { pullNumber: 55 })
+      setTransport(
+        fakeTransport({ candidateSha: seeded.candidateSha, marker: caseMarker(seeded.caseId), ci: "success" }),
+      )
+      const sent: string[] = []
+      OrynService.setOutboxDeliverer(async ({ text }) => {
+        sent.push(text)
+      })
+      try {
+        await OrynPublish.publish({
+          callerSessionID: seeded.engineeringSessionId,
+          caseId: seeded.caseId,
+          operation: "mark_ready",
+          requestKey: "send-ready",
+        })
+        expect(sent).toEqual([
+          `Fix is ready for human review: https://github.com/acme/widget/pull/55 (candidate ${seeded.candidateSha})`,
+        ])
+        await OrynService.reply({
+          callerSessionID: "ses_qa_pub",
+          caseId: seeded.caseId,
+          kind: "ready",
+          text: "Unverified replacement text",
+        })
+        await OrynService.drainOutbox()
+        await OrynPublish.reconcileAllAmbiguous()
+        expect(sent).toHaveLength(1)
+      } finally {
+        OrynService.setOutboxDeliverer(undefined)
+      }
+    })
+  })
+
+  test("queued readiness is suppressed after acceptance changes", async () => {
+    await withPubScope(async (root) => {
+      const seeded = await seedFrozen(root)
+      await verifyFrozen(seeded)
+      await OrynStore.attachRemoteRefs(seeded.caseId, { pullNumber: 55 })
+      setTransport(
+        fakeTransport({ candidateSha: seeded.candidateSha, marker: caseMarker(seeded.caseId), ci: "success" }),
+      )
+      await OrynPublish.publish({
+        callerSessionID: seeded.engineeringSessionId,
+        caseId: seeded.caseId,
+        operation: "mark_ready",
+        requestKey: "stale-ready",
+      })
+      const record = (await OrynStore.getCase(seeded.caseId))!
+      await OrynStore.amendAcceptance(record.id, record.revision, { expected: "A changed acceptance target" })
+      const sent: string[] = []
+      OrynService.setOutboxDeliverer(async ({ text }) => {
+        sent.push(text)
+      })
+      try {
+        await OrynService.drainOutbox()
+        await OrynPublish.reconcileAllAmbiguous()
+        expect(sent).toEqual([])
+        expect((await OrynStore.listPendingOutbox()).filter((entry) => entry.caseId === seeded.caseId)).toEqual([])
+      } finally {
+        OrynService.setOutboxDeliverer(undefined)
+      }
+    })
+  })
+
+  test("a new ready conclusion can notify after the previous conclusion was suppressed", async () => {
+    await withPubScope(async (root) => {
+      const seeded = await seedFrozen(root)
+      await verifyFrozen(seeded)
+      await OrynStore.attachRemoteRefs(seeded.caseId, { pullNumber: 55 })
+      setTransport(
+        fakeTransport({ candidateSha: seeded.candidateSha, marker: caseMarker(seeded.caseId), ci: "success" }),
+      )
+      const request = {
+        callerSessionID: seeded.engineeringSessionId,
+        caseId: seeded.caseId,
+        operation: "mark_ready" as const,
+      }
+      await OrynPublish.publish({ ...request, requestKey: "before-pause" })
+      const record = (await OrynStore.getCase(seeded.caseId))!
+      const paused = await OrynStore.control(record.id, record.revision, "pause")
+      const sent: string[] = []
+      OrynService.setOutboxDeliverer(async ({ text }) => {
+        sent.push(text)
+      })
+      try {
+        await OrynService.drainOutbox()
+        expect(sent).toEqual([])
+        await OrynStore.control(record.id, paused.revision, "resume")
+        await OrynPublish.publish({ ...request, requestKey: "after-resume" })
+        await OrynPublish.publish({ ...request, requestKey: "same-conclusion-another-request" })
+        await OrynPublish.reconcileAllAmbiguous()
+        expect(sent).toEqual([
+          `Fix is ready for human review: https://github.com/acme/widget/pull/55 (candidate ${seeded.candidateSha})`,
+        ])
+      } finally {
+        OrynService.setOutboxDeliverer(undefined)
+      }
+    })
+  })
+
+  test("takeover during transport readiness prevents the queued ready send", async () => {
+    await withPubScope(async (root) => {
+      const seeded = await seedFrozen(root)
+      await verifyFrozen(seeded)
+      await OrynStore.attachRemoteRefs(seeded.caseId, { pullNumber: 55 })
+      setTransport(
+        fakeTransport({ candidateSha: seeded.candidateSha, marker: caseMarker(seeded.caseId), ci: "success" }),
+      )
+      await OrynPublish.publish({
+        callerSessionID: seeded.engineeringSessionId,
+        caseId: seeded.caseId,
+        operation: "mark_ready",
+        requestKey: "before-takeover",
+      })
+      const sent: string[] = []
+      OrynService.setOutboxDeliverer(
+        async ({ text }) => {
+          sent.push(text)
+        },
+        async () => {
+          const record = (await OrynStore.getCase(seeded.caseId))!
+          await OrynStore.control(record.id, record.revision, "takeover")
+          return true
+        },
+      )
+      try {
+        await OrynService.drainOutbox()
+        expect(sent).toEqual([])
+        expect((await OrynStore.listPendingOutbox()).filter((entry) => entry.caseId === seeded.caseId)).toEqual([])
+      } finally {
+        OrynService.setOutboxDeliverer(undefined)
+      }
+    })
+  })
+
+  test("queued readiness waits for the current remote candidate and successful CI", async () => {
+    await withPubScope(async (root) => {
+      const seeded = await seedFrozen(root)
+      await verifyFrozen(seeded)
+      await OrynStore.attachRemoteRefs(seeded.caseId, { pullNumber: 55 })
+      const facts = { candidateSha: seeded.candidateSha, marker: caseMarker(seeded.caseId), ci: "success" as const }
+      setTransport(fakeTransport(facts))
+      await OrynPublish.publish({
+        callerSessionID: seeded.engineeringSessionId,
+        caseId: seeded.caseId,
+        operation: "mark_ready",
+        requestKey: "remote-ready",
+      })
+      const sent: string[] = []
+      OrynService.setOutboxDeliverer(async ({ text }) => {
+        sent.push(text)
+      })
+      try {
+        setTransport(fakeTransport({ ...facts, draft: false, pullHeadSha: "f".repeat(40) }))
+        await OrynService.drainOutbox()
+        expect(sent).toEqual([])
+        setTransport(fakeTransport({ ...facts, draft: false, ci: "none" }))
+        await OrynService.drainOutbox()
+        expect(sent).toEqual([])
+        setTransport(fakeTransport({ ...facts, draft: false }))
+        await OrynService.drainOutbox()
+        expect(sent).toHaveLength(1)
+      } finally {
+        OrynService.setOutboxDeliverer(undefined)
+      }
+    })
+  })
+
+  test.each(["delivered", "ambiguous"] as const)(
+    "a legacy %s ready notice is not resent under a new request key",
+    async (state) => {
+      await withPubScope(async (root) => {
+        const seeded = await seedFrozen(root)
+        await verifyFrozen(seeded)
+        const record = await OrynStore.attachRemoteRefs(seeded.caseId, { pullNumber: 55 })
+        await OrynStore.writeAction({
+          caseId: record.id,
+          operation: "mark_ready",
+          payloadDigest: "legacy-ready",
+          expectedHead: seeded.candidateSha,
+          expectedRevision: record.revision,
+          epoch: record.epoch,
+          requestKey: "legacy-ready",
+          state: "acknowledged",
+          readyTarget: {
+            attemptId: seeded.attemptId,
+            repository: "acme/widget",
+            branch: orynBranch(record.id),
+            baseBranch: "dev",
+            deliveryCheck: false,
+          },
+          remoteRefs: { pullNumber: 55 },
+        })
+        setTransport(
+          fakeTransport({
+            candidateSha: seeded.candidateSha,
+            marker: caseMarker(record.id),
+            ci: "success",
+            draft: false,
+          }),
+        )
+        await OrynPublish.reconcileAllAmbiguous()
+        const [notice] = (await OrynStore.listPendingOutbox()).filter((entry) => entry.caseId === record.id)
+        expect(notice.dedupKey).toBe(`${record.id}:ready:${seeded.attemptId}`)
+        await OrynStore.claimOutboxDelivery(notice.id)
+        if (state === "delivered") await OrynStore.markOutboxDelivered(notice.id)
+        const sent: string[] = []
+        OrynService.setOutboxDeliverer(async ({ text }) => {
+          sent.push(text)
+        })
+        try {
+          await OrynPublish.publish({
+            callerSessionID: seeded.engineeringSessionId,
+            caseId: record.id,
+            operation: "mark_ready",
+            requestKey: "new-version-writer",
+          })
+          await OrynPublish.reconcileAllAmbiguous()
+          expect(sent).toEqual([])
+          expect((await OrynStore.listPendingOutbox()).filter((entry) => entry.caseId === record.id)).toEqual([])
+        } finally {
+          OrynService.setOutboxDeliverer(undefined)
+        }
+      })
+    },
+  )
+
+  test("concurrent ready drains claim one physical notification", async () => {
+    await withPubScope(async (root) => {
+      const seeded = await seedFrozen(root)
+      await verifyFrozen(seeded)
+      await OrynStore.attachRemoteRefs(seeded.caseId, { pullNumber: 55 })
+      setTransport(
+        fakeTransport({ candidateSha: seeded.candidateSha, marker: caseMarker(seeded.caseId), ci: "success" }),
+      )
+      await OrynPublish.publish({
+        callerSessionID: seeded.engineeringSessionId,
+        caseId: seeded.caseId,
+        operation: "mark_ready",
+        requestKey: "concurrent-ready",
+      })
+      const sent: string[] = []
+      OrynService.setOutboxDeliverer(async ({ text }) => {
+        sent.push(text)
+      })
+      try {
+        await Promise.all([OrynService.drainOutbox(), OrynService.drainOutbox(), OrynService.drainOutbox()])
+        expect(sent).toHaveLength(1)
+      } finally {
+        OrynService.setOutboxDeliverer(undefined)
+      }
+    })
+  })
+
   test("persists the bound PR before dispatch and delivers one ready result", async () => {
     await withPubScope(async (root) => {
       const seeded = await seedFrozen(root)
@@ -788,6 +1065,17 @@ test("an acknowledged publication cannot ready a later attempt with the same SHA
     }))
     await OrynPublish.reconcileAllAmbiguous()
     expect((await OrynStore.getAttempt(seeded.caseId, rotated.next.id))?.disposition).toBe("open")
+    const sent: string[] = []
+    OrynService.setOutboxDeliverer(async ({ text }) => {
+      sent.push(text)
+    })
+    try {
+      await OrynService.drainOutbox()
+      expect(sent).toEqual([])
+      expect((await OrynStore.listPendingOutbox()).filter((entry) => entry.caseId === seeded.caseId)).toEqual([])
+    } finally {
+      OrynService.setOutboxDeliverer(undefined)
+    }
   })
 })
 

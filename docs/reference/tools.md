@@ -90,7 +90,7 @@ Generated from the builtin tool registry in `packages/synergy/src/tool/registry.
 | `oryn_github_read` | `code.read` | Read bounded remote facts for one of your linked cases: the linked issue and pull request (title, state, author class), and CI status on the candidate. The host resolves the repository and refs from t |
 | `oryn_learn` | `knowledge.memory` | Propose a reusable lesson from this case for host promotion into shared memory. Every claim must cite case records as evidence; raw chat text, private logs, and credentials are rejected. Promotion onl |
 | `oryn_publish` | `communication.publish` | Publish host-verified artifacts for your case: the tracking issue, a draft PR from the frozen candidate, PR updates, the review comment, or the final ready delivery. The host generates PR scope diagra |
-| `oryn_reply` | `communication.deliver` | Queue a bounded QA reply to your bound reporter source. The host supplies recipient and root turn identity; no account or chat id is accepted. Answers deduplicate within the current turn, ordinary lif |
+| `oryn_reply` | `communication.deliver` | Queue a bounded QA reply to your bound reporter source. The host supplies recipient and root turn identity; no account or chat id is accepted. Answers deduplicate within the current turn. Ready replie |
 | `oryn_result` | `orchestration.session` | Submit your structured worker outcome for an assignment, or read a previously submitted report. The host validates the assignment belongs to your session; stale-epoch reports are archived but not acce |
 | `parse_code` | `code.analyze` | Search code with AST-aware patterns and return anchored file blocks. Use this instead of `ast_grep` in the anchored coding harness. Matched files are returned with real `[path#TAG]` headers and only t |
 | `pathway_read` | `orchestration.dag` | Read the current Lattice Run and ordered Pathway. The result separates pathway.history and pathway.current, which are read-only, from pathway.editableFuture, which is the complete list accepted by pat |
@@ -1291,7 +1291,7 @@ Publish host-verified artifacts for your case: the tracking issue, a draft PR fr
 
 Kind: `communication.deliver`
 
-Queue a bounded QA reply to your bound reporter source. The host supplies recipient and root turn identity; no account or chat id is accepted. Answers deduplicate within the current turn, ordinary lifecycle notifications within the case attempt, and persisted human-handoff notices within the handoff epoch. Returns the durable entry id and whether it was newly queued; this does not claim remote delivery.
+Queue a bounded QA reply to your bound reporter source. The host supplies recipient and root turn identity; no account or chat id is accepted. Answers deduplicate within the current turn. Ready replies require an acknowledged publication and reuse the Host-generated notice for that conclusion; your text cannot replace it. Persisted human-handoff replies likewise reuse the Host notice for the handoff epoch. Returns the durable entry id and whether it was newly queued; this does not claim remote delivery.
 
 | Parameter | Type | Required | Description |
 | --- | --- | --- | --- |

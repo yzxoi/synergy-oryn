@@ -8,9 +8,10 @@ import { OrynCandidate } from "./candidate"
 import { OrynConfig } from "./config"
 import { OrynEngineering } from "./engineering"
 import { OrynReports } from "./reports"
+import { OrynReady } from "./ready"
 import { OrynEvidence } from "./evidence"
 import { Finding as FindingSchema } from "./schema"
-import type { Case, Finding, ReviewDomain, RunReceipt, SourceIdentity, Stage } from "./schema"
+import type { Case, Finding, OutboxEntry, ReviewDomain, RunReceipt, SourceIdentity, Stage } from "./schema"
 import { OrynExecutor } from "./executor"
 
 /**
@@ -152,25 +153,57 @@ export namespace OrynService {
     return externalIdentityHash(record.id, "needs_human", String(record.handoff?.epoch))
   }
 
+  async function reporter(record: Case, key: string) {
+    if (!record.sourceIds.includes(key)) return
+    const source = await OrynStore.getSource(key)
+    const channel = await OrynStore.channelSource(key)
+    const config = await OrynConfig.info()
+    if (
+      !source?.caseIds.includes(record.id) ||
+      source.identity.provider !== "feishu" ||
+      !channel ||
+      sourceKey(channel.identity) !== key ||
+      !config?.enabled ||
+      OrynConfig.resolveRepoAlias(config, source.identity) !== record.repoAlias
+    )
+      return
+    const binding = await OrynStore.sessionSourceBinding(channel.qaSessionId)
+    if (
+      binding?.role !== "qa" ||
+      binding.identity?.accountId !== channel.identity.accountId ||
+      binding.identity.chatId !== channel.identity.chatId ||
+      binding.identity.threadId !== channel.identity.threadId
+    )
+      return
+    return channel.qaSessionId
+  }
+
+  export async function queueReadyNotifications(caseId: string) {
+    const queued: Awaited<ReturnType<typeof OrynStore.writeOutbox>>[] = []
+    const ready = await OrynReady.projection(caseId)
+    if (!ready) return queued
+    for (const key of ready.record.sourceIds) {
+      if (!(await reporter(ready.record, key))) continue
+      queued.push(
+        await OrynStore.writeOutbox({
+          caseId,
+          sourceKeyHash: key,
+          kind: "ready",
+          text: ready.text,
+          dedupKey: ready.dedupKey,
+        }),
+      )
+    }
+    return queued
+  }
+
   async function queueHandoffNotifications(record: Case) {
     const queued: Awaited<ReturnType<typeof OrynStore.writeOutbox>>[] = []
     if (record.control !== "human_owned" || !record.handoff || record.handoff.epoch !== record.epoch) return queued
     const config = await OrynConfig.info()
     if (!config?.enabled) return queued
     for (const key of record.sourceIds) {
-      const source = await OrynStore.getSource(key)
-      const channel = await OrynStore.channelSource(key)
-      if (
-        !source ||
-        !source.caseIds.includes(record.id) ||
-        source.identity.provider !== "feishu" ||
-        !channel ||
-        sourceKey(channel.identity) !== key ||
-        OrynConfig.resolveRepoAlias(config, source.identity) !== record.repoAlias
-      )
-        continue
-      const owner = await OrynStore.getCaseForSession(record.id, channel.qaSessionId).catch(() => undefined)
-      if (!owner) continue
+      if (!(await reporter(record, key))) continue
       const reason = handoffSummary(record)!.reason
       queued.push(
         await OrynStore.writeOutbox({
@@ -708,7 +741,7 @@ export namespace OrynService {
       if (!attempt.candidateSha) {
         failures.push({ code: "INVALID_STAGE", message: "attempt has no frozen candidate" })
       }
-      if (attempt.disposition !== "candidate_frozen") {
+      if (attempt.disposition !== "candidate_frozen" && attempt.disposition !== "ready") {
         failures.push({ code: "INVALID_STAGE", message: `attempt disposition is ${attempt.disposition}` })
       }
 
@@ -947,8 +980,8 @@ export namespace OrynService {
   /**
    * Bounded delivery intent. The model never names a chat or account; the
    * target is the Host-bound source. Conversation replies deduplicate per
-   * root turn; lifecycle notifications per source, kind, case and attempt,
-   * except persisted human handoffs, which use their ownership epoch.
+   * root turn; readiness per Host publication conclusion, persisted human
+   * handoffs per ownership epoch, and other lifecycle notices per attempt.
    */
   export async function reply(input: {
     callerSessionID: string
@@ -984,6 +1017,14 @@ export namespace OrynService {
         if (channel?.qaSessionId === input.callerSessionID) return { entryId: notice.entry.id, created: notice.created }
       }
       throw storeError("NOT_AUTHORIZED", "handoff has no current authorized notification source")
+    }
+    if (input.kind === "ready") {
+      if (!caseId) throw storeError("NOT_AUTHORIZED", "readiness requires an acknowledged Case publication")
+      for (const notice of await queueReadyNotifications(caseId)) {
+        if ((await OrynStore.channelSource(notice.entry.sourceKey))?.qaSessionId === input.callerSessionID)
+          return { entryId: notice.entry.id, created: notice.created }
+      }
+      throw storeError("EVIDENCE_INSUFFICIENT", "Case has no current acknowledged ready result for this reporter")
     }
     const replySourceKey = turn ? sourceKey(turn.identity) : binding.sourceKey
     const conversational = input.kind === "answer" || input.kind === "clarification"
@@ -1021,10 +1062,53 @@ export namespace OrynService {
     canDeliver = ready
   }
 
+  async function claimNotification(
+    entry: OutboxEntry,
+    available: boolean,
+    proof?: OrynReady.Projection,
+  ): Promise<"claimed" | "suppressed" | "pending"> {
+    using _case = entry.caseId ? await Lock.write(`oryn-case:${entry.caseId}`) : undefined
+    const record = entry.caseId ? await OrynStore.getCase(entry.caseId) : undefined
+    using _attempt =
+      record?.activeAttemptId && entry.kind === "ready"
+        ? await Lock.write(`oryn-attempt:${record.id}:${record.activeAttemptId}`)
+        : undefined
+    const suppress = async () => {
+      await OrynStore.markOutboxSuppressed(entry.id)
+      return "suppressed" as const
+    }
+    const config = await OrynConfig.info()
+    if (!config?.enabled) return "pending"
+    if (config.notifications?.kinds && !config.notifications.kinds.includes(entry.kind)) return suppress()
+    const link = await OrynStore.getSource(entry.sourceKey)
+    if (!link) return suppress()
+    if (entry.kind === "ready" || (entry.caseId && entry.kind === "needs_human")) {
+      const ready = entry.kind === "ready" && entry.caseId ? await OrynReady.projection(entry.caseId) : undefined
+      const current =
+        record &&
+        record.sourceIds.includes(entry.sourceKey) &&
+        link.caseIds.includes(record.id) &&
+        (entry.kind === "needs_human"
+          ? record.control === "human_owned" &&
+            record.handoff?.epoch === record.epoch &&
+            entry.dedupKey === handoffKey(record)
+          : ready?.dedupKey === entry.dedupKey && ready.text === entry.text)
+      if (!current) return suppress()
+      if (!(await reporter(record, entry.sourceKey))) return "pending"
+      if (
+        entry.kind === "ready" &&
+        (!proof || proof.dedupKey !== ready?.dedupKey || proof.policyDigest !== ready.policyDigest)
+      )
+        return "pending"
+    }
+    if (!available) return "pending"
+    return (await OrynStore.claimOutboxDelivery(entry.id)) ? "claimed" : "pending"
+  }
+
   /**
-   * Drain pending outbox entries through the injected deliverer.
-   * An intent is ambiguous before invoking the transport. A crash or lost
-   * acknowledgement therefore cannot cause an automatic duplicate send.
+   * Transport readiness precedes the locked local claim. A takeover before
+   * that claim prevents dispatch; a claimed send remains ambiguous until its
+   * transport acknowledges, without holding the Case lock across the network.
    */
   export async function drainOutbox(): Promise<{ delivered: number; suppressed: number }> {
     const config = await OrynConfig.info()
@@ -1033,44 +1117,21 @@ export namespace OrynService {
     let delivered = 0
     let suppressed = 0
     for (const entry of pending) {
-      if (config.notifications?.kinds && !config.notifications.kinds.includes(entry.kind)) {
-        await OrynStore.markOutboxSuppressed(entry.id)
-        suppressed++
-        continue
-      }
+      const send = deliverer
       const link = await OrynStore.getSource(entry.sourceKey)
       if (!link) {
         await OrynStore.markOutboxSuppressed(entry.id)
         suppressed++
         continue
       }
-      if (entry.caseId && (entry.kind === "needs_human" || entry.kind === "ready")) {
-        const record = await OrynStore.getCase(entry.caseId)
-        const current =
-          record &&
-          record.sourceIds.includes(entry.sourceKey) &&
-          link.caseIds.includes(record.id) &&
-          (entry.kind === "needs_human"
-            ? record.control === "human_owned" &&
-              record.handoff?.epoch === record.epoch &&
-              entry.dedupKey === handoffKey(record)
-            : record.control === "active")
-        if (!current) {
-          await OrynStore.markOutboxSuppressed(entry.id)
-          suppressed++
-          continue
-        }
-        const config = await OrynConfig.info()
-        if (
-          link.identity.provider === "feishu" &&
-          OrynConfig.resolveRepoAlias(config, link.identity) !== record.repoAlias
-        )
-          continue
-      }
-      const send = deliverer
-      if (!send || !link.identity) continue
-      if (canDeliver && !(await canDeliver({ sourceKey: entry.sourceKey, identity: link.identity }))) continue
-      if (!(await OrynStore.claimOutboxDelivery(entry.id))) continue
+      const available =
+        !!send && (!canDeliver || (await canDeliver({ sourceKey: entry.sourceKey, identity: link.identity })))
+      const ready =
+        available && entry.kind === "ready" && entry.caseId ? await OrynReady.projection(entry.caseId) : undefined
+      const proof = ready && (await OrynReady.confirm(ready)) ? ready : undefined
+      const claim = await claimNotification(entry, available, proof)
+      if (claim === "suppressed") suppressed++
+      if (claim !== "claimed" || !send) continue
       try {
         await send({
           sourceKey: entry.sourceKey,

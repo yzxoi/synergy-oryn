@@ -1,9 +1,11 @@
+import { Lock } from "../util/lock"
 import { OrynPublication } from "./publication"
 import { externalIdentityHash } from "../util/identity"
 import { OrynStore, storeError } from "./store"
 import { OrynConfig } from "./config"
 import { OrynService } from "./service"
 import { OrynLearning } from "./learn"
+import { OrynReady } from "./ready"
 import type { ActionReceipt, PublishOperation } from "./schema"
 
 /**
@@ -90,6 +92,43 @@ let transport: PublishTransport | undefined
 /** Product assembly injection; the provider supplies the real implementation. */
 export function setTransport(fn: PublishTransport): void {
   transport = fn
+  OrynReady.setVerifier(async ({ record, attempt, action }) => {
+    const target = action.readyTarget
+    if (!target || !record.engineeringSessionId) return false
+    const facts = await fn.observe(
+      {
+        repository: target.repository,
+        pullNumber: action.remoteRefs?.pullNumber,
+        ref: action.expectedHead,
+        marker: caseMarker(record.id),
+      },
+      AbortSignal.timeout(30_000),
+    )
+    const pull = facts.pull
+    if (
+      !pull ||
+      pull.number !== action.remoteRefs?.pullNumber ||
+      pull.state !== "open" ||
+      pull.draft !== false ||
+      pull.headSha !== action.expectedHead ||
+      pull.headBranch !== target.branch ||
+      pull.baseRef !== target.baseBranch ||
+      !pull.markerPresent ||
+      !pull.authorIsApp ||
+      facts.ci.state !== "success" ||
+      (target.deliveryCheck && facts.delivery?.headSha !== action.expectedHead)
+    )
+      return false
+    const publication = await OrynPublication.capture({ repository: target.repository, record, attempt })
+    return (
+      await OrynService.evaluateDelivery({
+        callerSessionID: record.engineeringSessionId,
+        caseId: record.id,
+        payload: publication.body,
+        ciStatus: "passed",
+      })
+    ).ready
+  })
 }
 
 function requireTransport(): PublishTransport {
@@ -102,45 +141,37 @@ const CANDIDATE_OPERATIONS: PublishOperation[] = ["ensure_draft", "refresh_pr", 
 async function actionTolerantPause(caseId: string, expectedRevision: number): Promise<void> {
   await OrynStore.control(caseId, expectedRevision, "pause").catch(() => undefined)
 }
-function sameReadyConfig(
-  target: NonNullable<ActionReceipt["readyTarget"]>,
-  repo: {
-    owner: string
-    repo: string
-    baseBranch?: string
-    deliveryCheck?: boolean
-  },
-): boolean {
-  return (
-    target.repository === `${repo.owner}/${repo.repo}` &&
-    target.baseBranch === (repo.baseBranch ?? "dev") &&
-    target.deliveryCheck === (repo.deliveryCheck === true)
-  )
-}
 
 async function completeReady(action: ActionReceipt): Promise<void> {
   if (action.operation !== "mark_ready" || action.state !== "acknowledged" || !action.remoteRefs?.pullNumber) return
   if (!action.readyTarget) return
-  const record = await OrynStore.getCase(action.caseId)
-  if (!record || record.control !== "active" || record.epoch !== action.epoch || !record.activeAttemptId) return
-  const attempt = await OrynStore.getAttempt(record.id, record.activeAttemptId)
-  if (!attempt || attempt.id !== action.readyTarget.attemptId || attempt.candidateSha !== action.expectedHead) return
-  const config = await OrynConfig.info()
-  const repo = config?.repositories?.[record.repoAlias]
-  if (!config?.enabled || !repo || !sameReadyConfig(action.readyTarget, repo)) return
-  if (attempt.disposition !== "ready") {
-    await OrynStore.mutateAttempt(record.id, attempt.id, (draft) => ({ ...draft, disposition: "ready" as const }))
+  {
+    using _lock = await Lock.write(`oryn-case:${action.caseId}`)
+    const record = await OrynStore.getCase(action.caseId)
+    if (
+      !record ||
+      record.control !== "active" ||
+      record.epoch !== action.epoch ||
+      record.revision !== action.expectedRevision ||
+      !record.activeAttemptId
+    )
+      return
+    const attempt = await OrynStore.getAttempt(record.id, record.activeAttemptId)
+    if (!attempt || attempt.id !== action.readyTarget.attemptId || attempt.candidateSha !== action.expectedHead) return
+    const config = await OrynConfig.info()
+    const repo = config?.repositories?.[record.repoAlias]
+    if (!config?.enabled || !repo || !OrynReady.matchesConfig(action.readyTarget, repo)) return
+    if (attempt.disposition !== "ready") {
+      await OrynStore.mutateAttempt(record.id, attempt.id, (draft) =>
+        draft.candidateSha === action.expectedHead && draft.disposition === "candidate_frozen"
+          ? { ...draft, disposition: "ready" as const }
+          : draft,
+      )
+    }
   }
-  for (const sourceKeyHash of record.sourceIds) {
-    await OrynStore.writeOutbox({
-      caseId: record.id,
-      sourceKeyHash,
-      kind: "ready",
-      text: `Fix is ready for human review (PR #${action.remoteRefs.pullNumber}, candidate ${action.expectedHead})`,
-      dedupKey: `${record.id}:ready:${attempt.id}`,
-    })
-  }
-  await OrynLearning.promoteCase(record.id).catch(() => undefined)
+  await OrynService.queueReadyNotifications(action.caseId)
+  await OrynService.drainOutbox()
+  await OrynLearning.promoteCase(action.caseId).catch(() => undefined)
 }
 
 export namespace OrynPublish {
@@ -353,6 +384,18 @@ export namespace OrynPublish {
               branch: orynBranch(input.caseId),
               baseBranch: repoCfg.baseBranch ?? "dev",
               deliveryCheck: repoCfg.deliveryCheck === true,
+              notificationKey: externalIdentityHash(
+                record.id,
+                "ready",
+                attemptId!,
+                String(record.epoch),
+                String(record.revision),
+                candidateSha!,
+                repository,
+                String(pullNumber),
+                repoCfg.baseBranch ?? "dev",
+                String(repoCfg.deliveryCheck === true),
+              ),
             },
           }
         : {}),
@@ -511,7 +554,7 @@ export namespace OrynPublish {
         }
       } else if (action.operation === "mark_ready") {
         const target = action.readyTarget
-        if (!target || !sameReadyConfig(target, repoCfg) || target.attemptId !== record.activeAttemptId) break
+        if (!target || !OrynReady.matchesConfig(target, repoCfg) || target.attemptId !== record.activeAttemptId) break
         const pull = facts.pull
         if (
           pull &&
@@ -528,16 +571,12 @@ export namespace OrynPublish {
         ) {
           const active = record.activeAttemptId ? await OrynStore.getAttempt(caseId, record.activeAttemptId) : undefined
           if (!active || active.candidateSha !== action.expectedHead || record.control !== "active") break
-          const gate =
-            active.disposition === "ready"
-              ? { ready: true }
-              : await OrynService.evaluateDelivery({
-                  callerSessionID: record.engineeringSessionId!,
-                  caseId,
-                  payload: `Verified candidate ${action.expectedHead}`,
-                  ciStatus:
-                    facts.ci.state === "success" ? "passed" : facts.ci.state === "failure" ? "failed" : undefined,
-                })
+          const gate = await OrynService.evaluateDelivery({
+            callerSessionID: record.engineeringSessionId!,
+            caseId,
+            payload: `Verified candidate ${action.expectedHead}`,
+            ciStatus: facts.ci.state === "success" ? "passed" : facts.ci.state === "failure" ? "failed" : undefined,
+          })
           if (!gate.ready) break
           const settled = await OrynStore.mutateAction(actionId, (value) => ({
             ...value,

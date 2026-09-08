@@ -15,7 +15,11 @@ const LegacyOutboxEntry = OutboxEntry.extend({
   state: z.enum(["pending", "delivered", "suppressed"]),
 }).omit({ attemptedAt: true })
 
-const ActionReceiptV2 = ActionReceipt.extend({
+const ActionReceiptV3 = ActionReceipt.extend({
+  schemaVersion: z.literal(3),
+  readyTarget: ActionReceipt.shape.readyTarget.unwrap().omit({ notificationKey: true }).optional(),
+})
+const ActionReceiptV2 = ActionReceiptV3.extend({
   schemaVersion: z.literal(2),
   operation: z.enum(["ensure_issue", "ensure_draft", "refresh_pr", "publish_review", "mark_ready", "notify_feishu"]),
 }).omit({ labelTarget: true })
@@ -67,7 +71,11 @@ export const migrations: Migration[] = [
       const ids = await Storage.scan(OrynPath.actionsRoot())
       for (const [index, id] of ids.entries()) {
         const value = await Storage.read<unknown>(OrynPath.action(id))
-        if (!ActionReceipt.safeParse(value).success && !ActionReceiptV2.safeParse(value).success) {
+        if (
+          !ActionReceipt.safeParse(value).success &&
+          !ActionReceiptV3.safeParse(value).success &&
+          !ActionReceiptV2.safeParse(value).success
+        ) {
           const legacy = LegacyActionReceipt.parse(value)
           await Storage.write(OrynPath.action(id), ActionReceiptV2.parse({ ...legacy, schemaVersion: 2 }))
         }
@@ -85,9 +93,27 @@ export const migrations: Migration[] = [
       const ids = await Storage.scan(OrynPath.actionsRoot())
       for (const [index, id] of ids.entries()) {
         const value = await Storage.read<unknown>(OrynPath.action(id))
-        if (!ActionReceipt.safeParse(value).success) {
+        if (!ActionReceipt.safeParse(value).success && !ActionReceiptV3.safeParse(value).success) {
           const legacy = ActionReceiptV2.parse(value)
-          await Storage.write(OrynPath.action(id), ActionReceipt.parse({ ...legacy, schemaVersion: 3 }))
+          await Storage.write(OrynPath.action(id), ActionReceiptV3.parse({ ...legacy, schemaVersion: 3 }))
+        }
+        progress(index + 1, ids.length)
+      }
+    },
+  },
+  {
+    id: "20260908-oryn-ready-notification",
+    description: "Version readiness notifications while preserving legacy publication identity",
+    version: "1.0.0",
+    domain: "oryn",
+    dependsOn: ["20260908-oryn-label-target"],
+    async up(progress) {
+      const ids = await Storage.scan(OrynPath.actionsRoot())
+      for (const [index, id] of ids.entries()) {
+        const value = await Storage.read<unknown>(OrynPath.action(id))
+        if (!ActionReceipt.safeParse(value).success) {
+          const legacy = ActionReceiptV3.parse(value)
+          await Storage.write(OrynPath.action(id), ActionReceipt.parse({ ...legacy, schemaVersion: 4 }))
         }
         progress(index + 1, ids.length)
       }

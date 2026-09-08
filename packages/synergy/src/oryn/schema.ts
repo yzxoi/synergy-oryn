@@ -328,7 +328,7 @@ export type LabelTarget = z.infer<typeof LabelTarget>
 
 export const ActionReceipt = z
   .object({
-    schemaVersion: z.literal(3),
+    schemaVersion: z.literal(4),
     labelTarget: LabelTarget.optional(),
     id: z.string().min(1),
     caseId: z.string().min(1),
@@ -342,6 +342,7 @@ export const ActionReceipt = z
         branch: z.string().min(1),
         baseBranch: z.string().min(1),
         deliveryCheck: z.boolean(),
+        notificationKey: z.string().min(1).optional(),
       })
       .strict()
       .optional(),

@@ -436,7 +436,7 @@ export const OrynReplyTool = Tool.define(
   "oryn_reply",
   {
     description:
-      "Queue a bounded QA reply to your bound reporter source. The host supplies recipient and root turn identity; no account or chat id is accepted. Answers deduplicate within the current turn, ordinary lifecycle notifications within the case attempt, and persisted human-handoff notices within the handoff epoch. Returns the durable entry id and whether it was newly queued; this does not claim remote delivery.",
+      "Queue a bounded QA reply to your bound reporter source. The host supplies recipient and root turn identity; no account or chat id is accepted. Answers deduplicate within the current turn. Ready replies require an acknowledged publication and reuse the Host-generated notice for that conclusion; your text cannot replace it. Persisted human-handoff replies likewise reuse the Host notice for the handoff epoch. Returns the durable entry id and whether it was newly queued; this does not claim remote delivery.",
     parameters: ReplyParameters,
     async execute(params, ctx): Promise<Tool.ExecutionResult> {
       return execute(async () => {

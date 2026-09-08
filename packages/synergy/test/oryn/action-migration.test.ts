@@ -21,6 +21,7 @@ test("action migration preserves legacy uncertainty and exact fresh targets on r
       expect(MigrationRegistry.list().get("oryn")).toContain(migration)
       await migration.up(() => {})
       await labelMigration.up(() => {})
+      await migrations.find((entry) => entry.id === "20260908-oryn-ready-notification")!.up(() => {})
       const legacyId = `legacy_${crypto.randomUUID()}`
       const legacy = {
         schemaVersion: 1,
@@ -57,14 +58,16 @@ test("action migration preserves legacy uncertainty and exact fresh targets on r
         },
         remoteRefs: { pullNumber: 55 },
       })
-      expect(ActionReceipt.parse(fresh).schemaVersion).toBe(3)
+      expect(ActionReceipt.parse(fresh).schemaVersion).toBe(4)
       await migration.up(() => {})
       await labelMigration.up(() => {})
+      await migrations.find((entry) => entry.id === "20260908-oryn-ready-notification")!.up(() => {})
       const upgraded = ActionReceipt.parse(await Storage.read<unknown>(OrynPath.action(legacyId)))
-      expect(upgraded).toEqual({ ...legacy, schemaVersion: 3 })
+      expect(upgraded).toEqual({ ...legacy, schemaVersion: 4 })
       expect(upgraded.readyTarget).toBeUndefined()
       await migration.up(() => {})
       await labelMigration.up(() => {})
+      await migrations.find((entry) => entry.id === "20260908-oryn-ready-notification")!.up(() => {})
       expect(await Storage.read<unknown>(OrynPath.action(legacyId))).toEqual(upgraded)
       expect(await OrynStore.getAction(fresh.id)).toEqual(fresh)
     },
@@ -107,9 +110,46 @@ test("label migration upgrades v2 readiness receipts without inventing a label i
   }
   await Storage.write(OrynPath.action(legacy.id), legacy)
   await migration.up(() => {})
+  await migrations.find((entry) => entry.id === "20260908-oryn-ready-notification")!.up(() => {})
   const upgraded = ActionReceipt.parse(await OrynStore.getAction(legacy.id))
-  expect(upgraded).toEqual({ ...legacy, schemaVersion: 3 })
+  expect(upgraded).toEqual({ ...legacy, schemaVersion: 4 })
   expect(upgraded.labelTarget).toBeUndefined()
   await migration.up(() => {})
+  expect(await OrynStore.getAction(fresh.id)).toEqual(fresh)
+})
+
+test("v3 readiness upgrade preserves the legacy notification identity without inventing a new one", async () => {
+  await using tmp = await tmpdir()
+  const migration = migrations.find((entry) => entry.id === "20260908-oryn-ready-notification")!
+  expect(MigrationRegistry.list().get("oryn")).toContain(migration)
+  await migration.up(() => {})
+  const fresh = await OrynStore.writeAction({
+    caseId: "notification-migration",
+    operation: "mark_ready",
+    payloadDigest: "ready",
+    expectedHead: "a".repeat(40),
+    expectedRevision: 2,
+    epoch: 0,
+    requestKey: "fresh-version",
+    state: "acknowledged",
+    remoteRefs: { pullNumber: 55 },
+    readyTarget: {
+      attemptId: "attempt",
+      repository: "acme/widget",
+      branch: "codex/oryn/example",
+      baseBranch: "dev",
+      deliveryCheck: false,
+      notificationKey: "host-versioned-key",
+    },
+  })
+  const { notificationKey: _, ...target } = fresh.readyTarget!
+  const legacy = { ...fresh, id: `v3-${crypto.randomUUID()}`, schemaVersion: 3, readyTarget: target }
+  await Storage.write(OrynPath.action(legacy.id), legacy)
+  await migration.up(() => {})
+  const upgraded = ActionReceipt.parse(await OrynStore.getAction(legacy.id))
+  expect(upgraded).toEqual({ ...legacy, schemaVersion: 4 })
+  expect(upgraded.readyTarget?.notificationKey).toBeUndefined()
+  await migration.up(() => {})
+  expect(await OrynStore.getAction(legacy.id)).toEqual(upgraded)
   expect(await OrynStore.getAction(fresh.id)).toEqual(fresh)
 })
