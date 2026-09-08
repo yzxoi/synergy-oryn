@@ -171,6 +171,7 @@ oryn_unit="user@$(id -u).service"
 sudo install -d "/run/systemd/system/${oryn_unit}.d"
 printf '[Service]\nDelegate=cpu memory pids\n' | sudo tee "/run/systemd/system/${oryn_unit}.d/oryn.conf" > /dev/null
 sudo systemctl daemon-reload
+sudo loginctl enable-linger "$(id -un)"
 sudo systemctl restart "$oryn_unit"
 ```
 

@@ -37,6 +37,8 @@ jobs:
           sudo install -d "/run/systemd/system/${oryn_unit}.d"
           printf '[Service]\nDelegate=cpu memory pids\n' | sudo tee "/run/systemd/system/${oryn_unit}.d/oryn.conf" > /dev/null
           sudo systemctl daemon-reload
+          trap 'sudo systemctl status "$oryn_unit" --no-pager --full || true; sudo journalctl --boot --unit "$oryn_unit" --no-pager --lines=80 || true' ERR
+          sudo loginctl enable-linger "$(id -un)"
           sudo systemctl restart "$oryn_unit"
       - name: Exercise the actual Oryn sandbox and scheduler
         env:
