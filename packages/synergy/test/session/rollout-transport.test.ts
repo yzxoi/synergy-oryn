@@ -2,6 +2,89 @@ import { describe, expect, test } from "bun:test"
 import { RolloutTransport } from "../../src/session/rollout/transport"
 
 describe("rollout transport", () => {
+  test("an early response settles the pending request body before ending the attempt", async () => {
+    const events: RolloutTransport.Event[] = []
+    const waiting = Promise.withResolvers<void>()
+    let reads = 0
+    const upload = new ReadableStream<Uint8Array>(
+      {
+        pull(controller) {
+          if (reads++ === 0) controller.enqueue(new TextEncoder().encode("upload prefix"))
+          else waiting.resolve()
+        },
+      },
+      { highWaterMark: 0 },
+    )
+    let reader: ReadableStreamDefaultReader<Uint8Array> | undefined
+    let read: ReturnType<ReadableStreamDefaultReader<Uint8Array>["read"]> | undefined
+    const options = { method: "POST", body: upload, duplex: "half" }
+    await RolloutTransport.provide(
+      async (event) => {
+        events.push(event)
+      },
+      async () => {
+        const response = await RolloutTransport.fetch(
+          async (input) => {
+            reader = (input as Request).body!.getReader()
+            read = reader.read()
+            await waiting.promise
+            return new Response("early response")
+          },
+          "https://example.test",
+          options,
+        )
+        expect(await response.text()).toBe("early response")
+        await reader!.cancel()
+        await read
+        reader!.releaseLock()
+      },
+    )
+    expect(events.at(-1)).toMatchObject({ type: "attempt-end", status: "completed" })
+    expect(events.filter((event) => event.type === "body-end" && event.channel === "request")).toEqual([
+      expect.objectContaining({ type: "body-end", channel: "request", complete: false }),
+    ])
+    expect(upload.locked).toBe(false)
+  })
+
+  test("cancellation commits an in-flight response prefix before closing its recording", async () => {
+    const waiting = Promise.withResolvers<void>()
+    const observed = Promise.withResolvers<void>()
+    const events: RolloutTransport.Event[] = []
+    let reads = 0
+    const source = new ReadableStream<Uint8Array>(
+      {
+        pull(controller) {
+          if (reads++ === 0) controller.enqueue(new TextEncoder().encode("received prefix"))
+          else waiting.resolve()
+        },
+      },
+      { highWaterMark: 0 },
+    )
+    await RolloutTransport.provide(
+      async (event) => {
+        events.push(event)
+        if (event.type === "chunk" && event.channel === "response") observed.resolve()
+      },
+      async () => {
+        const response = await RolloutTransport.fetch(async () => new Response(source), "https://example.test")
+        const reader = response.body!.getReader()
+        const read = reader.read()
+        await waiting.promise
+        await reader.cancel()
+        await read
+        await observed.promise
+        reader.releaseLock()
+      },
+    )
+    const chunks = events.flatMap((event) =>
+      event.type === "chunk" && event.channel === "response" ? [event.data] : [],
+    )
+    expect(Buffer.concat(chunks).toString()).toBe("received prefix")
+    expect(events.at(-2)).toMatchObject({ type: "body-end", channel: "response", complete: false })
+    expect(events.at(-1)).toMatchObject({ type: "attempt-end", status: "cancelled" })
+    expect(source.locked).toBe(false)
+  })
+
   test("keeps request options on the Request and forwards transport-only options", async () => {
     const options = {
       method: "POST",

@@ -41,9 +41,10 @@ export namespace RolloutTransport {
     const original = new Request(input, init)
     const endpoint = new URL(original.url)
     const controller = new AbortController()
-    let finished = false
+    let finishing: Promise<void> | undefined
     let recordingFailure: unknown
     let responseOK = false
+    const stopBodies: Array<(reason?: unknown) => Promise<void>> = []
     async function emit(event: Event) {
       if (recordingFailure) throw recordingFailure
       try {
@@ -55,13 +56,26 @@ export namespace RolloutTransport {
       }
     }
     async function finish(status: "completed" | "failed" | "cancelled", error?: unknown) {
-      if (finished || recordingFailure) return
-      finished = true
-      await emit({ type: "attempt-end", attemptID, status, error: error instanceof Error ? error.message : undefined })
+      if (recordingFailure) return
+      finishing ??= (async () => {
+        await Promise.all(stopBodies.map((stop) => stop(error)))
+        await emit({
+          type: "attempt-end",
+          attemptID,
+          status,
+          error: error instanceof Error ? error.message : undefined,
+        })
+      })()
+      return finishing
     }
     function body(source: ReadableStream<Uint8Array>, channel: "request" | "response") {
       const reader = source.getReader()
-      let ended = false
+      let cancelled = false
+      let pulling: Promise<void> | undefined
+      let stopping: Promise<void> | undefined
+      let closing: Promise<void> | undefined
+      let output: ReadableStreamDefaultController<Uint8Array>
+      let consumerEnded = false
       let pending: Uint8Array | undefined
       let nextRead: ReturnType<typeof reader.read> | undefined
       let sourceEnded = false
@@ -103,45 +117,90 @@ export namespace RolloutTransport {
           if (timer) clearTimeout(timer)
         }
       }
-      async function close(complete: boolean, reason?: unknown) {
-        if (ended) return
-        ended = true
-        pending = undefined
-        let cleanupError: unknown
-        try {
-          if (!complete) await reader.cancel(reason)
-        } catch (error) {
-          cleanupError = error
-        } finally {
-          reader.releaseLock()
-        }
-        if (!recordingFailure) await emit({ type: "body-end", attemptID, channel, complete })
-        if (cleanupError && !reason && !recordingFailure) throw cleanupError
+      function close(complete: boolean, reason?: unknown): Promise<void> {
+        if (closing) return closing
+        closing = (async () => {
+          pending = undefined
+          let cleanupError: unknown
+          try {
+            if (!complete) await reader.cancel(reason)
+          } catch (error) {
+            cleanupError = error
+          } finally {
+            reader.releaseLock()
+          }
+          if (!recordingFailure) await emit({ type: "body-end", attemptID, channel, complete })
+          if (cleanupError && !reason && !recordingFailure) throw cleanupError
+        })()
+        return closing
       }
+      function stop(reason?: unknown): Promise<void> {
+        if (stopping) return stopping
+        if (closing) return closing
+        cancelled = true
+        stopping = (async () => {
+          let cleanupError: unknown
+          try {
+            await reader.cancel(reason)
+          } catch (error) {
+            cleanupError = error
+          }
+          try {
+            // Release the pending read, then commit its received prefix before
+            // sealing the body. An attempt may end before an upload finishes.
+            await pulling
+          } finally {
+            await close(false, reason)
+            if (!consumerEnded) {
+              consumerEnded = true
+              output.close()
+            }
+          }
+          if (cleanupError && !reason && !recordingFailure) throw cleanupError
+        })()
+        return stopping
+      }
+      stopBodies.push(stop)
       return new ReadableStream<Uint8Array>(
         {
-          async pull(output) {
-            try {
-              const chunk = await readChunk()
-              if (!chunk.byteLength && sourceEnded) {
-                await close(true)
-                if (channel === "response") await finish(responseOK ? "completed" : "failed")
-                output.close()
-                return
+          start(controller) {
+            output = controller
+          },
+          pull(output) {
+            pulling = (async () => {
+              try {
+                const chunk = await readChunk()
+                if (!chunk.byteLength && sourceEnded) {
+                  if (cancelled) return
+                  await close(true)
+                  if (channel === "response") await finish(responseOK ? "completed" : "failed")
+                  if (!consumerEnded) {
+                    consumerEnded = true
+                    output.close()
+                  }
+                  return
+                }
+                if (chunk.byteLength) {
+                  await emit({ type: "chunk", attemptID, channel, data: chunk })
+                  if (!cancelled) output.enqueue(chunk)
+                }
+              } catch (error) {
+                if (cancelled) {
+                  if (recordingFailure) throw recordingFailure
+                  return
+                }
+                await close(false, error)
+                if (!RolloutRecordingError.isInstance(error))
+                  await finish(original.signal.aborted ? "cancelled" : "failed", error)
+                consumerEnded = true
+                output.error(recordingFailure ?? error)
               }
-              if (chunk.byteLength) {
-                await emit({ type: "chunk", attemptID, channel, data: chunk })
-                output.enqueue(chunk)
-              }
-            } catch (error) {
-              await close(false, error)
-              if (!RolloutRecordingError.isInstance(error))
-                await finish(original.signal.aborted ? "cancelled" : "failed", error)
-              output.error(recordingFailure ?? error)
-            }
+            })()
+            return pulling
           },
           async cancel(reason) {
-            await close(false, reason)
+            consumerEnded = true
+            await stop(reason)
             if (channel === "response") await finish("cancelled", reason)
           },
         },

@@ -44,6 +44,7 @@ Entries are added only when an incident qualifies; the table stays empty until t
 | 0006   | Sequential lock-worker spawns consumed the CI test budget                  | implemented | 2026-09-05 |
 | 0007   | Hidden tool renderers retained highlight state                             | implemented | 2026-09-07 |
 | 0008   | Transition cleanup retained disposed frontend pages                        | implemented | 2026-09-07 |
+| 0009   | Rollout cancellation closed an artifact before its pending bytes arrived   | implemented | 2026-09-08 |
 
 ## History rules
 
