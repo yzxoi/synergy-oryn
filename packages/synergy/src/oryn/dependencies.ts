@@ -125,14 +125,14 @@ async function inputs(directory: string) {
   const selected = new Set([...tree.keys()].filter((path) => names.has(basename(path))))
   const packageInfo = JSON.parse(await OrynGit.read(directory, ["show", "HEAD:package.json"])) as {
     patchedDependencies?: Record<string, unknown>
-    workspaces?: string[]
+    workspaces?: unknown
   }
-  if (
-    packageInfo.workspaces &&
-    (!Array.isArray(packageInfo.workspaces) || packageInfo.workspaces.some((value) => typeof value !== "string"))
-  )
-    throw unavailable("Unsupported workspace declaration")
-  const workspaces = (packageInfo.workspaces ?? []).map((pattern) => new Bun.Glob(pattern))
+  const declaration = z
+    .union([z.array(z.string()), z.object({ packages: z.array(z.string()) })])
+    .safeParse(packageInfo.workspaces ?? [])
+  if (!declaration.success) throw unavailable("Unsupported workspace declaration")
+  const patterns = Array.isArray(declaration.data) ? declaration.data : declaration.data.packages
+  const workspaces = patterns.map((pattern) => new Bun.Glob(pattern))
   const manifests = [...selected].filter(
     (path) =>
       basename(path) === "package.json" &&

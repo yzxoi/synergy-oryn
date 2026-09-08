@@ -289,9 +289,9 @@ describe("ChannelAccountStatus projection", () => {
 
 describe("ChannelAccountActions gating", () => {
   test("deriveChannelAccountActions exists and gates by channelType/provider", () => {
-    // Feishu: no managed-project actions
+    // Feishu exposes group discovery without diagnostics.
     const feishuActions = deriveChannelAccountActions("feishu")
-    expect(feishuActions.canRefreshProjects).toBe(false)
+    expect(feishuActions.canRefreshProjects).toBe(true)
     expect(feishuActions.canDownloadDiagnostics).toBe(false)
 
     // Clarus: supports both
@@ -309,12 +309,11 @@ describe("ChannelAccountActions gating", () => {
     expect(actions.hiddenActions).toContain("refreshProjects")
   })
 
-  test("Feishu behavior is unchanged — no new actions appear for Feishu accounts", () => {
+  test("Feishu exposes group refresh while keeping diagnostics hidden", () => {
     const feishuActions = deriveChannelAccountActions("feishu")
-    // Feishu must not have managed-project-specific actions
-    expect(feishuActions.canRefreshProjects).toBe(false)
+    expect(feishuActions.canRefreshProjects).toBe(true)
     expect(feishuActions.canDownloadDiagnostics).toBe(false)
-    expect(feishuActions.hiddenActions).toContain("refreshProjects")
+    expect(feishuActions.hiddenActions).not.toContain("refreshProjects")
     expect(feishuActions.hiddenActions).toContain("downloadDiagnostics")
   })
 })

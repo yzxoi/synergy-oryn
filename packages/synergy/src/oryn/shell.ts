@@ -141,32 +141,40 @@ export namespace OrynShell {
           const runtime = [...SYSTEM_READ_ROOTS, ...binaries].filter(existsSync)
           const readable = [...new Set([...runtime, ...(await Promise.all(runtime.map((file) => realpath(file))))])]
           input.abort.throwIfAborted()
-          const wrapper = SandboxBackend.prepareWrapper({
-            command: shell,
-            args: ["-c", 'cd "$1" && exec "$2" -c "$3"', "oryn-shell", cwd, shell, command.command],
-            workspace: work.directory,
-            executionCwd: home,
-            sandboxMode: work.writable ? "workspace_write" : "read_only",
-            permissionProfile: {
-              fileSystem: {
+          const config = await OrynConfig.info()
+          const trusted = config?.executionMode === "trusted_local"
+          const wrapper = trusted
+            ? {
+                command: shell,
+                args: ["-c", command.command],
+                sandboxed: false,
+              }
+            : SandboxBackend.prepareWrapper({
+                command: shell,
+                args: ["-c", 'cd "$1" && exec "$2" -c "$3"', "oryn-shell", cwd, shell, command.command],
                 workspace: work.directory,
-                readableRoots: [work.directory, objects, ...readable, ...command.extraReadRoots],
-                writableRoots: [home, ...(work.writable ? [work.directory] : [])],
-                readOnlySubpaths: [],
-                unreadableGlobs: [],
-                protectedMetadataNames: [".git", ".agents", ".codex"],
-                protectedPaths: [],
-                dataDenyRoots: [],
-                includePlatformDefaults: false,
-              },
-              network: { mode: "restricted", allowLocalBinding: false, allowedUnixSockets: [] },
-            },
-          })
+                executionCwd: home,
+                sandboxMode: work.writable ? "workspace_write" : "read_only",
+                permissionProfile: {
+                  fileSystem: {
+                    workspace: work.directory,
+                    readableRoots: [work.directory, objects, ...readable, ...command.extraReadRoots],
+                    writableRoots: [home, ...(work.writable ? [work.directory] : [])],
+                    readOnlySubpaths: [],
+                    unreadableGlobs: [],
+                    protectedMetadataNames: [".git", ".agents", ".codex"],
+                    protectedPaths: [],
+                    dataDenyRoots: [],
+                    includePlatformDefaults: false,
+                  },
+                  network: { mode: "restricted", allowLocalBinding: false, allowedUnixSockets: [] },
+                },
+              })
           const resources = await OrynResources.prepare({
             wrapper,
             cwd: work.directory,
             abort: input.abort,
-            limits: (await OrynConfig.info())?.limits?.processResources,
+            limits: config?.limits?.processResources,
             environment: {
               ...OrynGit.environment(),
               PATH: searchPath,
@@ -185,6 +193,7 @@ export namespace OrynShell {
           })
           return {
             ...resources.wrapper,
+            ...(trusted ? { executionMode: "trusted_local" as const } : {}),
             environment: resources.environment,
             dispose: async () => {
               try {

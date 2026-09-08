@@ -1,4 +1,7 @@
-import { For, Show } from "solid-js"
+import { For, Show, createSignal } from "solid-js"
+import { Button } from "@ericsanchezok/synergy-ui/button"
+import { useGlobalSDK } from "@/context/global-sdk"
+import { requestErrorMessage } from "@/utils/error"
 import { useLingui } from "@lingui/solid"
 import { Switch } from "@ericsanchezok/synergy-ui/switch"
 import { TextField } from "@ericsanchezok/synergy-ui/text-field"
@@ -7,6 +10,51 @@ import { AccountToggleCard } from "../components/AccountToggleCard"
 import { BasicAccountToggleCard } from "../components/BasicAccountToggleCard"
 import { SettingRow } from "@ericsanchezok/synergy-ui/setting-row"
 import type { ChannelSettings, GithubAccountToggle, ProviderGroup } from "../types"
+
+function FeishuRefreshButton(props: { accountId: string; enabled: boolean }) {
+  const { _ } = useLingui()
+  const sdk = useGlobalSDK()
+  const [busy, setBusy] = createSignal(false)
+  const [error, setError] = createSignal("")
+  const [complete, setComplete] = createSignal(false)
+  const refresh = async () => {
+    if (busy() || !props.enabled) return
+    setBusy(true)
+    setError("")
+    setComplete(false)
+    try {
+      await sdk.client.channel.refreshProjects(
+        { channelType: "feishu", accountId: props.accountId },
+        { throwOnError: true },
+      )
+      setComplete(true)
+    } catch (error) {
+      setError(requestErrorMessage(error))
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <div>
+      <Button variant="secondary" disabled={!props.enabled || busy()} onClick={refresh}>
+        {busy()
+          ? _({ id: "settings.channels.feishu.refreshing", message: "Refreshing groups…" })
+          : _({ id: "settings.channels.feishu.refresh", message: "Refresh groups" })}
+      </Button>
+      <Show when={error()}>
+        <p role="alert">{error()}</p>
+      </Show>
+      <Show when={complete()}>
+        <p role="status">
+          {_({
+            id: "settings.channels.feishu.refreshed",
+            message: "Groups refreshed. Select the notification chat in Oryn settings.",
+          })}
+        </p>
+      </Show>
+    </div>
+  )
+}
 
 const pageTitle = { id: "settings.channels.page.title", message: "Channels" }
 const pageDescription = {
@@ -133,6 +181,7 @@ export function ChannelsPanel(props: {
           emptyLabel={_(emptyFeishuLabel)}
           providers={props.providers}
           popoverLayer={props.popoverLayer}
+          actions={(account) => <FeishuRefreshButton accountId={account.key} enabled={account.enabled} />}
           onToggle={props.onFeishuToggle}
           onModelChange={props.onFeishuModelChange}
           onVariantChange={props.onFeishuVariantChange}

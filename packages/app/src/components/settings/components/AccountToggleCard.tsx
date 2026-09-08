@@ -1,4 +1,4 @@
-import { For, Show, createMemo, createSignal } from "solid-js"
+import { For, Show, createMemo, createSignal, type JSX } from "solid-js"
 import { useLingui } from "@lingui/solid"
 import { Switch } from "@ericsanchezok/synergy-ui/switch"
 import { Popover as KobaltePopover } from "@kobalte/core/popover"
@@ -43,6 +43,7 @@ export function AccountToggleCard(props: {
   onToggle: (index: number, value: boolean) => void
   onModelChange: (index: number, model: string) => void
   onVariantChange: (index: number, variant: string) => void
+  actions?: (account: AccountToggle) => JSX.Element
 }) {
   const { _ } = useLingui()
   const modelOptions = createMemo<ModelPickOption[]>(() => [
@@ -99,6 +100,7 @@ export function AccountToggleCard(props: {
                   description={_(accountLabel)}
                   trailing={<Switch checked={account.enabled} onChange={(value) => props.onToggle(index(), value)} />}
                 />
+                {props.actions?.(account)}
                 <div class="settings-model-row">
                   <div class="settings-model-copy">
                     <div class="settings-model-title-line">

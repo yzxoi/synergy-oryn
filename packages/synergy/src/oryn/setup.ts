@@ -94,6 +94,23 @@ export namespace OrynSetup {
         label: `${parent?.label ?? identity.chatId} · ${identity.threadId ?? identity.chatId}`,
       })
     }
+    const configured = config.oryn?.notifications?.target
+    if (
+      configured &&
+      config.channel?.feishu?.accounts?.[configured.accountId]?.enabled &&
+      !targets.some(
+        (target) =>
+          target.accountId === configured.accountId &&
+          target.chatId === configured.chatId &&
+          target.threadId === configured.threadId,
+      )
+    ) {
+      targets.push({
+        ...configured,
+        id: externalIdentityHash(configured.accountId, configured.chatId, configured.threadId ?? ""),
+        label: configured.threadId ? `${configured.chatId} · ${configured.threadId}` : configured.chatId,
+      })
+    }
     return targets
   }
   export async function view() {

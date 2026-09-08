@@ -691,7 +691,9 @@ export const OrynLimits = z
   .meta({ ref: "OrynLimitsConfig" })
 export type OrynLimits = z.infer<typeof OrynLimits>
 
-export const OrynIsolationMode = z.enum(["worktree", "sandbox", "external_vm"]).meta({ ref: "OrynIsolationModeConfig" })
+export const OrynIsolationMode = z
+  .enum(["worktree", "sandbox", "external_vm", "trusted_local"])
+  .meta({ ref: "OrynIsolationModeConfig" })
 export type OrynIsolationMode = z.infer<typeof OrynIsolationMode>
 
 export const OrynExecutionProfile = z
@@ -733,7 +735,7 @@ export const OrynExecutionProfile = z
       .min(1)
       .describe("Exact executable names this profile may run (for example: bun, node, git)"),
     isolation: OrynIsolationMode.optional().describe(
-      "Isolation strategy: worktree (directory separation only), sandbox (OS-level), external_vm (offload to an approved VM)",
+      "Execution strategy: sandbox (OS isolation, default), trusted_local (no filesystem or network containment), worktree/external_vm (unsupported)",
     ),
     maxConcurrent: z.number().int().min(1).optional().describe("Lane concurrency for this profile (default: 1)"),
     timeoutSeconds: z
@@ -788,6 +790,12 @@ export type OrynLearning = z.infer<typeof OrynLearning>
 
 export const Oryn = z
   .object({
+    executionMode: z
+      .enum(["sandbox", "trusted_local"])
+      .optional()
+      .describe(
+        "Installation-selected execution mode for checks and engineering Bash. Default sandbox. trusted_local runs with the runtime OS user's filesystem and network access; new engineering sessions use full_access. This overrides check-profile isolation but does not remove required capabilities or resource limits",
+      ),
     defaultRepoAlias: z.string().min(1).optional().describe("Default repository selected in Oryn settings"),
     enabled: z
       .boolean()

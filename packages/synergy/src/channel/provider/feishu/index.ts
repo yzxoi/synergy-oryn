@@ -35,6 +35,7 @@ import {
   sendFeishuQuestionCard,
 } from "./question-card"
 import { sendFeishuMarkdownCard } from "./send-card"
+import { refreshFeishuProjects } from "./projects"
 
 export {
   parseFeishuQuestionCardAction,
@@ -457,6 +458,18 @@ export class FeishuProvider implements ChannelTypes.Provider<Config.ChannelFeish
     }
 
     this.scheduleTokenRefresh(accountId, result.expire * 1000)
+  }
+
+  async refreshProjects(input: { accountId: string; signal: AbortSignal; host: ChannelHost.Instance }) {
+    input.signal.throwIfAborted()
+    const account = this.accounts.get(input.accountId)
+    if (!account) throw new Error("Feishu account is not connected")
+    await refreshFeishuProjects({
+      apiBase: account.apiBase,
+      getAccessToken: () => this.getAccessToken(input.accountId),
+      signal: input.signal,
+      host: input.host,
+    })
   }
 
   private async getAccessToken(accountId: string): Promise<string> {

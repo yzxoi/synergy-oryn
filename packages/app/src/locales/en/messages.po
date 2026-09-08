@@ -15101,6 +15101,18 @@ msgid "settings.channels.feishu.empty"
 msgstr "No Feishu accounts configured yet."
 
 #. js-lingui-explicit-id
+msgid "settings.channels.feishu.refresh"
+msgstr "Refresh groups"
+
+#. js-lingui-explicit-id
+msgid "settings.channels.feishu.refreshed"
+msgstr "Groups refreshed. Select the notification chat in Oryn settings."
+
+#. js-lingui-explicit-id
+msgid "settings.channels.feishu.refreshing"
+msgstr "Refreshing groups…"
+
+#. js-lingui-explicit-id
 msgid "settings.channels.feishu.title"
 msgstr "Feishu"
 

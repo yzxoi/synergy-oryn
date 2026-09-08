@@ -265,6 +265,9 @@ export namespace OrynExecutor {
       endedAt: results[results.length - 1].endedAt,
       exitCode: results[results.length - 1].exitCode,
       observations: [
+        profile.isolation === "trusted_local"
+          ? "execution mode: trusted_local; no OS filesystem or network containment"
+          : "execution mode: sandbox; OS filesystem and network containment",
         "execution used an isolated disposable checkout of the fixed source commit",
         ...(experiment.dependencies ? [`dependency snapshot sha256:${experiment.dependencies}`] : []),
         ...(changed ? ["source changed during execution; evidence is inconclusive"] : []),

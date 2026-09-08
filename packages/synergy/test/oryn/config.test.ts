@@ -19,12 +19,13 @@ const trusted = {
 describe("Oryn trusted installation policy", () => {
   test("project configuration cannot enable Oryn or register its agents", async () => {
     await using global = await globalConfig({ oryn: { enabled: false } })
-    await using project = await tmpdir({ config: { oryn: trusted } })
+    await using project = await tmpdir({ config: { oryn: { ...trusted, executionMode: "trusted_local" } } })
     await ScopeContext.provide({
       scope: await project.scope(),
       fn: async () => {
         expect((await Config.current()).oryn?.enabled).toBe(true)
         expect(await OrynConfig.enabled()).toBe(false)
+        expect((await OrynConfig.info())?.executionMode).toBeUndefined()
         expect(await Agent.get("oryn-work")).toBeUndefined()
       },
     })

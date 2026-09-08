@@ -62,7 +62,7 @@ export namespace OrynGit {
       stdout: "pipe",
       stderr: "ignore",
       timeout: 10_000,
-      maxBuffer: 64 * 1024,
+      maxBuffer: 64 * 1024 * 1024,
       killSignal: "SIGKILL",
     })
     const [exit, output] = await Promise.all([child.exited, new Response(child.stdout).text()])

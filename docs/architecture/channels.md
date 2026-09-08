@@ -200,3 +200,5 @@ Feishu keeps unsupported image-format adaptation inside the provider boundary. O
 - An expired assignment creates no Session or assignment binding; an archived owning Session blocks replay without replacement.
 - Deadline guidance is hidden Session context, not a visible user prompt.
 - Navigation and account actions derive from canonical Channel, Scope, Session, and API state rather than a provider-specific frontend store.
+
+Feishu group discovery uses the explicit Channel project-refresh port and the existing managed ownership store. The provider fetches all bounded pages before reconciling group membership; incomplete, failed or canceled discovery does not archive prior groups. This metadata operation creates no Sessions and leaves Feishu conversation Scope routing unchanged.

@@ -4345,9 +4345,9 @@ export type OrynLimitsConfig = {
 }
 
 /**
- * Isolation strategy: worktree (directory separation only), sandbox (OS-level), external_vm (offload to an approved VM)
+ * Execution strategy: sandbox (OS isolation, default), trusted_local (no filesystem or network containment), worktree/external_vm (unsupported)
  */
-export type OrynIsolationModeConfig = "worktree" | "sandbox" | "external_vm"
+export type OrynIsolationModeConfig = "worktree" | "sandbox" | "external_vm" | "trusted_local"
 
 export type OrynExecutionProfileConfig = {
   resourceLimits?: OrynProcessResourcesConfig
@@ -4424,6 +4424,10 @@ export type OrynLearningConfig = {
 }
 
 export type OrynConfig = {
+  /**
+   * Installation-selected execution mode for checks and engineering Bash. Default sandbox. trusted_local runs with the runtime OS user's filesystem and network access; new engineering sessions use full_access. This overrides check-profile isolation but does not remove required capabilities or resource limits
+   */
+  executionMode?: "sandbox" | "trusted_local"
   /**
    * Default repository selected in Oryn settings
    */

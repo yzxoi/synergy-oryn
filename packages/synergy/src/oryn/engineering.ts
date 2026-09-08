@@ -100,7 +100,7 @@ export namespace OrynEngineering {
             scope: input.scope,
             title: `Oryn ${start.caseId}`,
             agentOverride: "oryn-work",
-            controlProfile: "autonomous",
+            controlProfile: (await OrynConfig.info())?.executionMode === "trusted_local" ? "full_access" : "autonomous",
             interaction: SessionInteraction.unattended("oryn"),
             completionNotice: { silent: true },
             workflow: { kind: "boss", role: "boss" },

@@ -361,6 +361,9 @@ export function partitionScopeNavigation(entries: readonly ScopeNavEntry[]): {
 }
 
 const CHANNEL_ACCOUNT_PROVIDER_ACTIONS: Record<string, Partial<ChannelAccountActions>> = {
+  feishu: {
+    canRefreshProjects: true,
+  },
   clarus: {
     canRefreshProjects: true,
     canDownloadDiagnostics: true,

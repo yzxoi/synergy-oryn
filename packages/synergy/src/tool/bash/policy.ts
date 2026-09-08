@@ -3,7 +3,11 @@ import type { BashSandboxPrepareInput } from "./shared"
 
 export namespace BashExecutionPolicy {
   export type Input = { sessionID: string; agent: string; workspace: string; abort: AbortSignal }
-  export type Prepared = SandboxExecutionWrapper & { environment: Record<string, string>; dispose: () => Promise<void> }
+  export type Prepared = SandboxExecutionWrapper & {
+    executionMode?: "trusted_local"
+    environment: Record<string, string>
+    dispose: () => Promise<void>
+  }
   export type Policy = { prepare: (input: BashSandboxPrepareInput) => Promise<Prepared> }
   const providers = new Map<string, (input: Input) => Promise<Policy | undefined>>()
 

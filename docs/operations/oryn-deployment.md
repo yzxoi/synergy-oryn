@@ -57,11 +57,29 @@ Run `bun test test/oryn/engineering-start.test.ts test/session/creation-recovery
 
 Code workers prepare a commit with `oryn_result` / `input.kind: commit_candidate`, supplying the assignment identity, stable request key, conventional title and explicit relative file paths. The Host returns the full candidate SHA and local branch for the subsequent candidate report. Use the same request after interruption; changed requests or changed source require inspection. The Host does not execute repository commit hooks, and repositories with Git filters or submodules need separate support. Independent checks and review remain required. Do not grant the worker shell write access to the common Git directory to make `git commit` succeed.
 
+## Trusted Local Execution
+
+For an installation that deliberately grants candidate code the runtime OS user's filesystem and network access, set `oryn.executionMode` to `"trusted_local"` in the runtime config domain. This selects unwrapped execution for checks and engineering Bash. It requires no proc mount, Docker, systemd or cgroup when process-resource limits are omitted. Outer-platform permissions still apply.
+
+```jsonc
+{
+  "oryn": {
+    "executionMode": "trusted_local",
+  },
+}
+```
+
+Merge this field into the existing Oryn configuration. Remove `namespace` and `seccomp` from the selected check profiles' `requiredCapabilities`; omit `limits.processResources` and profile `resourceLimits` if no cgroup manager is available. Required capabilities are still checked, and mode selection does not erase them. `network_egress` is available in trusted-local profiles; `uid` and `browser` remain unsupported.
+
+Finish or stop existing engineering tasks before changing modes. New engineering roots use `full_access` in trusted-local mode; existing roots retain their selected control profile. Worker roles, assignment ownership, candidate freezing and PR review/delivery rules continue to apply. Command timeouts, output limits, scheduler concurrency and process cleanup remain enabled.
+
+Checks still materialize a disposable version-pinned checkout and record the mode in their receipts. Their clean environment does not prevent reading other files accessible to the runtime OS user. Filesystem and network containment are absent in this mode, including for worker Bash. Revert the setting to `"sandbox"` for newly created engineering tasks and sandboxed checks; there is no automatic fallback from sandbox to trusted-local execution.
+
 ## Isolation Preflight
 
 `oryn_check` defaults to local `sandbox` isolation. Explicit `worktree` and `external_vm` execution are rejected: directory separation is insufficient and no VM execution transport is connected. macOS uses a deny-default Seatbelt profile; Linux requires the built helper and Bubblewrap with usable user/PID/network namespaces and seccomp. A missing or rejected wrapper cannot fall back to an unwrapped command, regardless of ordinary interactive sandbox fallback settings.
 
-The local check profile exposes a disposable checkout of the pinned commit, plus system executables/libraries and the approved executable. Tracked source remains read-only. Installation-selected output directories are writable and shared by the commands in that check plan. Each command gets a private disposable HOME/temp directory, with ambient credentials and Git configuration excluded. Host network access is denied. Dependency provisioning, persistent cross-run build caches, source overlays and browser execution need separate support; do not interpret those environment gaps as a reproduced bug.
+The sandbox check profile exposes a disposable checkout of the pinned commit, plus system executables/libraries and the approved executable. Tracked source remains read-only. Installation-selected output directories are writable and shared by the commands in that check plan. Each command gets a private disposable HOME/temp directory, with ambient credentials and Git configuration excluded. Host network access is denied. Dependency provisioning, persistent cross-run build caches, source overlays and browser execution need separate support; do not interpret those environment gaps as a reproduced bug.
 
 | Declared capability                | Local check behavior                                                                                                                |
 | ---------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
@@ -79,11 +97,11 @@ Run `bun run test test/oryn/shell.test.ts` from `packages/synergy` for actual ce
 
 On Ubuntu hosts that restrict unprivileged user namespaces, install the distribution's current Bubblewrap and AppArmor packages and have the administrator verify that an approved `bwrap-userns-restrict` profile is loaded. Ubuntu 24.04 packages may omit this optional profile; the CI setup retrieves the [AppArmor 4.0.3 profile at a fixed commit](https://gitlab.com/apparmor/apparmor/-/blob/b4dfdf50f50ed1d64161424d036a2453645f0cfe/profiles/apparmor/profiles/extras/bwrap-userns-restrict) and verifies its SHA-256 before installation. That profile permits Bubblewrap setup while restricting child capabilities; use the reviewed profile rather than disabling AppArmor or its system-wide namespace restriction. See [Ubuntu's explanation and profile guidance](https://discourse.ubuntu.com/t/understanding-apparmor-user-namespace-restriction/58007). If host policy forbids namespaces, retain the environment failure and route the task to an authorized environment or a human.
 
-Before starting candidate work, verify the actual helper through the native Oryn tests. `bwrap: loopback: Failed RTM_NEWADDR: Operation not permitted` is a sandbox startup failure, not a reproduced application bug. The CI-only `script/prepare-linux-test-sandbox.sh` provisions disposable GitHub-hosted VMs, loads the approved profile when namespace restrictions are enabled, and probes network namespace startup. It refuses ordinary deployment hosts; production setup remains an administrator operation.
+Before starting candidate work, verify the actual helper through the native Oryn tests. A minimal Linux preflight must include a new proc mount: `bwrap --unshare-user --unshare-pid --unshare-net --ro-bind / / --proc /proc /usr/bin/true`. A namespace-only probe can pass while the actual sandbox fails with `Can't mount proc on /newroot/proc: Operation not permitted`. This requires host support for nested proc mounts; installing systemd, enabling cgroups or sealing dependencies does not resolve it. Keep execution unavailable until the host policy permits the operation. `bwrap: loopback: Failed RTM_NEWADDR: Operation not permitted` is a sandbox startup failure, not a reproduced application bug. The CI-only `script/prepare-linux-test-sandbox.sh` provisions disposable GitHub-hosted VMs, loads the approved profile when namespace restrictions are enabled, and probes network namespace startup. It refuses ordinary deployment hosts; production setup remains an administrator operation.
 
 ## Network and Ports
 
-- Bind the Synergy server to loopback on its own port; Oryn adds no new listening port. A public reverse proxy is unnecessary for this deployment.
+- Bind the Synergy server on its own port; Oryn adds no new listening port. Use loopback for a local tunnel, or an explicitly chosen interface such as `0.0.0.0` when the deployment platform forwards ports from the internal network. A public reverse proxy is unnecessary.
 - Check subprocesses have no host network access. Feishu, GitHub and model connections belong to the runtime; installing dependencies and network-dependent tests need separate, authorized execution support.
 - Feishu uses the provider's outbound WebSocket connection and GitHub uses outbound HTTPS polling. Configure Feishu event reception in long-connection mode. No public inbound IP or webhook endpoint is needed for this path; the host must reach Feishu, GitHub and the selected model/embedding services.
 
@@ -99,7 +117,8 @@ To exercise model-driven QA without model or Feishu credentials, run `bun run te
 2. Grant the minimal IM scopes needed by the existing Channel provider (receive group/DM messages, send messages, read thread metadata).
 3. Configure one account entry under `channel.feishu.accounts` and reference that account ID from `oryn.routes[].feishuAccount`.
 4. Set `groupSessionScope` to `group_thread` on the Oryn-bound account so each topic gets its own QA session; other accounts keep their existing scoping.
-5. Set a non-empty `oryn.routes[].chats` allowlist to restrict intake to the intended test chats. An omitted or empty `chats` list matches the whole configured account; it does not disable intake. Accounts without a matching Oryn route keep ordinary Synergy routing.
+5. For the setup picker, grant the app permission to list its joined groups, add the bot to the target group, then use **Channels → Feishu → Refresh groups** (also available as account refresh in the sidebar). Return to **Oryn** to choose the default notification target. Feishu group listing excludes direct chats; an existing configured direct-chat target remains selectable, and other direct chats appear after Oryn receives a conversation. Refresh reads group metadata only; failed or incomplete pagination preserves existing groups.
+6. Set a non-empty `oryn.routes[].chats` allowlist to restrict intake to the intended test chats. An omitted or empty `chats` list matches the whole configured account; it does not disable intake. Accounts without a matching Oryn route keep ordinary Synergy routing.
 
 Run `bun run test test/oryn/model-pipeline.test.ts test/oryn/engineering-pipeline.test.ts` to include the real engineering root, Boss worker, independent worktree, baseline check receipt and report-driven human handoff. The attachment assertion passes on the supplied baseline; the expected outcome is a request for the failing input and client version, not a claimed bug fix. Both scenarios use only loopback model and captured Feishu transport.
 
@@ -211,7 +230,7 @@ Success prints JSON with `directory`, `digest`, `files` (file/link entries) and 
 }
 ```
 
-Keep snapshots installation-owned and stable while checks use them. A snapshot contains a version-1 manifest and content-addressed blobs, without copying the source checkout or runtime credential stores; repository-contained absolute links are normalized to relative targets. The operator must ensure the preinstalled dependency tree itself contains no private material. It pins the Host platform, architecture, exact Bun version, tracked package manifests, Bun locks/configuration, package-manager configuration and declared Bun patch files. Registry/Git dependencies and repository-local workspace links are supported. Copied `file:`/`link:` dependencies and non-array workspace declarations are rejected; they need an expanded input policy. Other runtime/OS library versions and installation-script provenance are not attested by this format.
+Keep snapshots installation-owned and stable while checks use them. A snapshot contains a version-1 manifest and content-addressed blobs, without copying the source checkout or runtime credential stores; repository-contained absolute links are normalized to relative targets. The operator must ensure the preinstalled dependency tree itself contains no private material. It pins the Host platform, architecture, exact Bun version, tracked package manifests, Bun locks/configuration, package-manager configuration and declared Bun patch files. Registry/Git dependencies and repository-local workspace links are supported. Bun workspace arrays and object declarations with a `packages` array are supported; catalogs are pinned through the root manifest. Copied `file:`/`link:` dependencies and malformed workspace declarations are rejected; they need an expanded input policy. Other runtime/OS library versions and installation-script provenance are not attested by this format.
 
 At most 16 snapshots may be configured per profile. Exactly one must match the assigned commit's dependency inputs and Host runtime. A normal source-only change can reuse a snapshot; dependency-input changes require a new snapshot. Baseline and candidate snapshots can coexist when their dependency inputs differ. Do not configure duplicate matches. Without configured snapshots, dependency-free checks remain available; missing dependencies must be reported as an environment gap. A configured missing, damaged, unsupported or ambiguous snapshot fails with `ENVIRONMENT_UNAVAILABLE` before commands run, allowing the Case to transfer to a human instead of claiming a product bug.
 

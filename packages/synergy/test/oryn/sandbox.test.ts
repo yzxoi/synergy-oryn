@@ -2,7 +2,60 @@ import { expect, test } from "bun:test"
 import { mkdir, symlink } from "node:fs/promises"
 import { join } from "node:path"
 import { OrynSandbox } from "../../src/oryn/sandbox"
+import { OrynConfig } from "../../src/oryn/config"
+import { Oryn } from "../../src/config/schema"
+
+test("trusted local checks can write outside the checkout and use the network without a sandbox", async () => {
+  await using dir = await tmpdir()
+  const workspace = join(dir.path, "checkout")
+  await mkdir(workspace)
+  const output = join(dir.path, "outside.txt")
+  const server = Bun.serve({ port: 0, fetch: () => new Response("connected") })
+  try {
+    const config = Oryn.parse({
+      enabled: true,
+      executionMode: "trusted_local",
+      routes: [{ feishuAccount: "qa", repoAlias: "repo" }],
+      repositories: { repo: { owner: "test", repo: "repo" } },
+      executionProfiles: { check: { commandAllowlist: ["bun"] } },
+    })
+    const result = await OrynSandbox.execute({
+      argv: [
+        "bun",
+        "-e",
+        `await Bun.write(${JSON.stringify(output)}, await fetch(${JSON.stringify(server.url.href)}).then(r=>r.text()));`,
+      ],
+      cwd: workspace,
+      timeoutMs: 5000,
+      abort: new AbortController().signal,
+      profile: OrynConfig.profiles(config, "repo").check,
+    })
+    expect(result.exitCode, result.stderr).toBe(0)
+    expect(await Bun.file(output).text()).toBe("connected")
+  } finally {
+    server.stop(true)
+  }
+})
 import { tmpdir } from "../fixture/fixture"
+
+test("trusted local checks retain timeout, cancellation and explicit capability requirements", async () => {
+  await using dir = await tmpdir()
+  const marker = join(dir.path, "marker")
+  const input = {
+    argv: ["bun", "-e", `await Bun.write(${JSON.stringify(marker)}, 'ran')`],
+    cwd: dir.path,
+    timeoutMs: 100,
+    abort: new AbortController().signal,
+    profile: { isolation: "trusted_local" as const, commandAllowlist: ["bun"] },
+  }
+  await expect(OrynSandbox.execute({ ...input, abort: AbortSignal.abort() })).rejects.toBeDefined()
+  await expect(
+    OrynSandbox.execute({ ...input, profile: { ...input.profile, requiredCapabilities: ["namespace"] } }),
+  ).rejects.toMatchObject({ data: { code: "ENVIRONMENT_UNAVAILABLE" } })
+  expect(await Bun.file(marker).exists()).toBe(false)
+  const result = await OrynSandbox.execute({ ...input, argv: ["bun", "-e", "setInterval(() => {}, 1000)"] })
+  expect(result.timedOut).toBe(true)
+})
 
 test.skipIf(!["darwin", "linux"].includes(process.platform))(
   "Oryn experiments allow only selected build directories while source and metadata stay read-only",
