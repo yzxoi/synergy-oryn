@@ -729,21 +729,23 @@ export const OrynGithubReadTool = Tool.define(
 
 const LearnParameters = z.object({
   caseId: z.string().min(1),
-  lesson: z.string().min(1).max(2000).describe("The reusable engineering lesson, stated as a fact"),
+  lesson: z.string().min(1).max(2000).describe("The proposed engineering lesson, with uncertainty stated explicitly"),
   applicability: z.string().min(1).max(1000).describe("Where this lesson applies (repo, area, versions)"),
   invalidation: z.string().min(1).max(1000).describe("When this lesson stops being true"),
   evidenceRefs: z
     .array(z.string())
     .min(1)
     .max(16)
-    .describe("Record ids from this case that back the lesson (run, review, report, or attempt ids)"),
+    .describe(
+      "Accepted record ids from the current Attempt that back the proposal (run, ready review, report, or Attempt ids)",
+    ),
 })
 
 export const OrynLearnTool = Tool.define(
   "oryn_learn",
   {
     description:
-      "Propose a reusable lesson from this case for host promotion into shared memory. Every claim must cite case records as evidence; raw chat text, private logs, and credentials are rejected. Promotion only happens after the case is delivered and the host has verified-memory promotion enabled, and a wrong lesson can be withdrawn.",
+      "Propose a reusable lesson with accepted evidence from the current Attempt. The Host pins repository, source commits and an evidence digest. Re-propose after candidate freeze or changed evidence; promotion requires that exact candidate and evidence plus current confirmed PR delivery and enabled verified memory. Do not include raw chat, private logs or credentials. The model-authored lesson remains a proposal, not proof of semantic truth or release availability. Returns a learning ID and whether it was created; stale or unaccepted evidence is rejected.",
     parameters: LearnParameters,
     async execute(params, ctx): Promise<Tool.ExecutionResult> {
       return execute(async () => {

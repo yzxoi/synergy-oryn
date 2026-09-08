@@ -396,16 +396,30 @@ export const ActionReceipt = z
   .strict()
 export type ActionReceipt = z.infer<typeof ActionReceipt>
 
+export const LearningSource = z
+  .object({
+    repository: z.string().min(1),
+    attemptId: z.string().min(1),
+    epoch: z.number().int().nonnegative(),
+    acceptanceDigest: z.string().min(1),
+    baselineSha: z.string().min(1),
+    candidateSha: z.string().optional(),
+    evidenceDigest: z.string().min(1),
+  })
+  .strict()
+export type LearningSource = z.infer<typeof LearningSource>
+
 export const LearningCandidate = z
   .object({
-    schemaVersion: z.literal(1),
+    schemaVersion: z.literal(2),
     id: z.string().min(1),
     caseId: z.string().min(1),
-    outcomeVersion: z.string().min(1),
+    source: LearningSource.optional(),
+    memory: z.object({ title: z.string().min(1), content: z.string().min(1) }).strict(),
     lesson: z.string().min(1),
     applicability: z.string().min(1),
     invalidation: z.string().min(1),
-    evidenceRefs: z.array(z.string()).min(1),
+    evidenceRefs: z.array(z.string()),
     promotionState: z.enum(["proposed", "verified", "promoted", "rejected"]),
     memoryRef: z.string().optional(),
     createdAt: z.number().int().positive(),

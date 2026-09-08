@@ -88,7 +88,7 @@ Generated from the builtin tool registry in `packages/synergy/src/tool/registry.
 | `oryn_check` | `orchestration.task` | Verification runs: read repository executionProfiles with oryn_case get, propose a plan (scenario, profile, commands, assertions), and execute it in a disposable checkout of the assigned commit. Comma |
 | `oryn_dispatch` | `orchestration.session` | Request the next engineering stage for your case (dispatch), or open a bounded rework round on the frozen candidate when review demands changes (rework). The host picks the agent, workspace, and froze |
 | `oryn_github_read` | `code.read` | Read bounded remote facts for one of your linked cases: the linked issue and pull request (title, state, author class), and CI status on the candidate. The host resolves the repository and refs from t |
-| `oryn_learn` | `knowledge.memory` | Propose a reusable lesson from this case for host promotion into shared memory. Every claim must cite case records as evidence; raw chat text, private logs, and credentials are rejected. Promotion onl |
+| `oryn_learn` | `knowledge.memory` | Propose a reusable lesson with accepted evidence from the current Attempt. The Host pins repository, source commits and an evidence digest. Re-propose after candidate freeze or changed evidence; promo |
 | `oryn_publish` | `communication.publish` | Publish host-verified artifacts for your case: the tracking issue, a draft PR from the frozen candidate, PR updates, the review comment, or the final ready delivery. The host generates PR scope diagra |
 | `oryn_reply` | `communication.deliver` | Queue a bounded QA reply to your bound reporter source. The host supplies recipient and root turn identity; no account or chat id is accepted. Answers deduplicate within the current turn. Ready replie |
 | `oryn_result` | `orchestration.session` | Create a local candidate commit with kind commit_candidate (code worker only), submit your structured worker outcome, or read a previously submitted report. Host commit uses your explicit relative pat |
@@ -1254,7 +1254,7 @@ Read bounded remote facts for one of your linked cases: the linked issue and pul
 
 Kind: `knowledge.memory`
 
-Propose a reusable lesson from this case for host promotion into shared memory. Every claim must cite case records as evidence; raw chat text, private logs, and credentials are rejected. Promotion only happens after the case is delivered and the host has verified-memory promotion enabled, and a wrong lesson can be withdrawn.
+Propose a reusable lesson with accepted evidence from the current Attempt. The Host pins repository, source commits and an evidence digest. Re-propose after candidate freeze or changed evidence; promotion requires that exact candidate and evidence plus current confirmed PR delivery and enabled verified memory. Do not include raw chat, private logs or credentials. The model-authored lesson remains a proposal, not proof of semantic truth or release availability. Returns a learning ID and whether it was created; stale or unaccepted evidence is rejected.
 
 | Parameter | Type | Required | Description |
 | --- | --- | --- | --- |

@@ -1,11 +1,12 @@
 import { Lock } from "../util/lock"
 import { externalIdentityHash } from "../util/identity"
-import { OrynStore, storeError } from "./store"
+import { OrynStore, OrynStoreError, storeError } from "./store"
 import { OrynConfig } from "./config"
 import { OrynBudget } from "./budget"
 import { OrynReady } from "./ready"
+import { OrynEvidence } from "./evidence"
 import { Session } from "../session"
-import type { LearningCandidate } from "./schema"
+import type { LearningCandidate, LearningSource, Case, ReviewReport } from "./schema"
 
 /**
  * Injected verified-memory port. The Oryn domain never imports the Library
@@ -34,13 +35,109 @@ export function setMemoryPromoter(fn: MemoryPromoter | undefined): MemoryPromote
 function memoryInput(candidate: LearningCandidate) {
   return {
     id: candidate.memoryRef ?? `mem_oryn_${externalIdentityHash(candidate.id)}`,
-    title: candidate.lesson.slice(0, 120),
+    ...candidate.memory,
+  }
+}
+
+async function learningSource(record: Case, refs: string[]): Promise<LearningSource | undefined> {
+  if (!record.activeAttemptId || refs.length === 0 || refs.length > 16) return
+  const attempt = await OrynStore.getAttempt(record.id, record.activeAttemptId)
+  const repo = (await OrynConfig.info())?.repositories?.[record.repoAlias]
+  if (!attempt || !repo) return
+  const [assignments, reports, reviews] = await Promise.all([
+    OrynStore.listAssignments(record.id),
+    OrynStore.listWorkerReports(record.id),
+    OrynStore.listReviews(record.id),
+  ])
+  const accepted = new Map(
+    assignments
+      .filter((item) => item.epoch === record.epoch && item.attemptId === attempt.id && item.acceptedReportId)
+      .map((item) => [item.acceptedReportId, item]),
+  )
+  const source = {
+    repository: `${repo.owner}/${repo.repo}`,
+    attemptId: attempt.id,
+    epoch: record.epoch,
+    acceptanceDigest: record.acceptanceDigest,
+    baselineSha: attempt.baselineSha,
+    candidateSha: attempt.candidateSha,
+  }
+  const valid = new Map<string, unknown>([[attempt.id, source]])
+  for (const report of reports) {
+    const assignment = accepted.get(report.id)
+    if (
+      !assignment ||
+      report.assignmentId !== assignment.id ||
+      report.epoch !== record.epoch ||
+      report.attemptId !== attempt.id ||
+      (report.candidateSha && report.candidateSha !== attempt.candidateSha)
+    )
+      continue
+    try {
+      const runs = await OrynEvidence.reportRuns({ assignment, attempt, report })
+      if (
+        runs.some(
+          (run) => run.infrastructureFailure || !["built_runtime", "live_test_tenant"].includes(run.authenticity),
+        )
+      )
+        continue
+      valid.set(report.id, report)
+      for (const run of runs) {
+        if (attempt.evidenceRunIds.includes(run.id) && ["passed", "failed"].includes(run.outcome))
+          valid.set(run.id, run)
+      }
+    } catch (error) {
+      if (!(error instanceof OrynStoreError) || error.data.code !== "EVIDENCE_INSUFFICIENT") throw error
+    }
+  }
+  const digests = OrynEvidence.reviewDigests(record, attempt)
+  const latestReviews = new Map<string, ReviewReport>()
+  for (const review of reviews.sort(
+    (left, right) => attempt.reviewIds.indexOf(left.id) - attempt.reviewIds.indexOf(right.id),
+  )) {
+    const assignment = accepted.get(review.id)
+    if (
+      !assignment ||
+      assignment.stage !== "review" ||
+      assignment.agentId !== "oryn-review" ||
+      review.assignmentId !== assignment.id ||
+      review.attemptId !== attempt.id ||
+      !attempt.reviewIds.includes(review.id) ||
+      review.domain !== (assignment.reviewDomain ?? "general")
+    )
+      continue
+    latestReviews.set(review.domain, review)
+  }
+  for (const review of latestReviews.values()) {
+    if (
+      review.headSha === attempt.candidateSha &&
+      review.baseSha === attempt.baselineSha &&
+      review.policyDigest === digests.policyDigest &&
+      review.evidenceDigest === digests.evidenceDigest &&
+      review.recommendation === "ready_for_human"
+    )
+      valid.set(review.id, review)
+  }
+  if (refs.some((ref) => !valid.has(ref))) return
+  return { ...source, evidenceDigest: externalIdentityHash(JSON.stringify(refs.map((ref) => [ref, valid.get(ref)]))) }
+}
+
+function memoryText(
+  input: { lesson: string; applicability: string; invalidation: string; evidenceRefs: string[] },
+  source: LearningSource,
+) {
+  return {
+    title: input.lesson.slice(0, 120),
     content: [
-      `Lesson: ${candidate.lesson}`,
-      `Applies to: ${candidate.applicability}`,
-      `Invalid when: ${candidate.invalidation}`,
-      `Evidence (case-scoped records): ${candidate.evidenceRefs.join(", ")}`,
-      `Verified at outcome version: ${candidate.outcomeVersion}`,
+      `Model-proposed lesson: ${input.lesson}`,
+      `Proposed applicability: ${input.applicability}`,
+      `Invalid when: ${input.invalidation}`,
+      `Repository: ${source.repository}`,
+      `Baseline commit: ${source.baselineSha}`,
+      `Candidate commit: ${source.candidateSha ?? "not frozen"}`,
+      `Accepted evidence: ${input.evidenceRefs.join(", ")}`,
+      `Evidence digest: ${source.evidenceDigest}`,
+      "Host checks current PR delivery before insertion. This does not establish merge, release availability or semantic truth of the proposed lesson.",
     ].join("\n"),
   }
 }
@@ -87,32 +184,31 @@ export namespace OrynLearning {
     applicability: string
     invalidation: string
     evidenceRefs: string[]
-    outcomeVersion?: string
   }): Promise<{ learningId: string; created: boolean }> {
     using _case = await Lock.write(`oryn-case:${input.caseId}`)
-    await requireOwner(input.callerSessionID, input.caseId)
-
-    const valid = new Set<string>()
-    for (const run of await OrynStore.listRuns(input.caseId)) valid.add(run.id)
-    for (const review of await OrynStore.listReviews(input.caseId)) valid.add(review.id)
-    for (const report of await OrynStore.listWorkerReports(input.caseId)) valid.add(report.id)
-    for (const attempt of await OrynStore.listAttempts(input.caseId)) valid.add(attempt.id)
-    const unknown = input.evidenceRefs.filter((ref) => !valid.has(ref))
-    if (unknown.length > 0) {
-      throw storeError("EVIDENCE_INSUFFICIENT", `evidence refs are not records of this case: ${unknown.join(", ")}`, {
-        caseId: input.caseId,
+    const record = await requireOwner(input.callerSessionID, input.caseId)
+    const evidenceRefs = [...new Set(input.evidenceRefs)].sort()
+    const source = await learningSource(record, evidenceRefs)
+    if (!source)
+      throw storeError("EVIDENCE_INSUFFICIENT", "learning requires accepted evidence from the current Attempt", {
+        caseId: record.id,
       })
-    }
-
-    const existing = (await OrynStore.listLearnings(input.caseId)).find((l) => l.lesson === input.lesson)
+    const memory = memoryText({ ...input, evidenceRefs }, source)
+    const existing = (await OrynStore.listLearnings(record.id)).find(
+      (item) =>
+        JSON.stringify(item.source) === JSON.stringify(source) &&
+        item.memory.title === memory.title &&
+        item.memory.content === memory.content,
+    )
     if (existing) return { learningId: existing.id, created: false }
     const candidate = await OrynStore.writeLearning({
-      caseId: input.caseId,
-      outcomeVersion: input.outcomeVersion ?? "1",
+      caseId: record.id,
+      source,
+      memory,
       lesson: input.lesson,
       applicability: input.applicability,
       invalidation: input.invalidation,
-      evidenceRefs: input.evidenceRefs,
+      evidenceRefs,
     })
     return { learningId: candidate.id, created: true }
   }
@@ -136,6 +232,13 @@ export namespace OrynLearning {
         skipped++
         continue
       }
+      if (
+        !candidate.source?.candidateSha ||
+        JSON.stringify(candidate.source) !== JSON.stringify(await learningSource(ready.record, candidate.evidenceRefs))
+      ) {
+        skipped++
+        continue
+      }
       const input = memoryInput(candidate)
       let committed = false
       const memoryId = await writer.promote(input, async (write) => {
@@ -147,6 +250,11 @@ export namespace OrynLearning {
         const current = await OrynReady.projection(caseId)
         if (!current || externalIdentityHash(JSON.stringify(current)) !== proofDigest)
           throw storeError("INVALID_STAGE", "delivery changed before memory commit", { caseId })
+        if (
+          JSON.stringify(candidate.source) !==
+          JSON.stringify(await learningSource(current.record, candidate.evidenceRefs))
+        )
+          throw storeError("EVIDENCE_INSUFFICIENT", "learning evidence changed before memory commit", { caseId })
         const id = write()
         if (id !== input.id)
           throw storeError("EVIDENCE_INSUFFICIENT", "memory writer returned a different learning identity")

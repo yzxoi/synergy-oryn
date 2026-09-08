@@ -5,6 +5,9 @@ import { Session } from "../../src/session"
 import { OrynService } from "../../src/oryn/service"
 import { OrynStore } from "../../src/oryn/store"
 import { OrynPublish, setTransport } from "../../src/oryn/publish"
+import { Storage } from "../../src/storage/storage"
+import { OrynPath } from "../../src/oryn/path"
+import { OrynEvidence } from "../../src/oryn/evidence"
 import { OrynControl } from "../../src/oryn/control"
 import { OrynReady } from "../../src/oryn/ready"
 import { OrynLearning, setMemoryPromoter } from "../../src/oryn/learn"
@@ -49,6 +52,205 @@ async function acknowledgeReady(seeded: Frozen) {
   })
   OrynReady.setVerifier(async () => true)
 }
+
+describe("learning evidence provenance", () => {
+  test.each(["empty", "unaccepted", "old attempt"] as const)("rejects %s evidence", async (kind) => {
+    await withLearnScope({}, async (root) => {
+      const seeded = await seedFrozen(root)
+      let refs = [seeded.baselineRunId]
+      if (kind === "empty") refs = []
+      if (kind === "unaccepted") {
+        const original = (await OrynStore.listWorkerReports(seeded.caseId))[0]
+        const { id: _id, schemaVersion: _version, createdAt: _time, ...input } = original
+        const orphan = await OrynStore.writeWorkerReport({ ...input, requestKey: "unaccepted-learning-report" })
+        refs = [orphan.id]
+      }
+      if (kind === "old attempt")
+        await OrynService.rework({
+          callerSessionID: seeded.engineeringSessionId,
+          caseId: seeded.caseId,
+          reason: "replace candidate",
+        })
+      await expect(
+        OrynLearning.propose({
+          callerSessionID: seeded.engineeringSessionId,
+          caseId: seeded.caseId,
+          lesson: "A claim needs accepted evidence",
+          applicability: "this candidate",
+          invalidation: "new evidence",
+          evidenceRefs: refs,
+        }),
+      ).rejects.toMatchObject({ data: { code: "EVIDENCE_INSUFFICIENT" } })
+      expect(await OrynStore.listLearnings(seeded.caseId)).toEqual([])
+    })
+  })
+
+  test("Host pins a fresh lesson to its repository, candidate and accepted evidence", async () => {
+    await withLearnScope({}, async (root) => {
+      const seeded = await proposedReadyLesson(root)
+      expect(await OrynStore.getLearning(seeded.learningId)).toMatchObject({
+        schemaVersion: 2,
+        source: { repository: "acme/widget", attemptId: seeded.attemptId, candidateSha: seeded.candidateSha, epoch: 0 },
+      })
+    })
+  })
+})
+
+test.each(["legacy", "changed receipt", "new attempt"] as const)(
+  "promotion skips a lesson with %s provenance",
+  async (change) => {
+    await withLearnScope({ verifiedMemory: true }, async (root) => {
+      const seeded = await proposedReadyLesson(root)
+      if (change === "legacy")
+        await OrynStore.mutateLearning(seeded.learningId, (draft) => ({ ...draft, source: undefined }))
+      if (change === "changed receipt") {
+        const run = (await OrynStore.getRun(seeded.caseId, seeded.baselineRunId))!
+        await Storage.write(OrynPath.run(seeded.caseId, run.id), {
+          ...run,
+          observations: [...run.observations, "corrected observation"],
+        })
+      }
+      if (change === "new attempt") {
+        await OrynService.rework({
+          callerSessionID: seeded.engineeringSessionId,
+          caseId: seeded.caseId,
+          reason: "new source provenance",
+        })
+        const attemptId = await activeAttemptId(seeded.caseId)
+        await OrynStore.mutateAttempt(seeded.caseId, attemptId, (draft) => ({
+          ...draft,
+          candidateSha: seeded.candidateSha,
+        }))
+        await acknowledgeReady({ ...seeded, attemptId })
+      }
+      const writes: string[] = []
+      setMemoryPromoter({
+        async promote({ id }, commit) {
+          return commit(() => {
+            writes.push(id)
+            return id
+          })
+        },
+        async remove() {},
+      })
+      expect(await OrynLearning.promoteCase(seeded.caseId)).toEqual({ promoted: 0, skipped: 1 })
+      expect(writes).toEqual([])
+    })
+  },
+)
+
+test("receipt correction during preparation prevents memory insertion", async () => {
+  await withLearnScope({ verifiedMemory: true }, async (root) => {
+    const seeded = await proposedReadyLesson(root)
+    const entered = Promise.withResolvers<void>()
+    const release = Promise.withResolvers<void>()
+    const writes: string[] = []
+    setMemoryPromoter({
+      async promote({ id }, commit) {
+        entered.resolve()
+        await release.promise
+        return commit(() => {
+          writes.push(id)
+          return id
+        })
+      },
+      async remove() {},
+    })
+    const pending = OrynLearning.promoteCase(seeded.caseId).then(
+      () => undefined,
+      (error: unknown) => error,
+    )
+    try {
+      await entered.promise
+      const run = (await OrynStore.getRun(seeded.caseId, seeded.baselineRunId))!
+      await Storage.write(OrynPath.run(seeded.caseId, run.id), {
+        ...run,
+        observations: [...run.observations, "corrected while preparing"],
+      })
+    } finally {
+      release.resolve()
+    }
+    expect(await pending).toMatchObject({ data: { code: "EVIDENCE_INSUFFICIENT" } })
+    expect(writes).toEqual([])
+  })
+})
+
+test.each(["changes_required", "stale evidence"] as const)(
+  "review references cannot fall back after a latest %s review",
+  async (state) => {
+    await withLearnScope({}, async (root) => {
+      const seeded = await seedFrozen(root)
+      const record = (await OrynStore.getCase(seeded.caseId))!
+      const attempt = (await OrynStore.getAttempt(record.id, seeded.attemptId))!
+      async function review(next: boolean) {
+        const assignment = await OrynStore.createAssignment({
+          caseId: record.id,
+          attemptId: attempt.id,
+          stage: "review",
+          agentId: "oryn-review",
+          epoch: record.epoch,
+          frozenInputsDigest: OrynEvidence.assignmentDigest(record, attempt, "review"),
+        })
+        const result = await OrynStore.writeReview({
+          caseId: record.id,
+          attemptId: attempt.id,
+          assignmentId: assignment.id,
+          headSha: seeded.candidateSha,
+          baseSha: attempt.baselineSha,
+          ...OrynEvidence.reviewDigests(record, attempt),
+          ...(next && state === "stale evidence" ? { evidenceDigest: "obsolete-evidence" } : {}),
+          evidenceAssessment: "Fixture review assessment",
+          findings: [],
+          recommendation: next && state === "changes_required" ? "changes_required" : "ready_for_human",
+        })
+        return { assignment, result }
+      }
+      const first = await review(false)
+      const propose = (ref: string) =>
+        OrynLearning.propose({
+          callerSessionID: seeded.engineeringSessionId,
+          caseId: record.id,
+          lesson: "Review-derived proposal",
+          applicability: "this candidate",
+          invalidation: "new review",
+          evidenceRefs: [ref],
+        })
+      await expect(propose(first.result.id)).rejects.toMatchObject({ data: { code: "EVIDENCE_INSUFFICIENT" } })
+      await OrynStore.acceptAssignmentReport(record.id, first.assignment.id, first.result.id)
+      expect((await propose(first.result.id)).created).toBe(true)
+      const last = await review(true)
+      await OrynStore.acceptAssignmentReport(record.id, last.assignment.id, last.result.id)
+      await expect(propose(first.result.id)).rejects.toMatchObject({ data: { code: "EVIDENCE_INSUFFICIENT" } })
+      await expect(propose(last.result.id)).rejects.toMatchObject({ data: { code: "EVIDENCE_INSUFFICIENT" } })
+    })
+  },
+)
+
+test.each(["synthetic", "infrastructure", "wrong source"] as const)(
+  "learning refuses %s run provenance",
+  async (kind) => {
+    await withLearnScope({}, async (root) => {
+      const seeded = await seedFrozen(root)
+      const run = (await OrynStore.getRun(seeded.caseId, seeded.baselineRunId))!
+      await Storage.write(OrynPath.run(seeded.caseId, run.id), {
+        ...run,
+        ...(kind === "synthetic" ? { authenticity: "synthetic" } : {}),
+        ...(kind === "infrastructure" ? { infrastructureFailure: true } : {}),
+        ...(kind === "wrong source" ? { actualSha: seeded.candidateSha } : {}),
+      })
+      await expect(
+        OrynLearning.propose({
+          callerSessionID: seeded.engineeringSessionId,
+          caseId: seeded.caseId,
+          lesson: "Unsupported claim",
+          applicability: "this candidate",
+          invalidation: "new evidence",
+          evidenceRefs: [run.id],
+        }),
+      ).rejects.toMatchObject({ data: { code: "EVIDENCE_INSUFFICIENT" } })
+    })
+  },
+)
 
 describe("current delivery learning gate", () => {
   test.each(["unacknowledged", "paused", "epoch", "attempt", "remote"] as const)(
@@ -357,6 +559,9 @@ describe("learning side-effect recovery", () => {
       expect(new Set(results.map((result) => result.learningId)).size).toBe(1)
       expect(results.filter((result) => result.created)).toHaveLength(1)
       expect(await OrynStore.listLearnings(seeded.caseId)).toHaveLength(1)
+      const changed = await OrynLearning.propose({ ...input, applicability: "a different scope" })
+      expect(changed.created).toBe(true)
+      expect(changed.learningId).not.toBe(results[0].learningId)
     })
   })
 

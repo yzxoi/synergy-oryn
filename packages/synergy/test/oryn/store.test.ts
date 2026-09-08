@@ -270,7 +270,7 @@ describe("OrynStore attempts, assignments, receipts", () => {
   test("learning candidates start proposed and can be promoted", async () => {
     const candidate = await OrynStore.writeLearning({
       caseId: "orc_learningtest",
-      outcomeVersion: "v1",
+      memory: { title: "Fixture lesson", content: "Fixture observation" },
       lesson: "forwarded messages need total-length check",
       applicability: "feishu channel",
       invalidation: "upstream provider change",

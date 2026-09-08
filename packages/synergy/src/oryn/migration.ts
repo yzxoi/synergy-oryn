@@ -4,7 +4,7 @@ import { OrynPath } from "./path"
 import type { Migration } from "../migration"
 import { MigrationRegistry } from "../migration/registry"
 import { z } from "zod"
-import { ActionReceipt, AttemptTransition, Case, OutboxEntry } from "./schema"
+import { ActionReceipt, AttemptTransition, Case, OutboxEntry, LearningCandidate } from "./schema"
 
 const log = Log.create({ service: "oryn.migration" })
 
@@ -24,6 +24,11 @@ const ActionReceiptV2 = ActionReceiptV3.extend({
   operation: z.enum(["ensure_issue", "ensure_draft", "refresh_pr", "publish_review", "mark_ready", "notify_feishu"]),
 }).omit({ labelTarget: true })
 const LegacyActionReceipt = ActionReceiptV2.extend({ schemaVersion: z.literal(1) }).omit({ readyTarget: true })
+
+const LegacyLearning = LearningCandidate.omit({ source: true, memory: true }).extend({
+  schemaVersion: z.literal(1),
+  outcomeVersion: z.string().min(1),
+})
 
 export const migrations: Migration[] = [
   {
@@ -161,6 +166,41 @@ export const migrations: Migration[] = [
           }
         }
         progress(index + 1, cases.length)
+      }
+    },
+  },
+  {
+    id: "20260908-oryn-learning-provenance",
+    description: "Preserve legacy memory content without inventing Host learning provenance",
+    version: "1.0.0",
+    domain: "oryn",
+    dependsOn: ["20260907-oryn-baseline"],
+    async up(progress) {
+      const ids = await Storage.scan(OrynPath.learningRoot())
+      for (const [index, id] of ids.entries()) {
+        const key = OrynPath.learning(id)
+        const value = await Storage.read<unknown>(key)
+        if (!LearningCandidate.safeParse(value).success) {
+          const { outcomeVersion, ...legacy } = LegacyLearning.parse(value)
+          await Storage.write(
+            key,
+            LearningCandidate.parse({
+              ...legacy,
+              schemaVersion: 2,
+              memory: {
+                title: legacy.lesson.slice(0, 120),
+                content: [
+                  `Lesson: ${legacy.lesson}`,
+                  `Applies to: ${legacy.applicability}`,
+                  `Invalid when: ${legacy.invalidation}`,
+                  `Evidence (case-scoped records): ${legacy.evidenceRefs.join(", ")}`,
+                  `Verified at outcome version: ${outcomeVersion}`,
+                ].join("\n"),
+              },
+            }),
+          )
+        }
+        progress(index + 1, ids.length)
       }
     },
   },

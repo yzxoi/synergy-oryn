@@ -30,6 +30,8 @@ description: Add or modify Synergy durable state, JSON storage keys, SQLite tabl
 
 When one logical operation crosses JSON storage and Library SQLite, establish its destination identity before the side effect and make replay verify both identity and content. Serialize creation and withdrawal, and test a destination write followed by a lost source acknowledgment. A matching destination row can settle replay; different content must remain available for reconciliation rather than being overwritten or removed. When a destination write depends on revocable ownership, prepare remote work outside the ownership lock, then revalidate the captured policy and delivery evidence under that lock before committing the local side effect. Test revocation during both preparation and remote confirmation; the control action must complete before the held operation is released.
 
+When deletion or replay compares rendered content, persist the exact payload rather than regenerating it from mutable status or a new template. Migrate the historical writer's bytes and preserve missing provenance explicitly; do not attach an old claim to the current task or candidate merely because they now share a record. Exercise actual destination matching and removal after migration.
+
 ## Migrate Existing Data
 
 1. Add a migration whenever an existing persisted shape can reach the new code.

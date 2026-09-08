@@ -22,6 +22,8 @@ Synergy keeps installation state under one root:
 
 Cache version changes can clear `cache/` on startup. Treat cache as reproducible, not as a backup source.
 
+Oryn learning records use schema version 2 with an immutable memory payload and optional Host provenance. The domain migration preserves historical payload bytes and memory identities while leaving unknown provenance absent; those records cannot be automatically promoted. See [learning provenance](../decisions/implemented/bug-fix/2026-09-08-oryn-learning-provenance.md) for upgrade and replay semantics.
+
 ## JSON Storage
 
 Most durable product objects use file-based JSON storage rooted at `data/`. A logical storage key maps to nested directories plus a `.json` suffix. Writes take per-file locks and use a temporary file followed by atomic rename. The write+rename sequence retries transient sharing-violation errors (`EPERM`/`EACCES`/`EBUSY`, classified via `isRetryableIOError`) up to 4 attempts with 50–200 ms backoff, because Windows renames fail when antivirus, sync clients, or cross-process readers briefly hold a handle; permanent errors fail on the first attempt and the temp file is removed (with the same transient retry) before the original error propagates. Cross-process readers of these files read through `readFileWithRetry` for the same reason. Streaming message/part writes can use compact JSON; lower-frequency records remain indented.

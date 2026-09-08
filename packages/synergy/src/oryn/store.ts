@@ -9,6 +9,7 @@ import {
   Attempt,
   AttemptTransition,
   ChannelSource,
+  LearningCandidate,
   OutboxEntry,
   RunReceipt,
   ReviewReport,
@@ -21,7 +22,6 @@ import type {
   Case,
   CaseControl,
   IntakeClaim,
-  LearningCandidate,
   OutboxEntry as OutboxEntryT,
   SourceIdentity,
   SourceLink,
@@ -647,34 +647,31 @@ export namespace OrynStore {
     return actions.find((a) => a.requestKey === requestKey)
   }
 
-  export async function writeLearning(input: {
-    caseId: string
-    outcomeVersion: string
-    lesson: string
-    applicability: string
-    invalidation: string
-    evidenceRefs: string[]
-  }): Promise<LearningCandidate> {
+  export async function writeLearning(
+    input: Pick<
+      LearningCandidate,
+      "caseId" | "source" | "memory" | "lesson" | "applicability" | "invalidation" | "evidenceRefs"
+    >,
+  ): Promise<LearningCandidate> {
     const ts = now()
-    const record: LearningCandidate = {
-      schemaVersion: 1,
+    const record = LearningCandidate.parse({
+      ...input,
+      schemaVersion: 2,
       id: Identifier.ascending("oryn_learning"),
-      caseId: input.caseId,
-      outcomeVersion: input.outcomeVersion,
-      lesson: input.lesson,
-      applicability: input.applicability,
-      invalidation: input.invalidation,
-      evidenceRefs: input.evidenceRefs,
       promotionState: "proposed",
       createdAt: ts,
       updatedAt: ts,
-    }
+    })
     await Storage.write(OrynPath.learning(record.id), record)
     return record
   }
 
   export async function getLearning(candidateId: string): Promise<LearningCandidate | undefined> {
-    return Storage.read<LearningCandidate>(OrynPath.learning(candidateId)).catch(() => undefined)
+    const value = await Storage.read<unknown>(OrynPath.learning(candidateId)).catch((error: unknown) => {
+      if (error instanceof Storage.NotFoundError) return undefined
+      throw error
+    })
+    return value === undefined ? undefined : LearningCandidate.parse(value)
   }
 
   export async function mutateLearning(
