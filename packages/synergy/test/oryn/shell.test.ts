@@ -10,6 +10,7 @@ import { SessionDrive } from "../../src/session/drive"
 import { ProcessRegistry } from "../../src/process/registry"
 import { SandboxBackend } from "../../src/sandbox/backend"
 import { OrynShell } from "../../src/oryn/shell"
+import type { OrynProcessResources } from "../../src/oryn/resource-policy"
 import "../../src/product-registration"
 import { expect, spyOn, test } from "bun:test"
 import { Agent } from "../../src/agent/agent"
@@ -32,12 +33,14 @@ async function fixture(
     assignmentId: string
     attemptId: string
   }) => Promise<void>,
+  processResources?: OrynProcessResources,
 ) {
   await using repo = await tmpdir({
     git: true,
     config: {
       oryn: {
         enabled: true,
+        limits: processResources ? { processResources } : undefined,
         routes: [{ feishuAccount: "test", repoAlias: "repo" }],
         repositories: { repo: { owner: "test", repo: "repo" } },
       },
@@ -808,4 +811,28 @@ native(
     })
   },
   15000,
+)
+
+test.skipIf(process.platform === "linux")("worker Bash cannot bypass configured Linux process resources", async () => {
+  await fixture(
+    async ({ sessionID, directory }) => {
+      await expect(execute(sessionID, "printf unbounded > unbounded-marker")).rejects.toThrow("require Linux cgroup v2")
+      expect(await Bun.file(`${directory}/unbounded-marker`).exists()).toBe(false)
+    },
+    { memoryMiB: 512, cpuQuotaPercent: 100, maxProcesses: 64 },
+  )
+})
+
+test.skipIf(process.platform !== "linux" || process.env.SYNERGY_TEST_ORYN_CGROUP !== "1")(
+  "worker Bash runs inside its installation-owned resource scope",
+  async () => {
+    await fixture(
+      async ({ sessionID }) => {
+        const result = await execute(sessionID, 'printf "resource-bounded"')
+        expect(result.metadata.exit).toBe(0)
+        expect(result.output).toContain("resource-bounded")
+      },
+      { memoryMiB: 512, cpuQuotaPercent: 100, maxProcesses: 64 },
+    )
+  },
 )

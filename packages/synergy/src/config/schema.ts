@@ -19,6 +19,7 @@ import { ConfigLspCatalog } from "./lsp-catalog"
 import { ModelRole } from "../provider/model-role"
 import { normalizePublicHttpsOrigin } from "../util/public-https-origin"
 import { validateHolosEndpoint, validateHolosPortalUrl } from "../util/holos"
+import { OrynProcessResources } from "../oryn/resource-policy"
 
 export const McpRetry = McpRetryConfig
 export type McpRetry = McpRetryConfig
@@ -621,6 +622,9 @@ export type OrynReview = z.infer<typeof OrynReview>
 
 export const OrynLimits = z
   .object({
+    processResources: OrynProcessResources.optional().describe(
+      "Linux cgroup ceilings for every Oryn check and worker Bash command",
+    ),
     maxActiveCases: z.number().int().min(1).optional().describe("Maximum concurrently active cases (default: 4)"),
     maxConcurrentWorkers: z
       .number()
@@ -664,6 +668,9 @@ export type OrynIsolationMode = z.infer<typeof OrynIsolationMode>
 
 export const OrynExecutionProfile = z
   .object({
+    resourceLimits: OrynProcessResources.optional().describe(
+      "Per-command Linux cgroup limits; installation processResources remain the upper ceiling",
+    ),
     description: z.string().optional().describe("What this profile is for, e.g. server-side unit tests"),
     writableDirectories: z
       .array(z.string().min(1).max(240))

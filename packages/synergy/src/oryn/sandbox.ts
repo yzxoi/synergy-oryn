@@ -6,6 +6,7 @@ import type { OrynExecutionProfile } from "../config/schema"
 import { SandboxBackend } from "../sandbox/backend"
 import { storeError } from "./store"
 import { OrynGit } from "./git"
+import { OrynResources } from "./resources"
 
 export const SYSTEM_READ_ROOTS = [
   "/bin",
@@ -43,7 +44,8 @@ export namespace OrynSandbox {
         "ENVIRONMENT_UNAVAILABLE",
         "checks require OS sandbox isolation; external VM execution is not configured",
       )
-    const supported = process.platform === "linux" ? ["namespace", "seccomp"] : []
+    const supported =
+      process.platform === "linux" ? ["namespace", "seccomp", ...(input.profile.resourceLimits ? ["cgroup"] : [])] : []
     if (input.profile.requiredCapabilities?.some((capability) => !supported.includes(capability)))
       throw storeError(
         "ENVIRONMENT_UNAVAILABLE",
@@ -103,9 +105,12 @@ export namespace OrynSandbox {
         if (wrapper.tempPath) SandboxBackend.cleanupTemp(wrapper.tempPath)
         throw storeError("ENVIRONMENT_UNAVAILABLE", wrapper.skipReason ?? "OS sandbox is unavailable")
       }
-      return await SandboxBackend.executeAsync(wrapper, {
+      const resources = await OrynResources.prepare({
+        wrapper,
         cwd: workspace,
-        env: {
+        limits: input.profile.resourceLimits,
+        abort: input.abort,
+        environment: {
           ...OrynGit.environment(),
           GIT_OPTIONAL_LOCKS: "0",
           HOME: scratch,
@@ -115,13 +120,26 @@ export namespace OrynSandbox {
           PATH: searchPath,
           LANG: "C.UTF-8",
         },
-        inheritEnv: false,
-        networkMode: "restricted",
-        fallbackPolicy: "deny",
-        signal: input.abort,
-        timeoutMs: input.timeoutMs,
-        maxOutputBytes: 64 * 1024,
+      }).catch((error) => {
+        if (wrapper.tempPath) SandboxBackend.cleanupTemp(wrapper.tempPath)
+        throw error
       })
+      try {
+        const result = await SandboxBackend.executeAsync(resources.wrapper, {
+          cwd: workspace,
+          env: resources.environment,
+          inheritEnv: false,
+          networkMode: "restricted",
+          fallbackPolicy: "deny",
+          signal: input.abort,
+          timeoutMs: input.timeoutMs,
+          maxOutputBytes: 64 * 1024,
+        })
+        await resources.verify()
+        return result
+      } finally {
+        await resources.dispose()
+      }
     } finally {
       await rm(scratch, { recursive: true, force: true })
     }

@@ -1,4 +1,10 @@
 async function bootstrap(): Promise<void> {
+  const resourceRunner = process.argv.indexOf("__oryn-resource-runner")
+  if (resourceRunner >= 0) {
+    const { runOrynResourceCommand } = await import("./oryn/resource-runner")
+    await runOrynResourceCommand(process.argv[resourceRunner + 1] ?? "")
+    return
+  }
   if (process.argv.some((arg) => arg.startsWith("__") && arg.endsWith("-runner"))) {
     const { Global } = await import("./global")
     await Global.initialize({ cache: false })

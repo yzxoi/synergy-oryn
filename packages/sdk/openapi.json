@@ -37292,10 +37292,45 @@
         },
         "additionalProperties": false
       },
+      "OrynProcessResourcesConfig": {
+        "description": "Per-command Linux cgroup limits; installation processResources remain the upper ceiling",
+        "type": "object",
+        "properties": {
+          "maxSeconds": {
+            "description": "Systemd-managed scope lifetime in seconds, including detached descendants; default 1800",
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 86400
+          },
+          "memoryMiB": {
+            "description": "Per-command cgroup memory ceiling in MiB; swap is disabled",
+            "type": "integer",
+            "minimum": 256,
+            "maximum": 1048576
+          },
+          "cpuQuotaPercent": {
+            "description": "Per-command aggregate CPU quota; 100 is one CPU",
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 12800
+          },
+          "maxProcesses": {
+            "description": "Per-command cgroup task limit, including threads and descendants",
+            "type": "integer",
+            "minimum": 16,
+            "maximum": 65536
+          }
+        },
+        "required": ["memoryMiB", "cpuQuotaPercent", "maxProcesses"],
+        "additionalProperties": false
+      },
       "OrynLimitsConfig": {
         "description": "Concurrency, budget, and output limits",
         "type": "object",
         "properties": {
+          "processResources": {
+            "$ref": "#/components/schemas/OrynProcessResourcesConfig"
+          },
           "maxActiveCases": {
             "description": "Maximum concurrently active cases (default: 4)",
             "type": "integer",
@@ -37355,6 +37390,9 @@
       "OrynExecutionProfileConfig": {
         "type": "object",
         "properties": {
+          "resourceLimits": {
+            "$ref": "#/components/schemas/OrynProcessResourcesConfig"
+          },
           "description": {
             "description": "What this profile is for, e.g. server-side unit tests",
             "type": "string"

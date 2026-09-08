@@ -4250,9 +4250,32 @@ export type OrynReviewConfig = {
 }
 
 /**
+ * Per-command Linux cgroup limits; installation processResources remain the upper ceiling
+ */
+export type OrynProcessResourcesConfig = {
+  /**
+   * Systemd-managed scope lifetime in seconds, including detached descendants; default 1800
+   */
+  maxSeconds?: number
+  /**
+   * Per-command cgroup memory ceiling in MiB; swap is disabled
+   */
+  memoryMiB: number
+  /**
+   * Per-command aggregate CPU quota; 100 is one CPU
+   */
+  cpuQuotaPercent: number
+  /**
+   * Per-command cgroup task limit, including threads and descendants
+   */
+  maxProcesses: number
+}
+
+/**
  * Concurrency, budget, and output limits
  */
 export type OrynLimitsConfig = {
+  processResources?: OrynProcessResourcesConfig
   /**
    * Maximum concurrently active cases (default: 4)
    */
@@ -4293,6 +4316,7 @@ export type OrynLimitsConfig = {
 export type OrynIsolationModeConfig = "worktree" | "sandbox" | "external_vm"
 
 export type OrynExecutionProfileConfig = {
+  resourceLimits?: OrynProcessResourcesConfig
   /**
    * What this profile is for, e.g. server-side unit tests
    */

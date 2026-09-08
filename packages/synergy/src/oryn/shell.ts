@@ -11,6 +11,7 @@ import { OrynConfig } from "./config"
 import { OrynGit } from "./git"
 import { SYSTEM_READ_ROOTS } from "./sandbox"
 import { OrynStore, storeError } from "./store"
+import { OrynResources } from "./resources"
 
 export namespace OrynShell {
   async function owner(input: BashExecutionPolicy.Input) {
@@ -161,8 +162,11 @@ export namespace OrynShell {
               network: { mode: "restricted", allowLocalBinding: false, allowedUnixSockets: [] },
             },
           })
-          return {
-            ...wrapper,
+          const resources = await OrynResources.prepare({
+            wrapper,
+            cwd: work.directory,
+            abort: input.abort,
+            limits: (await OrynConfig.info())?.limits?.processResources,
             environment: {
               ...OrynGit.environment(),
               PATH: searchPath,
@@ -175,7 +179,20 @@ export namespace OrynShell {
               GIT_DIR: gitDirectory,
               GIT_WORK_TREE: work.directory,
             },
-            dispose,
+          }).catch((error) => {
+            if (wrapper.tempPath) SandboxBackend.cleanupTemp(wrapper.tempPath)
+            throw error
+          })
+          return {
+            ...resources.wrapper,
+            environment: resources.environment,
+            dispose: async () => {
+              try {
+                await resources.dispose()
+              } finally {
+                await dispose()
+              }
+            },
           }
         } catch (error) {
           await dispose()

@@ -14,9 +14,25 @@ export namespace OrynConfig {
     const repository = config?.repositories?.[repoAlias]
     if (!config?.enabled || !repository) return {}
     return Object.fromEntries(
-      Object.entries(config.executionProfiles ?? {}).filter(
-        ([id]) => !repository.testProfiles || repository.testProfiles.includes(id),
-      ),
+      Object.entries(config.executionProfiles ?? {})
+        .filter(([id]) => !repository.testProfiles || repository.testProfiles.includes(id))
+        .map(([id, profile]) => {
+          const ceiling = config.limits?.processResources
+          if (!ceiling) return [id, profile]
+          const limits = profile.resourceLimits ?? ceiling
+          return [
+            id,
+            {
+              ...profile,
+              resourceLimits: {
+                maxSeconds: Math.min(limits.maxSeconds ?? 1800, ceiling.maxSeconds ?? 1800),
+                memoryMiB: Math.min(limits.memoryMiB, ceiling.memoryMiB),
+                cpuQuotaPercent: Math.min(limits.cpuQuotaPercent, ceiling.cpuQuotaPercent),
+                maxProcesses: Math.min(limits.maxProcesses, ceiling.maxProcesses),
+              },
+            },
+          ]
+        }),
     )
   }
 
