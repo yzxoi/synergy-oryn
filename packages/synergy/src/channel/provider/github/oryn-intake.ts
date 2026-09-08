@@ -34,6 +34,7 @@ export namespace OrynGithubIntake {
     user: { login: string; type: string }
     updated_at?: string
     submitted_at?: string
+    state?: string
     path?: string
     line?: number
   }
@@ -94,7 +95,11 @@ export namespace OrynGithubIntake {
         : {}),
       comments: [
         ...comments,
-        ...reviews.map((item) => ({ ...item, id: -item.id * 2 })),
+        ...reviews.map((item) => ({
+          ...item,
+          id: -item.id * 2,
+          body: item.state ? `Review ${item.state}\n${item.body ?? ""}` : item.body,
+        })),
         ...inline.map((item) => ({
           ...item,
           id: -item.id * 2 - 1,

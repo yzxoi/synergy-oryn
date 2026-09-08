@@ -28,7 +28,7 @@ test("intake reads latest review and inline-comment pages with bound credentials
         if (route.endsWith("/issues/7/comments")) return Response.json([comment(1, "@oryn fix")])
         if (route.endsWith("/pulls/7/reviews"))
           return parsed.searchParams.get("page") === "2"
-            ? Response.json([comment(202, "Newest review")])
+            ? Response.json([{ ...comment(202, "Newest review"), state: "CHANGES_REQUESTED" }])
             : Response.json([comment(2, "Old review")], {
                 headers: {
                   link: '<https://api.github.com/repos/acme/widget/pulls/7/reviews?per_page=100&page=2>; rel="last", <https://api.github.com/repos/acme/widget/pulls/7/reviews?per_page=100&page=2>; rel="next"',
@@ -54,7 +54,7 @@ test("intake reads latest review and inline-comment pages with bound credentials
     })
     expect(snapshot.comments.map((item) => item.body)).toEqual([
       "@oryn fix",
-      "Newest review",
+      "Review CHANGES_REQUESTED\nNewest review",
       "widget.ts:9\nThe missing await loses writes",
     ])
     expect(requested.some((route) => route.includes("issues/7/comments?per_page=100&page=2"))).toBe(true)
