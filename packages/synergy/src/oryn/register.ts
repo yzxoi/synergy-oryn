@@ -10,6 +10,8 @@ import { registerOrynTools, CheckParameters, ResultParameters } from "./tools"
 import { ToolExecutor } from "../session/tool-executor"
 import { OrynExecutor } from "./executor"
 import { OrynEvidence } from "./evidence"
+import { AgentTurnAdmission } from "../session/agent-turn/admission"
+import { OrynConfig } from "./config"
 import "./migration"
 
 /**
@@ -31,6 +33,11 @@ export function registerOrynDomain(): void {
   if (registered) return
   registered = true
   SessionRunPolicy.register("oryn", OrynControl.canRun)
+  AgentTurnAdmission.register("oryn", async (owner) => {
+    if (owner.kind !== "session" || !(await OrynConfig.enabled())) return false
+    const binding = await OrynStore.sessionSourceBinding(owner.sessionID)
+    return binding?.role === "engineering" || binding?.role === "worker"
+  })
   BashExecutionPolicy.register("oryn", OrynShell.resolve)
   ProcessAccessPolicy.register("oryn", OrynShell.processAccess)
 

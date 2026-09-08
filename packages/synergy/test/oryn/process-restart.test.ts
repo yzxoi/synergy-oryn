@@ -106,6 +106,10 @@ for (const interruption of ["model", "issue"] as const)
         const text = content(request)
         const results = content(request, "tool")
         if (has("oryn_reply")) {
+          if (text.includes("Capacity question"))
+            return results.includes("entryId:")
+              ? { text: "Capacity answer delivered" }
+              : { tool: "oryn_reply", input: { kind: "answer", text: "QA can answer while engineering is busy." } }
           const key = required(text, /Investigate (alpha|beta) feedback/)
           if (!results.includes("caseId:"))
             return {
@@ -202,7 +206,7 @@ for (const interruption of ["model", "issue"] as const)
             enabled_providers: ["oryn-fixture"],
             provider: { "oryn-fixture": model.config },
             embedding: { apiKey: "fixture-only", model: "fixture-embedding", baseURL: model.config.api },
-            execution: { agentWorkers: 4, agentWorkerMinIdle: 0, toolConcurrency: 4, policyWorkers: 1 },
+            execution: { agentWorkers: 3, agentWorkerMinIdle: 0, toolConcurrency: 4, policyWorkers: 1 },
             channel: {
               feishu: {
                 type: "feishu",
@@ -240,6 +244,28 @@ for (const interruption of ["model", "issue"] as const)
           brokerErrors,
           logs: reached() === 2 ? "" : first.output().slice(-3000),
         }).toEqual({ blocked: 2, errors: [], brokerErrors: [], logs: "" })
+        const replyCount = interruption === "model" ? 5 : 4
+        if (interruption === "model") {
+          await first.receive({ ...message("capacity"), text: "Capacity question" })
+          const deadline = Date.now() + 30000
+          while (
+            !replies.some((reply) => JSON.stringify(reply).includes("QA can answer while engineering is busy.")) &&
+            !model.errors.length &&
+            Date.now() < deadline
+          )
+            await Bun.sleep(50)
+          expect({ replies, errors: model.errors }).toMatchObject({
+            replies: expect.arrayContaining([
+              expect.objectContaining({
+                messageId: "report-capacity",
+                parts: [{ type: "text", text: "QA can answer while engineering is busy." }],
+              }),
+            ]),
+            errors: [],
+          })
+          expect(blocked.size).toBe(2)
+          expect(restarted).toBe(false)
+        }
         const before = await first.snapshot()
         expect(before.cases).toHaveLength(2)
         expect(before.assignments).toHaveLength(interruption === "model" ? 2 : 0)
@@ -265,7 +291,7 @@ for (const interruption of ["model", "issue"] as const)
         while (
           (!after.cases.every((record) => record.control === "human_owned") ||
             after.sessions.some((session) => !session.exists || session.running) ||
-            replies.length < 4) &&
+            replies.length < replyCount) &&
           !model.errors.length &&
           !brokerErrors.length &&
           Date.now() < finish
@@ -287,7 +313,7 @@ for (const interruption of ["model", "issue"] as const)
         expect(after.actions.map((action) => action.state)).toEqual(["acknowledged", "acknowledged"])
         expect(after.cases.map((record) => record.issueNumber).sort()).toEqual([101, 102])
         expect(after.assignments.every((item) => !!item.acceptedReportId)).toBe(true)
-        expect(replies).toHaveLength(4)
+        expect(replies).toHaveLength(replyCount)
         for (const key of ["alpha", "beta"]) {
           const matched = replies.filter((reply) => JSON.stringify(reply).includes(`report-${key}`))
           expect(matched).toHaveLength(2)
@@ -298,7 +324,7 @@ for (const interruption of ["model", "issue"] as const)
         await Promise.all([second.receive(message("alpha")), second.receive(message("beta"))])
         expect((await second.snapshot()).cases).toHaveLength(2)
         expect(writes).toHaveLength(2)
-        expect(replies).toHaveLength(4)
+        expect(replies).toHaveLength(replyCount)
         expect(after.reactions).toBe(0)
         expect(after.streaming).toBe(0)
       } finally {

@@ -96,6 +96,8 @@ Tool-call input has a separate serialized-input bound. Enforce it for incrementa
 
 Treat streamed tool argument deltas as transport/progress data, not canonical tool input. Use them for incremental byte limits, memory accounting, and diagnostics. Once the AI SDK emits `tool-call`, use its final `input` consistently for the final serialized-input bound, persisted tool part, loop guards, permission evaluation, and execution. Test providers that omit deltas and cases where streamed raw arguments differ from the final AI SDK input.
 
+Resolve workload admission from trusted rollout ownership and Host bindings, including derived calls, instead of model-selected agent names. Keep reservations inside the existing worker queue and outside serialized model/worker input. Test foreground admission when background occupancy, queue count and queued bytes are saturated; also exercise physical release, queued cancellation, resize and the one-worker limit. Keep model-turn capacity distinct from durable worker counts and OS job quotas.
+
 ## Verify and Document
 
 1. Test the chosen lifecycle boundary as a behavior: no session for sessionless work; explicit child lineage and output for Cortex work.

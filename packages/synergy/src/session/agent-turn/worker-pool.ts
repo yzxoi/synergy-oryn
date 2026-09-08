@@ -92,6 +92,7 @@ const RELEASED_REQUEST_TTL_MS = 30_000
 const RELEASED_REQUEST_RING_CAPACITY = 2
 
 interface PoolTask {
+  background: boolean
   archive?: RolloutTransportSchema.Sink
   archiveSequence: number
   archiving: boolean
@@ -325,13 +326,15 @@ export class AgentWorkerPool {
     this.ensureWorkers()
   }
 
-  run(input: AgentTurnPoolInput): Promise<AgentTurnStream> {
+  run(input: AgentTurnPoolInput, admission: { background?: boolean } = {}): Promise<AgentTurnStream> {
     const signal = input.abort
     if (this.stopping) return Promise.reject(new Error("Agent worker pool is stopping"))
     if (this.startupCircuitError) return Promise.reject(this.startupCircuitError)
     if (signal.aborted) return Promise.reject(signal.reason ?? new DOMException("Agent turn aborted", "AbortError"))
     const activeTasks = this.activeTaskCount()
-    if (activeTasks + this.queue.length >= this.targetSize + this.options.maxQueued) {
+    const background = admission.background === true
+    const capacity = this.targetSize + this.options.maxQueued
+    if (activeTasks + this.queue.length >= Math.max(1, capacity - (background ? 1 : 0))) {
       return Promise.reject(new Error(`Agent worker queue is full (${this.options.maxQueued} waiting)`))
     }
 
@@ -350,7 +353,10 @@ export class AgentWorkerPool {
     }
     const payload = AgentTurnProtocol.serializeTurn(envelope as unknown as AgentTurnProtocol.TurnEnvelope)
     const requestBytes = payload.byteLength
-    if (this.queuedBytes + requestBytes > this.options.maxQueuedBytes) {
+    const reservedBytes = background
+      ? Math.min(AgentTurnProtocol.REQUEST_MAX_BYTES, Math.floor(this.options.maxQueuedBytes / 2))
+      : 0
+    if (this.queuedBytes + requestBytes > this.options.maxQueuedBytes - reservedBytes) {
       return Promise.reject(
         new Error(`Agent worker queue exceeded ${this.options.maxQueuedBytes} bytes of waiting turns`),
       )
@@ -371,6 +377,7 @@ export class AgentWorkerPool {
       const released = Promise.withResolvers<void>()
       signal.addEventListener("abort", onAbort, { once: true })
       task = {
+        background,
         archive,
         archiveSequence: 0,
         archiving: false,
@@ -1077,8 +1084,14 @@ export class AgentWorkerPool {
     if (this.stopping) return
     for (const worker of this.workers.values()) {
       if (!worker.ready || worker.stopping || worker.task) continue
-      const task = this.queue.shift()
-      if (!task) return
+      const backgroundActive = [...this.workers.values()].filter(
+        (item) => !item.stopping && item.task?.background,
+      ).length
+      const index = this.queue.findIndex(
+        (task) => !task.background || backgroundActive < Math.max(1, this.targetSize - 1),
+      )
+      if (index === -1) return
+      const [task] = this.queue.splice(index, 1)
       this.queuedBytes -= task.requestBytes
       if (task.signal.aborted) {
         task.removeAbortListener()

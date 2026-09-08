@@ -20,6 +20,7 @@ import { Session } from "../../src/session"
 import { SessionInvoke } from "../../src/session/invoke"
 import { SessionInbox } from "../../src/session/inbox"
 import { SessionManager } from "../../src/session/manager"
+import { AgentTurnAdmission } from "../../src/session/agent-turn/admission"
 import { globalConfig, tmpdir } from "./fixture"
 
 async function fixture(
@@ -89,6 +90,39 @@ async function fixture(
     },
   })
 }
+
+test("model admission derives engineering and QA workload from Host bindings", async () => {
+  await fixture(async ({ rootId, caseId, dispatch }) => {
+    const worker = await dispatch()
+    const record = (await OrynStore.getCase(caseId))!
+    const source = (await OrynStore.getSource(record.sourceIds[0]))!
+    const qa = await Session.create({ title: "Capacity QA", agentOverride: "oryn" })
+    const unbound = await Session.create({ title: "Unbound name", agentOverride: "oryn-work" })
+    const background = (sessionID: string) =>
+      AgentTurnAdmission.background({ kind: "session", scopeID: ScopeContext.current.scope.id, sessionID })
+    try {
+      await OrynStore.bindSessionSource({ sessionID: qa.id, identity: source.identity, role: "qa" })
+      expect(await background(rootId)).toBe(true)
+      expect(await background(worker.workerSessionId)).toBe(true)
+      expect(await background(qa.id)).toBe(false)
+      expect(await background(unbound.id)).toBe(false)
+      expect(await AgentTurnAdmission.background({ kind: "operation", scopeID: "home", operationID: "capacity" })).toBe(
+        false,
+      )
+      const current = (await Config.globalRaw()).oryn!
+      const runtime = await Config.domainGet("runtime")
+      await Config.domainUpdate(
+        "runtime",
+        { ...runtime, oryn: { ...current, enabled: false } },
+        { mode: "replace-domain" },
+      )
+      expect(await background(rootId)).toBe(false)
+    } finally {
+      await Session.remove(qa.id)
+      await Session.remove(unbound.id)
+    }
+  })
+})
 
 test("an expired Case cannot start another engineering or worker turn", async () => {
   await fixture(async ({ rootId, caseId, dispatch }) => {

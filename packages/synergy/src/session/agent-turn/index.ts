@@ -15,6 +15,7 @@ import { Identifier } from "@/id/id"
 import { SessionManager } from "../manager"
 import { RolloutRecordingError } from "../rollout/error"
 import { RolloutTransport } from "../rollout/transport"
+import { AgentTurnAdmission } from "./admission"
 
 export namespace AgentTurn {
   export type Input = AgentTurnInput
@@ -97,7 +98,10 @@ export namespace AgentTurn {
         async (archive) => {
           if (inProcessStream) return RolloutTransport.provide(archive, () => inProcessStream!(input))
           pool ??= new AgentWorkerPool(options)
-          const result = await pool.run({ ...turnInput, prepared: prepared!, archive })
+          const result = await pool.run(
+            { ...turnInput, prepared: prepared!, archive },
+            { background: await AgentTurnAdmission.background(attribution.owner) },
+          )
           const contextUsageDraft = startContextUsageDraft(input, prepared!.system, contextUsageProvenance)
           return { ...result, contextUsageDraft }
         },

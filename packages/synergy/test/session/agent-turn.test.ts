@@ -2,6 +2,7 @@ import { expect, mock, test } from "bun:test"
 import { AgentTurn } from "../../src/session/agent-turn"
 import { runInProcessStream } from "../../src/session/agent-turn/in-process"
 import { AgentWorkerPool } from "../../src/session/agent-turn/worker-pool"
+import { AgentTurnAdmission } from "../../src/session/agent-turn/admission"
 import { ContextUsage } from "../../src/session/context-usage"
 import { LLM } from "../../src/session/llm"
 
@@ -12,6 +13,10 @@ test("starts Context Usage estimation only after the Agent worker starts", async
   const started = Promise.withResolvers<AgentTurn.Stream>()
   let estimationStarts = 0
   const operationID = crypto.randomUUID()
+  const unregister = AgentTurnAdmission.register("test-owner", async (owner) => {
+    expect(owner).toEqual({ kind: "operation", scopeID: "home", operationID })
+    return true
+  })
 
   try {
     await AgentTurn.stop()
@@ -26,7 +31,10 @@ test("starts Context Usage estimation only after the Agent worker starts", async
       },
       params: { options: {} },
     }))
-    ;(AgentWorkerPool.prototype.run as any) = mock(() => started.promise)
+    ;(AgentWorkerPool.prototype.run as any) = mock((_, admission) => {
+      expect(admission).toEqual({ background: true })
+      return started.promise
+    })
     ;(ContextUsage.measureDraft as any) = mock(async () => {
       estimationStarts++
       return undefined
@@ -68,6 +76,7 @@ test("starts Context Usage estimation only after the Agent worker starts", async
     await stream.contextUsageDraft
     await stream.dispose()
   } finally {
+    unregister()
     ;(LLM.prepare as any) = originalPrepare
     ;(AgentWorkerPool.prototype.run as any) = originalRun
     ;(ContextUsage.measureDraft as any) = originalMeasureDraft
