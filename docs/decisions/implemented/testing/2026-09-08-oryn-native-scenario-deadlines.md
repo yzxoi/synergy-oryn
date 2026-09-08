@@ -12,6 +12,8 @@ Receive waits for the execution result under the enclosing test's existing timeo
 
 The native job has a 25-minute aggregate budget for dependency installation, helper compilation, containment/resource tests and pipeline scenarios. This budget affects only the CI job, not Case deadlines, command quotas or model scheduling.
 
+The shared file-lock tests likewise distinguish correctness from incidental acquisition latency. The [package test job](https://github.com/yzxoi/synergy-oryn/actions/runs/34223917511/job/102053301798) exhausted the 100-millisecond acquisition budget while reclaiming already-aged incomplete metadata. Successful reclamation tests allow two seconds, matching the existing recycled-PID success fixture; deliberate contention tests retain their 25-millisecond timeout. The incomplete-metadata test explicitly verifies that fresh bytes remain before aging the file timestamp. Production lock timeouts, grace periods and ownership checks are unchanged.
+
 ## Alternatives considered
 
 **Return receive acknowledgment before QA execution.** This would change what the fixture proves and weaken completed duplicate-delivery checks. The fixture continues to await the real execution result.
