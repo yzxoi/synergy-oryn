@@ -1,3 +1,6 @@
+import { OrynIntegration } from "../../../oryn/integration"
+import { OrynGithubIntake } from "./oryn-intake"
+import { fetchOrynReview } from "./oryn-fetch"
 import { Log } from "@/util/log"
 import { OrynGithubPush } from "./push"
 import { GitHubApiError, GitHubChannelAuth } from "./api"
@@ -41,6 +44,21 @@ function numberField(value: unknown, key: string): number | undefined {
 export namespace OrynGithubPublish {
   export function createTransport(): PublishTransport {
     return {
+      async prepare(input, signal) {
+        const ref = await OrynGithubIntake.read<{ object: { sha: string } }>(
+          input.repository,
+          `git/ref/heads/${encodeURIComponent(input.baseBranch)}`,
+          signal,
+        )
+        await fetchOrynReview({
+          repository: input.repository,
+          directory: input.directory,
+          headSha: ref.object.sha,
+          baseSha: ref.object.sha,
+          signal,
+        })
+        return OrynIntegration.inspect(input.directory, input.candidateSha, ref.object.sha, signal)
+      },
       async execute(input: PublishExecuteInput, signal?: AbortSignal): Promise<PublishExecuteResult> {
         const { owner, repo } = splitRepository(input.repository)
         const token = await GitHubChannelAuth.resolveInstallationToken(owner, repo, signal)
@@ -74,7 +92,10 @@ export namespace OrynGithubPublish {
               candidateSha: input.candidateSha,
               branch: input.branch,
               signal,
+              expectedHead: input.adoptedTarget?.expectedHead,
             })
+            if (input.adoptedTarget)
+              return { refs: { pullNumber: input.adoptedTarget.number, branch: input.adoptedTarget.branch } }
             if (input.operation === "ensure_draft") {
               const created = await send<unknown>(
                 GitHubChannelAuth.GitHubClient.createPullRequest({
@@ -143,14 +164,16 @@ export namespace OrynGithubPublish {
               stringField(record(pull).base, "ref") !== input.baseBranch ||
               stringField(record(record(pull).head).repo, "full_name") !== input.repository ||
               stringField(record(record(pull).base).repo, "full_name") !== input.repository ||
-              stringField(record(pull).user, "login") !== `${slug}[bot]` ||
-              !(stringField(pull, "body") ?? "").includes(input.marker)
+              (!input.adoptedTarget &&
+                (stringField(record(pull).user, "login") !== `${slug}[bot]` ||
+                  !(stringField(pull, "body") ?? "").includes(input.marker))) ||
+              (input.adoptedTarget && (input.pullNumber !== input.adoptedTarget.number || record(pull).draft !== false))
             ) {
               throw new Error("pull request no longer matches the authorized Oryn candidate")
             }
             let url = stringField(pull, "html_url")
             try {
-              if (input.title !== undefined || input.body !== undefined) {
+              if (!input.adoptedTarget && (input.title !== undefined || input.body !== undefined)) {
                 await send<unknown>(
                   GitHubChannelAuth.GitHubClient.updatePullRequest({
                     owner,
@@ -185,6 +208,18 @@ export namespace OrynGithubPublish {
                 url = stringField(changed, "url")
               }
               const refs: PublishExecuteResult["refs"] = { pullNumber: input.pullNumber, url }
+              if (input.adoptedTarget) {
+                const comment = await send<unknown>(
+                  GitHubChannelAuth.GitHubClient.createIssueComment({
+                    owner,
+                    repo,
+                    issueNumber: input.pullNumber,
+                    body: input.body ?? "Oryn candidate verified; human merge required.",
+                    installationToken: token,
+                  }),
+                )
+                refs.commentId = numberField(comment, "id")
+              }
               if (input.deliveryCheckEnabled) {
                 const run = await send<unknown>(
                   GitHubChannelAuth.GitHubClient.createCheckRun({
@@ -306,6 +341,9 @@ export namespace OrynGithubPublish {
             state: stringField(pull, "state") ?? "unknown",
             markerPresent: input.marker ? body.includes(input.marker) : false,
             authorIsApp: login === `${slug}[bot]`,
+            headRepository: stringField(record(record(pull).head).repo, "full_name"),
+            targetBaseSha: stringField(record(pull).base, "sha"),
+            mergeable: typeof record(pull).mergeable === "boolean" ? (record(pull).mergeable as boolean) : null,
           }
         }
         if (input.ref) {

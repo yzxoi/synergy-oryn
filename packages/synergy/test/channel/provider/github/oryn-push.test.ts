@@ -173,7 +173,9 @@ describe("Oryn credential-bearing Git push", () => {
       "human change",
     ])
     await run(data.remote, ["update-ref", "refs/heads/codex/oryn/fixture", human])
-    await expect(OrynGithubPush.push(request(data))).rejects.toBeInstanceOf(PublishNonFastForwardError)
+    await expect(OrynGithubPush.push({ ...request(data), expectedHead: data.sha })).rejects.toBeInstanceOf(
+      PublishNonFastForwardError,
+    )
     expect(await run(data.remote, ["rev-parse", "refs/heads/codex/oryn/fixture"])).toBe(human)
   })
 

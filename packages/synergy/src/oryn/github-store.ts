@@ -23,6 +23,14 @@ export const GithubSnapshot = z
       .string()
       .regex(/^[a-f0-9]{40,64}$/)
       .optional(),
+    mergeBaseSha: z
+      .string()
+      .regex(/^[a-f0-9]{40,64}$/)
+      .optional(),
+    author: z.string().optional(),
+    headRef: z.string().optional(),
+    headRepository: z.string().optional(),
+    maintainerCanModify: z.boolean().optional(),
     baseRef: z.string().optional(),
     comments: z
       .array(
@@ -41,7 +49,7 @@ export type GithubSnapshot = z.infer<typeof GithubSnapshot>
 
 export const GithubWork = z
   .object({
-    schemaVersion: z.literal(1),
+    schemaVersion: z.literal(2),
     caseId: z.string(),
     repoAlias: z.string(),
     accountId: z.string(),
@@ -51,7 +59,7 @@ export const GithubWork = z
     snapshot: GithubSnapshot,
     fingerprint: z.string(),
     attemptFingerprint: z.string().optional(),
-    state: z.enum(["queued", "running", "settled", "stopped"]),
+    state: z.enum(["queued", "running", "waiting_author", "settled", "stopped"]),
     stoppedBy: z.enum(["command", "closed"]).optional(),
     suspendedEpoch: z.number().int().optional(),
     reviewPublication: z
@@ -59,6 +67,7 @@ export const GithubWork = z
         fingerprint: z.string(),
         marker: z.string(),
         body: z.string(),
+        waitingAuthor: z.boolean().optional(),
         state: z.enum(["prepared", "ambiguous", "acknowledged"]),
         remoteId: z.number().optional(),
       })
@@ -67,6 +76,7 @@ export const GithubWork = z
       .array(
         z.object({
           fingerprint: z.string(),
+          body: z.string().optional(),
           marker: z.string(),
           state: z.enum(["ambiguous", "acknowledged"]),
           remoteId: z.number().optional(),
@@ -128,7 +138,7 @@ export namespace OrynGithubStore {
       REVIEW_POLICY_VERSION,
       item.kind,
       item.headSha ?? "",
-      item.baseSha ?? "",
+      item.baseRef ?? "",
       item.title,
       item.body,
       String(item.draft ?? false),

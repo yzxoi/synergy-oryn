@@ -1,3 +1,4 @@
+import { isOrynAgent } from "../agent/builtin-oryn"
 import { AgentCall } from "@/agent/call"
 import { Bus } from "@/bus"
 import { Config } from "@/config/config"
@@ -227,7 +228,10 @@ export namespace ActivitySummary {
         const job = queue.pending.shift()
         if (!job) return
         try {
-          if (resolveActivityDisplay((await Config.current()).activityDisplay) !== "full") {
+          if (
+            !isOrynAgent((await Session.get(job.sessionID)).agentOverride ?? "") &&
+            resolveActivityDisplay((await Config.current()).activityDisplay) !== "full"
+          ) {
             await summarizeGroups(state, job)
           }
         } catch (error) {

@@ -22,9 +22,15 @@ export namespace OrynGithubIntake {
   export async function read<T>(repository: string, suffix: string, signal?: AbortSignal): Promise<T> {
     return GitHubChannelAuth.GitHubClient.send<T>(await descriptor(repository, suffix, signal), signal)
   }
-  export async function write<T>(repository: string, suffix: string, body: unknown, signal?: AbortSignal): Promise<T> {
+  export async function write<T>(
+    repository: string,
+    suffix: string,
+    body: unknown,
+    signal?: AbortSignal,
+    method: "POST" | "PATCH" = "POST",
+  ): Promise<T> {
     return GitHubChannelAuth.GitHubClient.send<T>(
-      { ...(await descriptor(repository, suffix, signal)), method: "POST", body: JSON.stringify(body) },
+      { ...(await descriptor(repository, suffix, signal)), method, body: JSON.stringify(body) },
       signal,
     )
   }
@@ -45,13 +51,15 @@ export namespace OrynGithubIntake {
     state: "open" | "closed"
     updated_at: string
     comments: number
+    user?: { login: string }
     labels: Array<{ name: string }>
     pull_request?: unknown
   }
   type Pull = Issue & {
     draft: boolean
     merged: boolean
-    head: { sha: string }
+    head: { sha: string; ref?: string; repo?: { full_name: string } }
+    maintainer_can_modify?: boolean
     base: { sha: string; ref: string; repo: { full_name: string } }
   }
   export async function snapshot(repository: string, issue: Issue, signal?: AbortSignal): Promise<GithubSnapshot> {
@@ -80,6 +88,7 @@ export namespace OrynGithubIntake {
       number: issue.number,
       kind: pull ? "pull" : "issue",
       title: issue.title.slice(0, 2000),
+      author: issue.user?.login,
       body: (issue.body ?? "").slice(0, 20000),
       state: issue.state,
       updatedAt: issue.updated_at,
@@ -89,6 +98,9 @@ export namespace OrynGithubIntake {
             draft: pull.draft,
             merged: pull.merged,
             headSha: pull.head.sha,
+            headRef: pull.head.ref,
+            headRepository: pull.head.repo?.full_name,
+            maintainerCanModify: pull.maintainer_can_modify,
             baseSha: pull.base.sha,
             baseRef: pull.base.ref,
           }

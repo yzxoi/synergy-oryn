@@ -986,7 +986,45 @@ export async function migrateExecutionConfigFile(filepath: string): Promise<bool
   return true
 }
 
+export async function migrateOrynStepBudgets(filepath: string) {
+  const content = await fs.readFile(filepath, "utf8").catch((error: NodeJS.ErrnoException) => {
+    if (error.code === "ENOENT") return undefined
+    throw error
+  })
+  if (content !== undefined) {
+    const value = parseJsonc(content)
+    if (value?.oryn?.limits?.maxCaseMinutes !== undefined) {
+      const options = { formattingOptions: { insertSpaces: true, tabSize: 2 } }
+      const withoutLegacy = applyEdits(
+        content,
+        modify(content, ["oryn", "limits", "maxCaseMinutes"], undefined, options),
+      )
+      const updated =
+        value.oryn.limits.maxStepMinutes === undefined
+          ? applyEdits(withoutLegacy, modify(withoutLegacy, ["oryn", "limits", "maxStepMinutes"], 360, options))
+          : withoutLegacy
+      await Bun.write(filepath, updated)
+    }
+  }
+}
+
 export const migrations: Migration[] = [
+  {
+    id: "20260909-oryn-step-budgets",
+    description: "Replace Case age limits with cumulative step execution budgets",
+    async up(progress) {
+      const files = new Set(await findConfigFiles())
+      if (Flag.SYNERGY_CONFIG) files.add(Flag.SYNERGY_CONFIG)
+      for (const directory of await findConfigDomainDirs())
+        for (const entry of await fs.readdir(directory, { withFileTypes: true }))
+          if (entry.isFile() && /\.jsonc?$/.test(entry.name)) files.add(path.join(directory, entry.name))
+      let done = 0
+      for (const filepath of files) {
+        await migrateOrynStepBudgets(filepath)
+        progress(++done, files.size)
+      }
+    },
+  },
   {
     id: "20260907-config-execution-domains",
     description: "Move legacy experiment toggles to their owning configuration domains",

@@ -9821,6 +9821,14 @@ msgid "nav.tools.title"
 msgstr ""
 
 #. js-lingui-explicit-id
+msgid "oryn.step.executionMinutes"
+msgstr ""
+
+#. js-lingui-explicit-id
+msgid "oryn.workflow.waitingAuthor"
+msgstr ""
+
+#. js-lingui-explicit-id
 msgid "plugin.textAction.back"
 msgstr ""
 
@@ -17433,6 +17441,10 @@ msgid "settings.models.roles.title"
 msgstr ""
 
 #. js-lingui-explicit-id
+msgid "settings.oryn.activeCases"
+msgstr ""
+
+#. js-lingui-explicit-id
 msgid "settings.oryn.automation"
 msgstr ""
 
@@ -17518,6 +17530,10 @@ msgstr ""
 
 #. js-lingui-explicit-id
 msgid "settings.oryn.saving"
+msgstr ""
+
+#. js-lingui-explicit-id
+msgid "settings.oryn.stepMinutes"
 msgstr ""
 
 #. js-lingui-explicit-id

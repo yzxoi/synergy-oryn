@@ -76,6 +76,8 @@ function OrynForm(props: { view: OrynSetupView; onSaved: () => Promise<unknown> 
     backfill: repository?.github?.backfill ?? true,
     autoReview: repository?.github?.autoReview ?? true,
     autoFix: repository?.github?.autoFix ?? false,
+    maxStepMinutes: props.view.config?.limits?.maxStepMinutes ?? 360,
+    maxActiveCases: props.view.config?.limits?.maxActiveCases ?? 4,
     notificationTarget: props.view.targets.find(
       (item) =>
         item.accountId === target?.accountId && item.chatId === target?.chatId && item.threadId === target?.threadId,
@@ -215,6 +217,28 @@ function OrynForm(props: { view: OrynSetupView; onSaved: () => Promise<unknown> 
         </Show>
       </SettingsSection>
       <SettingsSection title={_({ id: "settings.oryn.automation", message: "Automation" })}>
+        <label class="flex flex-col gap-2">
+          {_({ id: "settings.oryn.stepMinutes", message: "Execution minutes per step (queues and waits excluded)" })}
+          <input
+            type="number"
+            min="1"
+            value={draft.maxStepMinutes}
+            disabled={saving()}
+            onInput={(event) => setDraft("maxStepMinutes", event.currentTarget.valueAsNumber)}
+            class="rounded-md border border-border-base bg-background-base text-text-base px-3 py-2"
+          />
+        </label>
+        <label class="flex flex-col gap-2">
+          {_({ id: "settings.oryn.activeCases", message: "Maximum active tasks" })}
+          <input
+            type="number"
+            min="1"
+            value={draft.maxActiveCases}
+            disabled={saving()}
+            onInput={(event) => setDraft("maxActiveCases", event.currentTarget.valueAsNumber)}
+            class="rounded-md border border-border-base bg-background-base text-text-base px-3 py-2"
+          />
+        </label>
         <SettingRow
           title={_({ id: "settings.oryn.backfill", message: "Include existing open issues and PRs" })}
           description=""
@@ -244,7 +268,7 @@ function OrynForm(props: { view: OrynSetupView; onSaved: () => Promise<unknown> 
           description={_({
             id: "settings.oryn.fixDescription",
             message:
-              "Requires configured verification environments. Unreproducible bugs go to a human; contributor branches are never overwritten.",
+              "Requires configured verification environments. PR repair requires a separate authorized autofix command; updates preserve contributor history.",
           })}
           trailing={
             <Switch

@@ -133,6 +133,25 @@ export function OrynPanel() {
                     </span>
                   </div>
                   <div class="text-14-medium text-text-strong">{current().summary}</div>
+                  <Show when={current().workflowState}>
+                    <div class="text-12-medium text-text-weak">
+                      {current().workflowState === "waiting_author"
+                        ? _({ id: "oryn.workflow.waitingAuthor", message: "Waiting for the PR author" })
+                        : current().workflowState}
+                    </div>
+                  </Show>
+                  <For each={current().steps}>
+                    {(step) => (
+                      <div class="text-12-medium text-text-weak">
+                        {step.step.split(":").slice(1).join(" · ")} ·{" "}
+                        {_({
+                          id: "oryn.step.executionMinutes",
+                          message: "{used} / {limit} minutes of execution",
+                          values: { used: Math.round(step.elapsedMs / 60000), limit: current().maxStepMinutes },
+                        })}
+                      </div>
+                    )}
+                  </For>
                   <Show when={current().control === "human_owned" && current().handoff}>
                     {(handoff) => (
                       <div class="whitespace-pre-wrap text-12-medium text-text-strong">{handoff().reason}</div>

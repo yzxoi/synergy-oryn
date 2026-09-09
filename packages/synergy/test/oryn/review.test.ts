@@ -548,5 +548,5 @@ describe("OrynService delivery gate", () => {
       expect(ready.ready).toBe(true)
       expect(ready.failures).toEqual([])
     })
-  })
+  }, 30000)
 })

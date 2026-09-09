@@ -1,3 +1,4 @@
+import { isOrynAgent } from "../agent/builtin-oryn"
 import { RolloutLedger } from "./rollout/ledger"
 import { RolloutAccounting } from "./rollout/accounting"
 import { RolloutRecordingError } from "./rollout/error"
@@ -1357,7 +1358,9 @@ export namespace SessionProcessor {
                       throw value.error
 
                     case "start-step":
-                      snapshot = await Snapshot.track(input.sessionID, input.abort)
+                      snapshot = isOrynAgent(input.assistantMessage.agent)
+                        ? undefined
+                        : await Snapshot.track(input.sessionID, input.abort)
                       await Session.updatePart({
                         id: Identifier.ascending("part"),
                         messageID: input.assistantMessage.id,
@@ -1421,7 +1424,9 @@ export namespace SessionProcessor {
                       const step = await Session.updatePart({
                         id: Identifier.ascending("part"),
                         reason: value.finishReason,
-                        snapshot: await Snapshot.track(input.sessionID, input.abort),
+                        snapshot: isOrynAgent(input.assistantMessage.agent)
+                          ? undefined
+                          : await Snapshot.track(input.sessionID, input.abort),
                         messageID: input.assistantMessage.id,
                         sessionID: input.assistantMessage.sessionID,
                         type: "step-finish",

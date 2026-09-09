@@ -25,6 +25,8 @@ export const OrynSetupInput = z
     backfill: z.boolean(),
     autoReview: z.boolean(),
     autoFix: z.boolean(),
+    maxStepMinutes: z.number().int().min(1).optional(),
+    maxActiveCases: z.number().int().min(1).optional(),
     notificationTarget: z.string().optional(),
   })
   .strict()
@@ -171,6 +173,11 @@ export namespace OrynSetup {
       ...previous.oryn,
       enabled: input.enabled,
       defaultRepoAlias: input.repoAlias,
+      limits: {
+        ...previous.oryn?.limits,
+        maxStepMinutes: input.maxStepMinutes ?? previous.oryn?.limits?.maxStepMinutes ?? 360,
+        maxActiveCases: input.maxActiveCases ?? previous.oryn?.limits?.maxActiveCases ?? 4,
+      },
       repositories: {
         ...previous.oryn?.repositories,
         [input.repoAlias]: {

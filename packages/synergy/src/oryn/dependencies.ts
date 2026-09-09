@@ -4,6 +4,8 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "nod
 import { z } from "zod"
 import type { OrynExecutionProfile } from "../config/schema"
 import { OrynGit } from "./git"
+import { OrynSandbox } from "./sandbox"
+import { Global } from "../global"
 import { OrynStoreError, storeError } from "./store"
 
 const MAX_FILE_BYTES = 512 * 1024 * 1024
@@ -219,6 +221,81 @@ async function readManifest(snapshot: { directory: string; digest: string }) {
 }
 
 export namespace OrynDependencies {
+  export async function prepare(input: { directory: string; profile: OrynExecutionProfile; abort: AbortSignal }) {
+    const mode =
+      input.profile.dependencies ??
+      (input.profile.dependencySnapshots?.length
+        ? "snapshot"
+        : input.profile.isolation === "trusted_local"
+          ? "install"
+          : "none")
+    if (mode === "none") return
+    if (mode === "snapshot") return install({ ...input, snapshots: input.profile.dependencySnapshots })
+    if (input.profile.isolation !== "trusted_local")
+      throw unavailable(
+        "Online dependency installation requires trusted_local; use a sealed snapshot for contained checks",
+      )
+    const manifestFile = Bun.file(join(input.directory, "package.json"))
+    if (!(await manifestFile.exists())) return
+    const manifest = z
+      .object({
+        packageManager: z.string().optional(),
+        dependencies: z.record(z.string(), z.unknown()).optional(),
+        devDependencies: z.record(z.string(), z.unknown()).optional(),
+        workspaces: z.unknown().optional(),
+      })
+      .parse(await manifestFile.json())
+    const managers = [
+      { name: "bun", locks: ["bun.lock", "bun.lockb"], argv: ["bun", "install", "--frozen-lockfile"] },
+      { name: "pnpm", locks: ["pnpm-lock.yaml"], argv: ["pnpm", "install", "--frozen-lockfile"] },
+      { name: "npm", locks: ["package-lock.json", "npm-shrinkwrap.json"], argv: ["npm", "ci"] },
+      {
+        name: "yarn",
+        locks: ["yarn.lock"],
+        argv: ["yarn", "install", manifest.packageManager?.startsWith("yarn@1.") ? "--frozen-lockfile" : "--immutable"],
+      },
+    ]
+    const available = []
+    for (const manager of managers) {
+      const locks = []
+      for (const lock of manager.locks) if (await Bun.file(join(input.directory, lock)).exists()) locks.push(lock)
+      if (locks.length) available.push({ ...manager, locks })
+    }
+    const selected = manifest.packageManager
+      ? available.filter((item) => manifest.packageManager!.startsWith(`${item.name}@`))
+      : available
+    if (
+      !selected.length &&
+      !manifest.workspaces &&
+      !Object.keys(manifest.dependencies ?? {}).length &&
+      !Object.keys(manifest.devDependencies ?? {}).length
+    )
+      return
+    if (selected.length !== 1)
+      throw unavailable("Dependency installation requires one unambiguous committed lockfile and package manager")
+    const manager = selected[0]!
+    const cache = join(Global.Path.cache, "oryn-downloads", `${manager.name}-${process.platform}-${process.arch}`)
+    await mkdir(cache, { recursive: true })
+    const before = await OrynGit.snapshot(input.directory)
+    const result = await OrynSandbox.execute({
+      argv: manager.argv,
+      cwd: input.directory,
+      profile: input.profile,
+      abort: input.abort,
+      timeoutMs: (input.profile.installTimeoutSeconds ?? 1800) * 1000,
+      downloadCache: cache,
+    })
+    input.abort.throwIfAborted()
+    if (result.exitCode || result.timedOut || result.truncated)
+      throw unavailable(
+        "Frozen dependency installation failed or timed out; inspect package-manager availability, registry access and the committed lockfile",
+      )
+    await OrynGit.read(input.directory, ["diff", "--exit-code", before.sha, "--"]).catch(() => {
+      throw unavailable("Dependency installation changed tracked inputs")
+    })
+    return `locked:${manager.name}:${new Bun.CryptoHasher("sha256").update(JSON.stringify(await Promise.all(["package.json", ...manager.locks].map(async (file) => [file, await Bun.file(join(input.directory, file)).text()])))).digest("hex")}`
+  }
+
   export async function seal(input: { source: string; output: string; abort: AbortSignal }) {
     input.abort.throwIfAborted()
     const source = await realpath(input.source)

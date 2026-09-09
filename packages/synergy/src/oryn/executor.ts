@@ -97,8 +97,8 @@ export namespace OrynExecutor {
       plan?.attemptId !== input.attemptId
     )
       throw storeError("NOT_AUTHORIZED", "check admission requires matching worker and plan")
-    if (plan.overlay)
-      throw storeError("ENVIRONMENT_UNAVAILABLE", "source overlays require a supported patch-application mechanism")
+    if (plan.overlay !== Boolean(plan.patch))
+      throw storeError("ENVIRONMENT_UNAVAILABLE", "Verification overlay requires an explicit test patch")
     const profile = record ? OrynConfig.profiles(oryn, record.repoAlias)[plan.profileId] : undefined
     if (!profile) throw storeError("ENVIRONMENT_UNAVAILABLE", "check profile is unavailable")
     return {
@@ -195,8 +195,6 @@ export namespace OrynExecutor {
       }
     }
 
-    const limits = oryn?.limits
-
     const admission = await OrynExecutor.admission(input)
     const lease = ToolScheduler.currentExecution()
     if (
@@ -210,15 +208,16 @@ export namespace OrynExecutor {
 
     const expectedSha = await currentInputs()
     await OrynStore.mutateCheckPlan(input.caseId, input.planId, (draft) => ({ ...draft, status: "approved" }))
-    const before = await OrynGit.snapshot(cwd)
-    if (before.sha !== expectedSha || before.dirty)
-      throw storeError("INVALID_STAGE", "check workspace does not match its clean fixed commit")
     await using experiment = await OrynExperiment.prepare({
       source: cwd,
       sha: expectedSha,
       profile,
+      patch: plan.patch,
       abort: input.abort,
     })
+    const before = { sha: expectedSha, tree: experiment.treeDigest }
+    if (await experiment.changed())
+      throw storeError("INVALID_STAGE", "materialized check inputs differ from the requested commit")
     const timeoutSeconds = profile.timeoutSeconds ?? 1800
     const results: RunOneResult[] = []
     for (const command of plan.argv) {
@@ -228,9 +227,7 @@ export namespace OrynExecutor {
       if (result.timedOut || result.aborted || result.truncated || result.blocked) break
     }
 
-    const after = await OrynGit.snapshot(cwd).catch(() => undefined)
-    const changed =
-      !after || after.sha !== before.sha || after.tree !== before.tree || after.dirty || (await experiment.changed())
+    const changed = await experiment.changed()
     const active = await currentInputs().then(
       (sha) => sha === expectedSha,
       () => false,
@@ -269,7 +266,7 @@ export namespace OrynExecutor {
           ? "execution mode: trusted_local; no OS filesystem or network containment"
           : "execution mode: sandbox; OS filesystem and network containment",
         "execution used an isolated disposable checkout of the fixed source commit",
-        ...(experiment.dependencies ? [`dependency snapshot sha256:${experiment.dependencies}`] : []),
+        ...(experiment.dependencies ? [`dependency preparation: ${experiment.dependencies}`] : []),
         ...(changed ? ["source changed during execution; evidence is inconclusive"] : []),
         ...(!active ? ["assignment inputs or control changed during execution; evidence is inconclusive"] : []),
         ...results.flatMap((r) => r.observations),

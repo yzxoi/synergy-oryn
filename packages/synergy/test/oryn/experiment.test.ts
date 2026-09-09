@@ -5,6 +5,24 @@ import { OrynExperiment } from "../../src/oryn/experiment"
 import { OrynSandbox } from "../../src/oryn/sandbox"
 import { tmpdir } from "../fixture/fixture"
 
+test("a verification patch is materialized only in its fixed-commit experiment", async () => {
+  await using repo = await repository()
+  const patch =
+    "diff --git a/test/regression.ts b/test/regression.ts\nnew file mode 100644\n--- /dev/null\n+++ b/test/regression.ts\n@@ -0,0 +1 @@\n+console.log('regression')\n"
+  await using experiment = await OrynExperiment.prepare({
+    source: repo.path,
+    sha: repo.sha,
+    profile: { commandAllowlist: ["bun"], dependencies: "none" },
+    abort: new AbortController().signal,
+    patch,
+  })
+  expect(await Bun.file(join(experiment.directory, "test/regression.ts")).text()).toContain("regression")
+  expect(await Bun.file(join(repo.path, "test/regression.ts")).exists()).toBe(false)
+  expect(await experiment.changed()).toBe(false)
+  await Bun.write(join(experiment.directory, "test/regression.ts"), "changed\n")
+  expect(await experiment.changed()).toBe(true)
+})
+
 async function repository() {
   const repo = await tmpdir({ git: true })
   try {

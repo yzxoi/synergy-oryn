@@ -1,3 +1,4 @@
+import { SessionExecutionMeter } from "../../session/execution-meter"
 import type { RolloutProcess } from "@/session/rollout/process"
 import { spawn } from "child_process"
 import * as fs from "node:fs"
@@ -432,9 +433,11 @@ export const LocalBashBackend = {
     let windowsProcessOwner: WindowsProcessJob.Owner | undefined
     let ownsUnixProcessGroup = false
     let restricted: BashExecutionPolicy.Prepared | undefined
+    let meter: Awaited<ReturnType<typeof SessionExecutionMeter.begin>>
     let cleanup: Promise<void> | undefined
     const cleanupExecutionArtifacts = () =>
       (cleanup ??= (async () => {
+        await meter?.[Symbol.asyncDispose]()
         windowsProcessJob?.cleanup()
         if (sandboxWrapper?.tempPath) SandboxBackend.cleanupTemp(sandboxWrapper.tempPath)
         materialized.cleanup()
@@ -540,6 +543,7 @@ export const LocalBashBackend = {
 
     let child: ReturnType<typeof spawn>
     try {
+      meter = await SessionExecutionMeter.begin(ctx.sessionID)
       ctx.abort.throwIfAborted()
       if (sandboxWrapper && !sandboxWrapper.skipReason) {
         const invocation = detachedDaemonAllowed

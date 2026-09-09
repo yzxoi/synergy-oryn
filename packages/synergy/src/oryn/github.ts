@@ -18,7 +18,7 @@ export namespace OrynGithub {
     if (!bound || work.state === "stopped" || work.snapshot.state !== "open" || work.snapshot.draft) return false
     if (work.parentReviewCaseId) {
       const parent = await OrynGithubStore.get(work.parentReviewCaseId)
-      if (!parent || parent.state === "stopped" || parent.fingerprint !== work.fingerprint) return false
+      if (!parent || parent.state === "stopped") return false
     }
     if (
       action === "review" &&
@@ -206,7 +206,13 @@ export namespace OrynGithub {
             : existing.state
       await OrynGithubStore.save({
         ...existing,
-        snapshot: item,
+        snapshot: {
+          ...item,
+          mergeBaseSha:
+            item.headSha === existing.snapshot.headSha && item.baseRef === existing.snapshot.baseRef
+              ? existing.snapshot.mergeBaseSha
+              : undefined,
+        },
         fingerprint,
         state,
         stoppedBy: item.state === "closed" && existing.stoppedBy !== "command" ? "closed" : existing.stoppedBy,
@@ -235,7 +241,7 @@ export namespace OrynGithub {
     await OrynStore.linkSourceToCase(key, record.id)
     if (item.kind === "issue") await OrynStore.attachRemoteRefs(record.id, { issueNumber: item.number })
     const work: GithubWork = {
-      schemaVersion: 1,
+      schemaVersion: 2,
       caseId: record.id,
       repoAlias: input.repoAlias,
       accountId: input.accountId,

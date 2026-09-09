@@ -54,3 +54,51 @@ test("GitHub handoffs notify the selected operator once and suppress unsent noti
     OrynService.setOutboxDeliverer(undefined)
   }
 })
+
+test("recovery groups equal environment failures into one delivered operator notice", async () => {
+  const repo = `r${crypto.randomUUID()}`
+  await using config = await githubConfig({
+    oryn: {
+      enabled: true,
+      notifications: { target: { accountId: "feishu", chatId: repo } },
+      repositories: { target: { owner: "acme", repo, githubAccount: "app", github: { enabled: true } } },
+    },
+  })
+  const reason = `Dependency environment unavailable (${repo})`
+  for (const number of [11, 12]) {
+    const caseId = (await OrynGithub.accept({
+      accountId: "app",
+      repoAlias: "target",
+      repository: `acme/${repo}`,
+      snapshot: {
+        number,
+        kind: "issue",
+        title: "Dependency fixture",
+        body: "Failure",
+        state: "open",
+        updatedAt: new Date().toISOString(),
+        labels: [],
+        comments: [],
+      },
+    }))!
+    await OrynStore.requestHandoff(caseId, reason)
+  }
+  const delivered: string[] = []
+  OrynService.setOutboxDeliverer(
+    async (input) => {
+      if (input.text.includes(reason)) delivered.push(input.text)
+    },
+    async () => true,
+  )
+  try {
+    await OrynService.recoverHandoffs()
+    await OrynService.recoverHandoffs()
+    await OrynService.drainOutbox()
+    expect(delivered).toHaveLength(1)
+    expect(delivered[0]).toContain("Affected tasks: 2")
+    expect(delivered[0]).toContain(`/issues/11`)
+    expect(delivered[0]).toContain(`/issues/12`)
+  } finally {
+    OrynService.setOutboxDeliverer(undefined)
+  }
+})

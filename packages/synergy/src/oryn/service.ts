@@ -191,6 +191,36 @@ export namespace OrynService {
     return externalIdentityHash(record.id, "needs_human", String(record.handoff?.epoch))
   }
 
+  async function handoffGroup(record: Case, key: string) {
+    const source = await OrynStore.getSource(key)
+    if (
+      !source ||
+      !(await OrynNotifications.operator(source.identity)) ||
+      !/budget|environment|dependenc|failed to start|failed to reconcile|execution was interrupted/i.test(
+        record.handoff?.reason ?? "",
+      )
+    )
+      return [record]
+    const group: Case[] = []
+    for (const item of await OrynStore.listCases({ control: "human_owned" })) {
+      if (
+        item.repoAlias !== record.repoAlias ||
+        item.handoff?.reason !== record.handoff?.reason ||
+        item.handoff?.epoch !== item.epoch
+      )
+        continue
+      if ((await OrynStore.getSource(item.sourceIds[0]!))?.identity.provider !== "github") continue
+      group.push(item)
+    }
+    return group.sort((a, b) => a.id.localeCompare(b.id))
+  }
+
+  function groupKey(group: Case[]) {
+    return group.length > 1
+      ? `handoff-group:${externalIdentityHash(group[0]!.handoff!.reason, ...group.map(handoffKey))}`
+      : handoffKey(group[0]!)
+  }
+
   async function reporter(record: Case, key: string) {
     if (!record.sourceIds.includes(key)) return
     const source = await OrynStore.getSource(key)
@@ -255,13 +285,29 @@ export namespace OrynService {
           ? `https://github.com/${repository.owner}/${repository.repo}/${record.pullNumbers.length || work?.mode === "review" ? "pull" : "issues"}/${number}`
           : undefined
       const summary = OrynPublicText.violations(record.summary).length ? "Repository task" : record.summary
+      const operator = await OrynNotifications.operator((await OrynStore.getSource(key))!.identity)
+      const group = await handoffGroup(record, key)
+      await OrynNotifications.attach(group[0]!.id)
+      const links: string[] = []
+      for (const item of group.slice(0, 50)) {
+        const binding = config.repositories?.[item.repoAlias]
+        const github = await OrynGithubStore.get(item.id)
+        const number = item.pullNumbers.at(-1) ?? github?.number ?? item.issueNumber
+        if (binding && number)
+          links.push(
+            `https://github.com/${binding.owner}/${binding.repo}/${item.pullNumbers.length || github?.mode === "review" ? "pull" : "issues"}/${number}`,
+          )
+      }
       queued.push(
         await OrynStore.writeOutbox({
-          caseId: record.id,
+          caseId: group[0]?.id ?? record.id,
           sourceKeyHash: key,
           kind: "needs_human",
-          text: `Oryn needs human input: ${reason}${(await OrynNotifications.operator((await OrynStore.getSource(key))!.identity)) ? `\n${summary}${target ? `\n${target}` : ""}` : ""}`,
-          dedupKey: handoffKey(record),
+          text:
+            group.length > 1
+              ? `Oryn needs human input: ${reason}\nAffected tasks: ${group.length}\n${[...new Set(links)].join("\n")}`
+              : `Oryn needs human input: ${reason}${operator ? `\n${summary}${target ? `\n${target}` : ""}` : ""}`,
+          dedupKey: groupKey(group),
         }),
       )
     }
@@ -1066,6 +1112,7 @@ export namespace OrynService {
     argv: string[][]
     checks: string[]
     overlay?: boolean
+    patch?: string
   }): Promise<{ planId: string }> {
     await requireEnabled()
     const binding = await requireBinding(input.callerSessionID, ["worker"])
@@ -1088,7 +1135,8 @@ export namespace OrynService {
       argv: input.argv,
       checks: input.checks,
       proposedBySessionId: input.callerSessionID,
-      overlay: input.overlay ?? false,
+      overlay: input.overlay ?? Boolean(input.patch),
+      patch: input.patch,
     })
     return { planId: plan.id }
   }
@@ -1309,7 +1357,7 @@ export namespace OrynService {
         (entry.kind === "needs_human"
           ? record.control === "human_owned" &&
             record.handoff?.epoch === record.epoch &&
-            entry.dedupKey === handoffKey(record)
+            entry.dedupKey === groupKey(await handoffGroup(record, entry.sourceKey))
           : ready?.dedupKey === entry.dedupKey && ready.text === entry.text)
       if (!current) return suppress()
       if (!(await reporter(record, entry.sourceKey))) return "pending"

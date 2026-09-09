@@ -667,12 +667,14 @@ export const OrynLimits = z
       .optional()
       .describe("Concurrent heavy build/test lanes shared by all cases (default: 2)"),
     lightConcurrency: z.number().int().min(1).optional().describe("Concurrent light read/analyze lanes (default: 6)"),
-    maxCaseMinutes: z
+    maxStepMinutes: z
       .number()
       .int()
       .min(1)
       .optional()
-      .describe("Wall-clock budget per case in minutes. Exhaustion requires human handoff (default: 720)"),
+      .describe(
+        "Cumulative execution minutes per logical step, excluding queues, human waits and downtime (default: 360)",
+      ),
     maxCaseTokens: z
       .number()
       .int()
@@ -698,6 +700,21 @@ export type OrynIsolationMode = z.infer<typeof OrynIsolationMode>
 
 export const OrynExecutionProfile = z
   .object({
+    dependencies: z
+      .enum(["install", "snapshot", "none"])
+      .optional()
+      .describe(
+        "Dependency preparation: frozen-lockfile install in trusted_local (default), sealed offline snapshot, or none for static checks",
+      ),
+    installTimeoutSeconds: z
+      .number()
+      .int()
+      .min(1)
+      .max(21600)
+      .optional()
+      .describe(
+        "Dependency installation timeout in seconds (default: 1800); installation also consumes the worker step budget",
+      ),
     resourceLimits: OrynProcessResources.optional().describe(
       "Per-command Linux cgroup limits; installation processResources remain the upper ceiling",
     ),

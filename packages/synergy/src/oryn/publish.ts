@@ -47,6 +47,7 @@ export type PublishExecuteInput = {
   pullNumber?: number
   marker?: string
   deliveryCheckEnabled?: boolean
+  adoptedTarget?: ActionReceipt["adoptedTarget"]
 }
 
 export type PublishExecuteResult = { refs: PublishRefs }
@@ -63,12 +64,19 @@ export type PublishFacts = {
     state: string
     markerPresent: boolean
     authorIsApp: boolean
+    headRepository?: string
+    targetBaseSha?: string
+    mergeable?: boolean | null
   }
   delivery?: { checkRunId: number; headSha: string }
   ci: { state: "success" | "failure" | "pending" | "none" }
 }
 
 export type PublishTransport = {
+  prepare?(
+    input: { repository: string; directory: string; candidateSha: string; baseBranch: string },
+    signal: AbortSignal,
+  ): Promise<{ targetBaseSha: string; conflicts: string[] }>
   execute(input: PublishExecuteInput, signal?: AbortSignal): Promise<PublishExecuteResult>
   observe(
     input: { repository: string; issueNumber?: number; pullNumber?: number; ref?: string; marker?: string },
@@ -91,6 +99,17 @@ export function caseMarker(caseId: string): string {
 
 export function orynBranch(caseId: string): string {
   return `codex/oryn/${publicCaseToken(caseId)}`
+}
+
+function matchesAdopted(pull: PublishFacts["pull"], target: ActionReceipt["adoptedTarget"]) {
+  return (
+    !!pull &&
+    !!target &&
+    pull.number === target.number &&
+    pull.headBranch === target.branch &&
+    pull.headRepository === target.repository &&
+    pull.state === "open"
+  )
 }
 
 let transport: PublishTransport | undefined
@@ -119,8 +138,7 @@ export function setTransport(fn: PublishTransport): void {
       pull.headSha !== action.expectedHead ||
       pull.headBranch !== target.branch ||
       pull.baseRef !== target.baseBranch ||
-      !pull.markerPresent ||
-      !pull.authorIsApp ||
+      ((!pull.markerPresent || !pull.authorIsApp) && !matchesAdopted(pull, action.adoptedTarget)) ||
       facts.ci.state !== "success" ||
       (target.deliveryCheck && facts.delivery?.headSha !== action.expectedHead)
     )
@@ -299,9 +317,50 @@ export namespace OrynPublish {
       return { actionId: settled.id, state: settled.state, refs: settled.remoteRefs, deduped: true }
     }
 
+    const adoptedTarget =
+      githubWork?.mode === "repair" &&
+      githubWork.authorizedBy &&
+      githubWork.snapshot.headRepository === repository &&
+      githubWork.snapshot.headRef &&
+      !["main", "master", "dev", repoCfg.baseBranch ?? "dev"].includes(githubWork.snapshot.headRef) &&
+      githubWork.snapshot.headSha
+        ? {
+            repository,
+            number: githubWork.number,
+            branch: githubWork.snapshot.headRef,
+            expectedHead:
+              (await OrynStore.listActions({ caseId: record.id }))
+                .filter(
+                  (action) =>
+                    action.adoptedTarget &&
+                    action.state === "acknowledged" &&
+                    ["ensure_draft", "refresh_pr"].includes(action.operation),
+                )
+                .sort((a, b) => b.createdAt - a.createdAt)[0]?.expectedHead ?? githubWork.snapshot.headSha,
+          }
+        : undefined
+    const publishBranch = adoptedTarget?.branch ?? orynBranch(input.caseId)
+    if (githubWork?.mode === "repair" && input.operation === "ensure_issue") {
+      const receipt = await OrynStore.writeAction({
+        caseId: record.id,
+        operation: input.operation,
+        payloadDigest: externalIdentityHash("existing-pr", repository, String(githubWork.number)),
+        expectedRevision: record.revision,
+        epoch: record.epoch,
+        requestKey: input.requestKey,
+        state: "acknowledged",
+        remoteRefs: {},
+      })
+      return { actionId: receipt.id, state: "acknowledged" as const, refs: receipt.remoteRefs, deduped: true }
+    }
     const targetsPull = ["refresh_pr", "publish_review", "mark_ready"].includes(input.operation)
-    const pullNumber = targetsPull ? (input.pullNumber ?? record.pullNumbers.at(-1)) : undefined
-    if (targetsPull && (!pullNumber || !record.pullNumbers.includes(pullNumber))) {
+    const pullNumber = targetsPull
+      ? (input.pullNumber ?? record.pullNumbers.at(-1) ?? adoptedTarget?.number)
+      : adoptedTarget?.number
+    if (
+      targetsPull &&
+      (!pullNumber || (!record.pullNumbers.includes(pullNumber) && pullNumber !== adoptedTarget?.number))
+    ) {
       throw storeError("NOT_AUTHORIZED", "publication requires a pull request bound to this Case")
     }
 
@@ -338,7 +397,7 @@ export namespace OrynPublish {
       })
       return { actionId: receipt.id, state: "acknowledged", refs: receipt.remoteRefs, deduped: true }
     }
-    if (input.operation === "ensure_draft" && record.pullNumbers.length > 0) {
+    if (input.operation === "ensure_draft" && record.pullNumbers.length > 0 && !adoptedTarget) {
       const pullNumber = record.pullNumbers[record.pullNumbers.length - 1]!
       const facts = await requireTransport().observe({
         repository,
@@ -367,7 +426,7 @@ export namespace OrynPublish {
       })
       return { actionId: receipt.id, state: "acknowledged", refs: receipt.remoteRefs, deduped: true }
     }
-    if (input.operation === "refresh_pr" && record.pullNumbers.length === 0 && !input.pullNumber) {
+    if (input.operation === "refresh_pr" && record.pullNumbers.length === 0 && !input.pullNumber && !adoptedTarget) {
       throw storeError("INVALID_STAGE", "no pull request to refresh; use ensure_draft", { caseId: input.caseId })
     }
     if (input.operation === "publish_review" && !input.pullNumber && record.pullNumbers.length === 0) {
@@ -384,8 +443,24 @@ export namespace OrynPublish {
       publication && "directory" in publication && typeof publication.directory === "string"
         ? publication.directory
         : undefined
+    if (
+      directory &&
+      candidateSha &&
+      ["ensure_draft", "refresh_pr", "mark_ready"].includes(input.operation) &&
+      requireTransport().prepare
+    ) {
+      const integration = await requireTransport().prepare!(
+        { repository, directory, candidateSha, baseBranch: repoCfg.baseBranch ?? "dev" },
+        signal ?? new AbortController().signal,
+      )
+      if (integration.conflicts.length)
+        throw storeError(
+          "EVIDENCE_INSUFFICIENT",
+          "Candidate conflicts with the current target. Start bounded rework, have the code worker prepare integration before editing, then verify and review the new candidate.",
+        )
+    }
     const title = publication?.title ?? input.title
-    const body = `${publication?.body ?? input.body ?? ""}\n\n${marker}`
+    const body = `${publication?.body ?? input.body ?? ""}${githubWork?.mode === "repair" ? `\n\nContinues the contribution in https://github.com/${repository}/pull/${githubWork.number}; original contribution and authorship are retained.` : ""}\n\n${marker}`
     if (input.operation === "mark_ready") {
       if (!candidateSha)
         throw storeError("INVALID_STAGE", "mark_ready requires a frozen candidate", { caseId: input.caseId })
@@ -396,10 +471,9 @@ export namespace OrynPublish {
         facts.pull.state !== "open" ||
         typeof facts.pull.draft !== "boolean" ||
         facts.pull.headSha !== candidateSha ||
-        facts.pull.headBranch !== orynBranch(input.caseId) ||
+        facts.pull.headBranch !== publishBranch ||
         facts.pull.baseRef !== (repoCfg.baseBranch ?? "dev") ||
-        !facts.pull.markerPresent ||
-        !facts.pull.authorIsApp
+        ((!facts.pull.markerPresent || !facts.pull.authorIsApp) && !matchesAdopted(facts.pull, adoptedTarget))
       ) {
         throw storeError("REMOTE_AMBIGUOUS", "published pull request no longer matches the authorized candidate")
       }
@@ -428,12 +502,13 @@ export namespace OrynPublish {
       operation: input.operation,
       payloadDigest: externalIdentityHash(input.operation, title ?? "", body, candidateSha ?? ""),
       expectedHead: candidateSha,
+      adoptedTarget,
       ...(input.operation === "mark_ready"
         ? {
             readyTarget: {
               attemptId: attemptId!,
               repository,
-              branch: orynBranch(input.caseId),
+              branch: publishBranch,
               baseBranch: repoCfg.baseBranch ?? "dev",
               deliveryCheck: repoCfg.deliveryCheck === true,
               notificationKey: externalIdentityHash(
@@ -478,7 +553,7 @@ export namespace OrynPublish {
           operation: input.operation,
           repository,
           candidateSha,
-          branch: orynBranch(input.caseId),
+          branch: publishBranch,
           baseBranch: repoCfg.baseBranch ?? "dev",
           directory,
           title,
@@ -486,6 +561,7 @@ export namespace OrynPublish {
           pullNumber,
           marker,
           deliveryCheckEnabled: repoCfg.deliveryCheck === true,
+          adoptedTarget,
         },
         signal,
       )
@@ -601,7 +677,10 @@ export namespace OrynPublish {
         }
       } else if (action.operation === "ensure_draft" || action.operation === "refresh_pr") {
         if (facts.pull) {
-          if (facts.pull.headSha === action.expectedHead && facts.pull.markerPresent && facts.pull.authorIsApp) {
+          if (
+            facts.pull.headSha === action.expectedHead &&
+            ((facts.pull.markerPresent && facts.pull.authorIsApp) || matchesAdopted(facts.pull, action.adoptedTarget))
+          ) {
             const settled = await OrynStore.mutateAction(actionId, (a) => ({
               ...a,
               state: "acknowledged",
@@ -614,7 +693,10 @@ export namespace OrynPublish {
             await completeAcknowledged(settled)
             return settled
           }
-          if (facts.pull.headSha !== action.expectedHead && facts.pull.authorIsApp && facts.pull.markerPresent) {
+          if (
+            facts.pull.headSha !== action.expectedHead &&
+            ((facts.pull.authorIsApp && facts.pull.markerPresent) || matchesAdopted(facts.pull, action.adoptedTarget))
+          ) {
             // A human moved the branch: the remote is no longer ours. Cancel
             // the action AND freeze the case so automation cannot race the
             // human's push with another one (fail-closed takeover).
@@ -637,10 +719,9 @@ export namespace OrynPublish {
           pull.state === "open" &&
           pull.draft === false &&
           pull.headSha === action.expectedHead &&
-          pull.headBranch === orynBranch(caseId) &&
+          pull.headBranch === (action.adoptedTarget?.branch ?? orynBranch(caseId)) &&
           pull.baseRef === (repoCfg.baseBranch ?? "dev") &&
-          pull.markerPresent &&
-          pull.authorIsApp &&
+          ((pull.markerPresent && pull.authorIsApp) || matchesAdopted(pull, action.adoptedTarget)) &&
           (!target.deliveryCheck || facts.delivery?.headSha === action.expectedHead)
         ) {
           const active = record.activeAttemptId ? await OrynStore.getAttempt(caseId, record.activeAttemptId) : undefined

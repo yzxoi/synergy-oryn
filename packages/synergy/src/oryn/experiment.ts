@@ -12,6 +12,7 @@ export namespace OrynExperiment {
     sha: string
     profile: OrynExecutionProfile
     abort: AbortSignal
+    patch?: string
   }) {
     input.abort.throwIfAborted()
     if (!/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(input.sha))
@@ -43,11 +44,44 @@ export namespace OrynExperiment {
         throw storeError("ENVIRONMENT_UNAVAILABLE", "experiment dependencies must not require submodule checkout")
       input.abort.throwIfAborted()
       await OrynGit.read(directory, ["checkout-index", "--all"])
-      const dependencies = await OrynDependencies.install({
+      const dependencies = await OrynDependencies.prepare({
         directory,
-        snapshots: input.profile.dependencySnapshots,
+        profile: input.profile,
         abort: input.abort,
       })
+      if (input.patch) {
+        if (Buffer.byteLength(input.patch) > 256 * 1024)
+          throw storeError("INVALID_STAGE", "Verification patch exceeds 256 KiB")
+        const patchFile = join(directory, ".git", "oryn-verification.patch")
+        await Bun.write(patchFile, input.patch)
+        const stat = await OrynGit.read(directory, ["apply", "--numstat", "-z", patchFile])
+        const files = stat
+          .split("\0")
+          .filter(Boolean)
+          .map((line) => line.match(/^\d+\t\d+\t([^]+)$/)?.[1])
+        if (
+          !files.length ||
+          files.some(
+            (file) =>
+              !file ||
+              !/(^|\/)(test|tests|__tests__|e2e)\//.test(file) ||
+              file.split("/").some((part) => ["..", ".git", ".synergy", ".agents", ".codex"].includes(part)) ||
+              isAbsolute(file),
+          )
+        )
+          throw storeError(
+            "NOT_AUTHORIZED",
+            "Verification overlays may change only ordinary files under test directories",
+          )
+        await OrynGit.read(directory, ["apply", "--index", "--whitespace=nowarn", patchFile])
+        for (const file of files) {
+          const mode = await OrynGit.read(directory, ["ls-files", "--format=%(objectmode)", "--", file!])
+          if (mode && !["100644", "100755"].includes(mode))
+            throw storeError("NOT_AUTHORIZED", "Verification patches cannot add links or submodules")
+        }
+        await rm(patchFile)
+      }
+      const treeDigest = await OrynGit.read(directory, ["write-tree"])
       const writableRoots: string[] = []
       const created = new Set<string>()
       for (const path of input.profile.writableDirectories ?? []) {
@@ -86,12 +120,16 @@ export namespace OrynExperiment {
       return {
         directory,
         dependencies,
+        treeDigest,
         readableRoots: [objects],
         writableRoots,
         async changed() {
           try {
-            await OrynGit.read(directory, ["diff", "--quiet", "--no-ext-diff", "--no-textconv", input.sha, "--"])
-            return (await OrynGit.read(directory, ["rev-parse", "HEAD"])) !== input.sha
+            await OrynGit.read(directory, ["diff", "--quiet", "--no-ext-diff", "--no-textconv", "--"])
+            return (
+              (await OrynGit.read(directory, ["rev-parse", "HEAD"])) !== input.sha ||
+              (await OrynGit.read(directory, ["write-tree"])) !== treeDigest
+            )
           } catch {
             return true
           }

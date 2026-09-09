@@ -1,3 +1,5 @@
+import { OrynIntegration } from "./integration"
+import { Storage } from "../storage/storage"
 import { lstat, mkdir, mkdtemp, rm } from "node:fs/promises"
 import path from "node:path"
 import { Global } from "../global"
@@ -92,6 +94,24 @@ export namespace OrynCandidateCommit {
         parent = path.dirname(parent)
       }
     }
+    const integration = await OrynIntegration.get(input.caseId, input.attemptId)
+    const mergeParent =
+      integration?.state === "conflicts" || integration?.state === "committed" ? integration.targetBaseSha : undefined
+    if (integration?.state === "prepared")
+      throw storeError("INVALID_STAGE", "Recover integration preparation before committing")
+    if (mergeParent) {
+      if (integration!.headSha !== attempt.baselineSha) throw storeError("INVALID_STAGE", "Integration source changed")
+      for (const file of integration!.conflicts) {
+        const content = await Bun.file(path.join(directory, file))
+          .text()
+          .catch((error: NodeJS.ErrnoException) => {
+            if (error.code === "ENOENT") return ""
+            throw error
+          })
+        if (/^(<<<<<<< |=======|>>>>>>> )/m.test(content))
+          throw storeError("INVALID_STAGE", "Resolve every integration conflict before committing")
+      }
+    }
     const before = await OrynGit.snapshot(directory)
     const identity = externalIdentityHash(
       input.caseId,
@@ -172,9 +192,16 @@ export namespace OrynCandidateCommit {
         throw storeError("INVALID_STAGE", "source differs from the interrupted Host commit")
       const candidateSha = replay
         ? before.sha
-        : await run(["commit-tree", tree, "-p", attempt.baselineSha], message + "\n")
+        : await run(
+            ["commit-tree", tree, "-p", attempt.baselineSha, ...(mergeParent ? ["-p", mergeParent] : [])],
+            message + "\n",
+          )
       if (!replay) await run(["update-ref", `refs/heads/${branch}`, candidateSha, before.sha])
       await run(["read-tree", candidateSha], undefined, false)
+      if (mergeParent) {
+        await run(["merge", "--quit"], undefined, false)
+        await Storage.write(OrynIntegration.key(input.caseId, input.attemptId), { ...integration, state: "committed" })
+      }
       await OrynCandidate.verify({ assignment, attempt, candidateSha, localBranch: branch })
       return { candidateSha, localBranch: branch, replayed: replay }
     } finally {

@@ -4327,9 +4327,9 @@ export type OrynLimitsConfig = {
    */
   lightConcurrency?: number
   /**
-   * Wall-clock budget per case in minutes. Exhaustion requires human handoff (default: 720)
+   * Cumulative execution minutes per logical step, excluding queues, human waits and downtime (default: 360)
    */
-  maxCaseMinutes?: number
+  maxStepMinutes?: number
   /**
    * Model token budget per case. Exhaustion requires human handoff
    */
@@ -4350,6 +4350,14 @@ export type OrynLimitsConfig = {
 export type OrynIsolationModeConfig = "worktree" | "sandbox" | "external_vm" | "trusted_local"
 
 export type OrynExecutionProfileConfig = {
+  /**
+   * Dependency preparation: frozen-lockfile install in trusted_local (default), sealed offline snapshot, or none for static checks
+   */
+  dependencies?: "install" | "snapshot" | "none"
+  /**
+   * Dependency installation timeout in seconds (default: 1800); installation also consumes the worker step budget
+   */
+  installTimeoutSeconds?: number
   resourceLimits?: OrynProcessResourcesConfig
   /**
    * What this profile is for, e.g. server-side unit tests
@@ -9099,6 +9107,8 @@ export type OrynSetupInput = {
   backfill: boolean
   autoReview: boolean
   autoFix: boolean
+  maxStepMinutes?: number
+  maxActiveCases?: number
   notificationTarget?: string
 }
 
@@ -9137,6 +9147,12 @@ export type OrynCaseDetailResponse = {
   pullNumbers: Array<number>
   sourceCount: number
   humanDecisions: Array<string>
+  workflowState?: string
+  steps: Array<{
+    step: string
+    elapsedMs: number
+  }>
+  maxStepMinutes: number
   handoff?: {
     reason: string
     epoch: number
@@ -10183,21 +10199,6 @@ export type EventScopeRuntimeDisposed = {
   }
 }
 
-export type EventProviderAuthUpdated = {
-  type: "provider.auth.updated"
-  properties: {
-    health: ProviderAuthHealth
-  }
-}
-
-export type EventConfigUpdated = {
-  type: "config.updated"
-  properties: {
-    scope: "global" | "project"
-    changedFields: Array<string>
-  }
-}
-
 export type EventMessageUpdated = {
   type: "message.updated"
   properties: {
@@ -10227,6 +10228,21 @@ export type EventMessagePartRemoved = {
     sessionID: string
     messageID: string
     partID: string
+  }
+}
+
+export type EventProviderAuthUpdated = {
+  type: "provider.auth.updated"
+  properties: {
+    health: ProviderAuthHealth
+  }
+}
+
+export type EventConfigUpdated = {
+  type: "config.updated"
+  properties: {
+    scope: "global" | "project"
+    changedFields: Array<string>
   }
 }
 
@@ -10801,12 +10817,12 @@ export type Event =
   | EventScopeUpdated
   | EventScopeRemoved
   | EventScopeRuntimeDisposed
-  | EventProviderAuthUpdated
-  | EventConfigUpdated
   | EventMessageUpdated
   | EventMessageRemoved
   | EventMessagePartUpdated
   | EventMessagePartRemoved
+  | EventProviderAuthUpdated
+  | EventConfigUpdated
   | EventPermissionAsked
   | EventPermissionReplied
   | EventSessionUpdated

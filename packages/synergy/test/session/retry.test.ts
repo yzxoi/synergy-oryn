@@ -253,3 +253,8 @@ describe("session.message-v2.fromError", () => {
     expect(SessionRetry.retryable(result)).toBeUndefined()
   })
 })
+
+test("an already cancelled retry never waits for its timer", async () => {
+  const signal = AbortSignal.abort(new Error("cancelled before retry"))
+  await expect(SessionRetry.sleep(60000, signal)).rejects.toThrow("cancelled before retry")
+}, 1000)

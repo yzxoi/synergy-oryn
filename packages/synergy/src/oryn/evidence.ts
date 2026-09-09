@@ -28,6 +28,7 @@ export namespace OrynEvidence {
       plan.profileId,
       JSON.stringify(plan.argv),
       JSON.stringify(plan.checks),
+      ...(plan.patch ? ["verification-overlay", plan.patch] : []),
     )
   }
 

@@ -10,6 +10,7 @@ export namespace SessionRetry {
   export const RETRY_MAX_ATTEMPTS = 10
 
   export async function sleep(ms: number, signal: AbortSignal): Promise<void> {
+    signal.throwIfAborted()
     return new Promise((resolve, reject) => {
       const abortHandler = () => {
         clearTimeout(timeout)

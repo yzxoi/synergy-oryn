@@ -62,7 +62,7 @@ export namespace OrynLabels {
     const config = await OrynConfig.info()
     const record = await OrynStore.getCase(caseId)
     const repo = record && config?.repositories?.[record.repoAlias]
-    if (!config?.enabled || !record || record.control !== "active" || !repo?.labels) return
+    if (!config?.enabled || !record || !repo?.labels) return
     const attempt = record.activeAttemptId ? await OrynStore.getAttempt(record.id, record.activeAttemptId) : undefined
     const labels = project(record, attempt, await OrynStore.listAssignments(record.id), repo.defaultPriority)
     const repository = `${repo.owner}/${repo.repo}`
@@ -99,13 +99,17 @@ export namespace OrynLabels {
               ? "performance"
               : record.kind
       const progress =
-        tracked.mode === "review"
-          ? tracked.state === "settled"
-            ? "oryn:status/ready"
-            : tracked.state === "running"
-              ? "oryn:status/reviewing"
-              : "oryn:status/triage"
-          : labels[1]!
+        record.control !== "active"
+          ? "oryn:status/needs-human"
+          : tracked.mode === "review"
+            ? tracked.state === "waiting_author"
+              ? "oryn:status/needs-human"
+              : tracked.state === "settled"
+                ? "oryn:status/ready"
+                : tracked.state === "running"
+                  ? "oryn:status/reviewing"
+                  : "oryn:status/triage"
+            : labels[1]!
       const target: LabelTarget = {
         repository,
         number: tracked.number,
@@ -219,7 +223,7 @@ export namespace OrynLabels {
     if (!transport || !(await OrynConfig.enabled())) return
     using lock = await Lock.tryAcquireWrite("oryn-label-poll")
     if (!lock) return
-    const cases = await OrynStore.listCases({ control: "active" })
+    const cases = (await OrynStore.listCases()).filter((record) => record.control !== "closed")
     if (!cases.length) {
       nextCase = 0
       return

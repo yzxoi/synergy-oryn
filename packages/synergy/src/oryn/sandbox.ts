@@ -37,6 +37,7 @@ export namespace OrynSandbox {
     profile: OrynExecutionProfile
     writableRoots?: string[]
     readableRoots?: string[]
+    downloadCache?: string
   }) {
     input.abort.throwIfAborted()
     const trusted = input.profile.isolation === "trusted_local"
@@ -124,6 +125,10 @@ export namespace OrynSandbox {
           TEMP: scratch,
           PATH: searchPath,
           LANG: "C.UTF-8",
+          BUN_CONFIG_NO_AUTO_INSTALL: "true",
+          ...(trusted && input.downloadCache
+            ? { BUN_INSTALL_CACHE_DIR: input.downloadCache, npm_config_cache: input.downloadCache }
+            : {}),
         },
       }).catch((error) => {
         if (wrapper.tempPath) SandboxBackend.cleanupTemp(wrapper.tempPath)

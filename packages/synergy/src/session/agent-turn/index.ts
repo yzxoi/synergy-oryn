@@ -1,3 +1,4 @@
+import { SessionExecutionMeter } from "../execution-meter"
 import { LLM } from "../llm"
 import { ToolCatalog } from "../tool-catalog"
 import {
@@ -102,8 +103,29 @@ export namespace AgentTurn {
             { ...turnInput, prepared: prepared!, archive },
             { background: await AgentTurnAdmission.background(attribution.owner) },
           )
+          const meter = await SessionExecutionMeter.begin(input.sessionID).catch(async (error) => {
+            await result.dispose()
+            throw error
+          })
           const contextUsageDraft = startContextUsageDraft(input, prepared!.system, contextUsageProvenance)
-          return { ...result, contextUsageDraft }
+          return {
+            ...result,
+            contextUsageDraft,
+            fullStream: (async function* () {
+              try {
+                yield* result.fullStream
+              } finally {
+                await meter[Symbol.asyncDispose]()
+              }
+            })(),
+            dispose: async () => {
+              try {
+                await result.dispose()
+              } finally {
+                await meter[Symbol.asyncDispose]()
+              }
+            },
+          }
         },
         () => {
           if (attribution.owner.kind === "session")

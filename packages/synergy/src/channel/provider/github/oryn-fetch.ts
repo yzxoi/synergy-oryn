@@ -97,8 +97,10 @@ export async function fetchOrynReview(input: {
       input.headSha,
       input.baseSha,
     ])
-    for (const sha of [input.headSha, input.baseSha])
+    for (const sha of [input.headSha, input.baseSha]) {
       await OrynGit.read(directory, ["cat-file", "-e", `${sha}^{commit}`])
+      await OrynGit.read(directory, ["update-ref", `refs/oryn/objects/${sha}`, sha])
+    }
   } finally {
     await rm(scratch, { recursive: true, force: true })
   }

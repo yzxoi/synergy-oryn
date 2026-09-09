@@ -1,6 +1,7 @@
 import { Scope } from "../scope"
 import { ScopeContext } from "../scope/context"
 import { Log } from "../util/log"
+import { OrynBudget } from "./budget"
 import { OrynControl } from "./control"
 import { OrynService } from "./service"
 
@@ -18,6 +19,7 @@ export namespace OrynBudgetRuntime {
       scope: Scope.home(),
       fn: async () => {
         if (cleanupPending) cleanupPending = (await OrynControl.recover()).failed > 0
+        await OrynBudget.checkpoint()
         const result = await OrynControl.enforceBudgets()
         cleanupPending ||= result.failed > 0
         notificationPending ||= result.expired > 0 || result.failed > 0

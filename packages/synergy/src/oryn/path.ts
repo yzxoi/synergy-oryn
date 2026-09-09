@@ -9,6 +9,8 @@ type ScopeID = Identifier.ScopeID
  * never used as path segments; hashed keys are produced by the store layer.
  */
 export namespace OrynPath {
+  export const executionsRoot = (caseId: string) => ["oryn", "cases", caseId, "executions"]
+  export const execution = (caseId: string, executionId: string) => [...executionsRoot(caseId), executionId]
   export const githubOwned = (hash: string) => ["oryn", "github_owned", hash]
   export const githubRoot = () => ["oryn", "github"]
   export const githubWork = (caseId: string) => [...githubRoot(), caseId]

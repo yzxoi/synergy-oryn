@@ -1,3 +1,6 @@
+import { OrynIntegration } from "./oryn/integration"
+import { OrynBudget } from "./oryn/budget"
+import { SessionExecutionMeter } from "./session/execution-meter"
 import { OrynDiscovery } from "./oryn/discovery"
 import { OrynEngineering } from "./oryn/engineering"
 import { GitHubChannelAuth } from "./channel/provider/github/api"
@@ -184,8 +187,26 @@ setGithubRepositoryPoller(async (input) => {
   if (handled) await OrynGithubRuntime.recover()
   return handled
 })
+OrynIntegration.setTargetResolver(async (repository, branch, directory, headSha, signal) => {
+  const ref = await OrynGithubIntake.read<{ object: { sha: string } }>(
+    repository,
+    `git/ref/heads/${encodeURIComponent(branch)}`,
+    signal,
+  )
+  await fetchOrynReview({ repository, directory, headSha: ref.object.sha, baseSha: ref.object.sha, signal })
+  return ref.object.sha
+})
+SessionExecutionMeter.register("oryn", OrynBudget.begin)
 setGithubRuntimeTransport({
   current: OrynGithubIntake.current,
+  target: async (repository, branch, signal) =>
+    (
+      await OrynGithubIntake.read<{ object: { sha: string } }>(
+        repository,
+        `git/ref/heads/${encodeURIComponent(branch)}`,
+        signal,
+      )
+    ).object.sha,
   fetch: fetchOrynReview,
   async permission(repository, login) {
     const result = await OrynGithubIntake.read<{ permission: string }>(
@@ -199,7 +220,7 @@ setGithubRuntimeTransport({
     for (let page = 1; page <= 20; page++) {
       const reviews = await OrynGithubIntake.read<Array<{ id: number; body: string; user: { login: string } }>>(
         repository,
-        `pulls/${number}/reviews?per_page=100&page=${page}`,
+        `issues/${number}/comments?per_page=100&page=${page}`,
       )
       const found = reviews.find(
         (review) => review.user.login === `${slug}[bot]` && review.body.trimEnd().endsWith(`\n${marker}`),
@@ -209,12 +230,13 @@ setGithubRuntimeTransport({
     }
   },
   async review(input) {
-    const result = await OrynGithubIntake.write<{ id: number }>(input.repository, `pulls/${input.number}/reviews`, {
-      event: "COMMENT",
-      commit_id: input.headSha,
-      body: input.body,
-      ...(input.comments?.length ? { comments: input.comments } : {}),
-    })
+    const result = await OrynGithubIntake.write<{ id: number }>(
+      input.repository,
+      input.remoteId ? `issues/comments/${input.remoteId}` : `issues/${input.number}/comments`,
+      { body: input.body },
+      undefined,
+      input.remoteId ? "PATCH" : "POST",
+    )
     if (!Number.isInteger(result.id) || result.id <= 0) throw new Error("Invalid review receipt")
     return result.id
   },

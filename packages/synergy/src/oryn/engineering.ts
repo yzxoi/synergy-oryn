@@ -187,7 +187,7 @@ export namespace OrynEngineering {
       const current = record.activeAttemptId ? await OrynStore.getAttempt(caseId, record.activeAttemptId) : undefined
       baselineSha =
         (github?.mode === "review"
-          ? github.snapshot.baseSha
+          ? github.snapshot.mergeBaseSha
           : github?.mode === "repair"
             ? github.snapshot.headSha
             : undefined) ??
@@ -222,7 +222,12 @@ export namespace OrynEngineering {
       return { state: "started", sessionID: start.sessionId, attemptId: start.attemptId }
     }
     await OrynStore.linkSourceToCase(source.key, caseId)
-    const opened = await openReserved(start, { identity: source.identity, scope, baselineSha })
+    const opened = await openReserved(start, {
+      identity: source.identity,
+      scope,
+      baselineSha,
+      baseBranchSha: github?.snapshot.baseSha,
+    })
     if (github?.mode === "review" && github.snapshot.headSha) {
       const attempt = (await OrynStore.getAttempt(caseId, opened.attemptId))!
       await OrynStore.mutateAttempt(caseId, attempt.id, (value) => ({

@@ -25,7 +25,15 @@ export namespace OrynControl {
     const record = await OrynStore.getCase(binding.caseId)
     if (!record || record.control !== "active") return false
     const github = await OrynGithubStore.get(record.id)
-    if (github && !(await OrynGithub.authorized(github, "run"))) return false
+    if (
+      github &&
+      ((github.mode === "review" &&
+        github.attemptFingerprint !== undefined &&
+        github.attemptFingerprint !== github.fingerprint) ||
+        ["settled", "waiting_author"].includes(github.state) ||
+        !(await OrynGithub.authorized(github, "run")))
+    )
+      return false
     if (await OrynBudget.reason(record)) return false
     if (binding.role === "engineering")
       return (

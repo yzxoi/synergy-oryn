@@ -1,3 +1,4 @@
+import { SessionExecutionMeter } from "./execution-meter"
 import type { ModelMessage, Tool as AITool, ToolCallOptions } from "ai"
 import { availableParallelism } from "os"
 import { AsyncLocalStorage } from "node:async_hooks"
@@ -329,6 +330,7 @@ export class ToolTaskScheduler {
           resources: task.input.resources ?? [],
         }),
       }
+      await using meter = await SessionExecutionMeter.begin(task.input.sessionID)
       try {
         await executionContext.run(context, () => execute(task.input.input, options))
       } finally {
