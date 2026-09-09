@@ -1,3 +1,4 @@
+import { OrynIntegration } from "./integration"
 import { OrynControl } from "./control"
 import { OrynGit } from "./git"
 import { OrynDiscovery, DiscoveryInput } from "./discovery"
@@ -324,6 +325,11 @@ export const OrynDispatchTool = Tool.define(
 
 export const ResultParameters = z.discriminatedUnion("kind", [
   z.object({
+    kind: z.literal("integration"),
+    caseId: z.string().min(1),
+    action: z.enum(["inspect", "start", "abort"]),
+  }),
+  z.object({
     kind: z.literal("commit_candidate"),
     caseId: z.string().min(1),
     attemptId: z.string().min(1),
@@ -406,6 +412,12 @@ export const OrynResultTool = Tool.define(
     parameters: z.object({ input: ResultParameters }),
     async execute({ input: params }, ctx): Promise<Tool.ExecutionResult> {
       return execute(async () => {
+        if (params.kind === "integration") {
+          const result = await ToolScheduler.trackPhysicalExecution(() =>
+            OrynIntegration.run({ ...params, callerSessionID: ctx.sessionID, abort: ctx.abort }),
+          )
+          return { title: "Target integration", output: JSON.stringify(result), metadata: { caseId: params.caseId } }
+        }
         if (params.kind === "commit_candidate") {
           const result = await ToolScheduler.trackPhysicalExecution(() =>
             OrynCandidateCommit.create({ ...params, callerSessionID: ctx.sessionID, abort: ctx.abort }),
@@ -533,6 +545,14 @@ export const CheckParameters = z.discriminatedUnion("action", [
         .describe("Concrete command lines; each first token must be allowlisted by the profile"),
       checks: z.array(z.string().min(1).max(500)).min(1).max(16).describe("Assertions this run must reach"),
       overlay: z.boolean().optional().describe("Declare that this run applies a verification overlay patch"),
+      patch: z
+        .string()
+        .min(1)
+        .max(262144)
+        .optional()
+        .describe(
+          "Unified Git patch limited to test directories, materialized in the check checkout; use the same patch for baseline and candidate",
+        ),
     })
     .describe("Propose a verification plan; it is approved when the host executes it"),
   z
@@ -588,6 +608,7 @@ export const OrynCheckTool = Tool.define(
             argv: params.argv,
             checks: params.checks,
             overlay: params.overlay,
+            patch: params.patch,
           })
           return {
             title: "Check plan proposed",
@@ -627,6 +648,7 @@ export const OrynCheckTool = Tool.define(
               argv: plan.argv,
               checks: plan.checks,
               overlay: plan.overlay,
+              patch: plan.patch,
             },
             null,
             2,
@@ -728,8 +750,8 @@ export const OrynGithubReadTool = Tool.define(
         if (work) {
           const repository = (await OrynConfig.info())?.repositories?.[work.repoAlias]
           const changes =
-            repository?.directory && work.snapshot.baseSha && work.snapshot.headSha
-              ? await OrynGit.changes(repository.directory, work.snapshot.baseSha, work.snapshot.headSha)
+            repository?.directory && work.snapshot.mergeBaseSha && work.snapshot.headSha
+              ? await OrynGit.changes(repository.directory, work.snapshot.mergeBaseSha, work.snapshot.headSha)
               : []
           if (
             params.path &&
@@ -744,7 +766,7 @@ export const OrynGithubReadTool = Tool.define(
                   "--no-ext-diff",
                   "--no-textconv",
                   "--no-renames",
-                  work.snapshot.baseSha!,
+                  work.snapshot.mergeBaseSha!,
                   work.snapshot.headSha!,
                   "--",
                   params.path,

@@ -55,7 +55,7 @@ export type FindingSeverity = z.infer<typeof FindingSeverity>
 export const FindingDisposition = z.enum(["open", "resolved", "rejected_with_evidence", "still_open"])
 export type FindingDisposition = z.infer<typeof FindingDisposition>
 
-export const REVIEW_POLICY_VERSION = "oryn-review-paths-v1"
+export const REVIEW_POLICY_VERSION = "oryn-review-merge-base-v2"
 
 export const ReviewDomain = z.enum(["general", "persistence", "security", "channel", "publishing"])
 export type ReviewDomain = z.infer<typeof ReviewDomain>
@@ -196,6 +196,7 @@ export const Attempt = z
     baselineSha: z.string().min(1),
     candidateSha: z.string().optional(),
     baseBranchSha: z.string().optional(),
+    budgetAttemptId: z.string().optional(),
     planDigest: z.string().optional(),
     assignmentIds: z.array(z.string()).default([]),
     evidenceRunIds: z.array(z.string()).default([]),
@@ -362,6 +363,15 @@ export const ActionReceipt = z
     operation: PublishOperation,
     payloadDigest: z.string().min(1),
     expectedHead: z.string().optional(),
+    adoptedTarget: z
+      .object({
+        repository: z.string(),
+        number: z.number().int().positive(),
+        branch: z.string(),
+        expectedHead: z.string(),
+      })
+      .strict()
+      .optional(),
     readyTarget: z
       .object({
         attemptId: z.string().min(1),
@@ -505,6 +515,7 @@ export const CheckPlan = z
     status: z.enum(["proposed", "approved", "rejected"]),
     /** True when the plan declares it runs with a verification overlay patch. */
     overlay: z.boolean().default(false),
+    patch: z.string().min(1).max(262144).optional(),
     createdAt: z.number().int().positive(),
   })
   .strict()

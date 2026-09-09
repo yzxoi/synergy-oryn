@@ -3,6 +3,26 @@ import { OrynReviewPolicy } from "../../src/oryn/review-policy"
 import { OrynGit } from "../../src/oryn/git"
 import { tmpdir } from "../fixture/fixture"
 
+test("PR versions exclude changes made only on the advancing target branch", async () => {
+  await using repo = await tmpdir({ git: true })
+  const mergeBaseSha = await OrynGit.read(repo.path, ["rev-parse", "HEAD"])
+  await Bun.$`git checkout -b contribution`.cwd(repo.path).quiet()
+  await Bun.write(`${repo.path}/fix.ts`, "export const fixed = true\n")
+  await Bun.$`git add fix.ts`.cwd(repo.path).quiet()
+  await Bun.$`git commit -m contribution`.cwd(repo.path).quiet()
+  const headSha = await OrynGit.read(repo.path, ["rev-parse", "HEAD"])
+  await Bun.$`git checkout -b target ${mergeBaseSha}`.cwd(repo.path).quiet()
+  await Bun.write(`${repo.path}/security/auth.ts`, "export const secure = true\n")
+  await Bun.$`git add security/auth.ts`.cwd(repo.path).quiet()
+  await Bun.$`git commit -m target`.cwd(repo.path).quiet()
+  const targetBaseSha = await OrynGit.read(repo.path, ["rev-parse", "HEAD"])
+  const versions = await OrynGit.versions(repo.path, targetBaseSha, headSha)
+  expect(versions).toEqual({ headSha, targetBaseSha, mergeBaseSha })
+  const changes = await OrynGit.changes(repo.path, versions.mergeBaseSha, headSha)
+  expect(changes).toEqual([{ status: "A", path: "fix.ts" }])
+  expect(OrynReviewPolicy.classify(changes)).toEqual(["general"])
+})
+
 test("a rename out of a sensitive directory retains the deleted path's review requirement", async () => {
   await using repo = await tmpdir({ git: true })
   await Bun.write(`${repo.path}/src/security/check.ts`, "export const check = () => true\n")

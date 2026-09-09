@@ -11,6 +11,39 @@ import { OrynCommand } from "../../src/cli/cmd/oryn"
 
 const hash = (value: string) => new Bun.CryptoHasher("sha256").update(value).digest("hex")
 
+test("locked installs resolve each commit's workspace packages without borrowing an installed tree", async () => {
+  await using repo = await tmpdir({ git: true })
+  await Bun.write(
+    join(repo.path, "package.json"),
+    JSON.stringify({
+      name: "fixture",
+      workspaces: ["packages/*"],
+      dependencies: { "@oryn-fixture/local": "workspace:*" },
+    }),
+  )
+  await Bun.write(
+    join(repo.path, "packages/local/package.json"),
+    JSON.stringify({ name: "@oryn-fixture/local", version: "1.0.0", main: "index.js" }),
+  )
+  await Bun.write(join(repo.path, "packages/local/index.js"), "exports.answer = 42")
+  await Bun.$`bun install --ignore-scripts`.cwd(repo.path).quiet()
+  await Bun.$`git add package.json bun.lock packages`.cwd(repo.path).quiet()
+  await Bun.$`git commit -m fixture`.cwd(repo.path).quiet()
+  const sha = await OrynGit.read(repo.path, ["rev-parse", "HEAD"])
+  await using experiment = await OrynExperiment.prepare({
+    source: repo.path,
+    sha,
+    profile: { isolation: "trusted_local", commandAllowlist: ["bun"], dependencies: "install" },
+    abort: new AbortController().signal,
+  })
+  const result = await Bun.$`bun -e ${"console.log(require('@oryn-fixture/local').answer)"}`
+    .cwd(experiment.directory)
+    .text()
+  expect(result.trim()).toBe("42")
+  expect(experiment.dependencies).toContain("locked:bun:")
+  expect(await experiment.changed()).toBe(false)
+})
+
 test("experiments materialize a pinned dependency snapshot instead of borrowing host dependencies", async () => {
   await using repo = await tmpdir({ git: true })
   await using snapshot = await tmpdir()

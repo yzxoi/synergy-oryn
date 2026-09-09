@@ -1,3 +1,4 @@
+import { OrynBudget } from "../../src/oryn/budget"
 import { z } from "zod"
 import { mkdir, symlink } from "node:fs/promises"
 import { BashExecutionPolicy } from "../../src/tool/bash/policy"
@@ -605,10 +606,12 @@ native("budget expiration stops an actual background worker process", async () =
       while (!(await Bun.file(`${directory}/budget-started`).exists()) && Date.now() < deadline) await Bun.sleep(10)
       expect(await Bun.file(`${directory}/budget-started`).exists()).toBe(true)
       const record = (await OrynStore.getCase(caseId))!
-      await OrynStore.mutateCase(caseId, record.revision, (value) => ({
-        ...value,
-        createdAt: Date.now() - 721 * 60_000,
-      }))
+      await OrynBudget.record({
+        caseId,
+        step: `${record.activeAttemptId}:code:general`,
+        executionId: "fixture-expired",
+        elapsedMs: 361 * 60_000,
+      })
       await OrynBudgetRuntime.start()
       expect((await OrynStore.getCase(caseId))?.control).toBe("human_owned")
       expect(ProcessRegistry.get(id)).toBeUndefined()

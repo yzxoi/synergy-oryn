@@ -51,7 +51,14 @@ test("setup discovers configured repositories while disabled, validates checkout
     autoFix: false,
   })
   await expect(OrynSetup.save(input)).rejects.toBeDefined()
-  await OrynSetup.save({ ...input, enabled: true, revision: (await OrynSetup.view()).revision })
+  await OrynSetup.save({
+    ...input,
+    enabled: true,
+    maxStepMinutes: 480,
+    maxActiveCases: 12,
+    revision: (await OrynSetup.view()).revision,
+  })
+  expect((await Config.globalRaw()).oryn?.limits).toMatchObject({ maxStepMinutes: 480, maxActiveCases: 12 })
   await OrynSetup.save({
     ...input,
     enabled: false,

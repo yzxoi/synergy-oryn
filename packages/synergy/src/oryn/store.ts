@@ -1235,6 +1235,7 @@ export namespace OrynStore {
           revision: 0,
           baselineSha: input.nextBaselineSha,
           ...(previous.baseBranchSha ? { baseBranchSha: previous.baseBranchSha } : {}),
+          ...(kind === "resume" ? { budgetAttemptId: previous.budgetAttemptId ?? previous.id } : {}),
           assignmentIds: [],
           evidenceRunIds: [],
           reviewIds: [],

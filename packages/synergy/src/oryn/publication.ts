@@ -4,6 +4,7 @@ import { OrynGit } from "./git"
 import { OrynPublicText } from "./public-text"
 import { OrynStore, storeError } from "./store"
 import { OrynCandidate } from "./candidate"
+import { OrynReviewPolicy } from "./review-policy"
 import { OrynEvidence } from "./evidence"
 
 export namespace OrynPublication {
@@ -57,10 +58,12 @@ export namespace OrynPublication {
         assignment.frozenInputsDigest === OrynEvidence.assignmentDigest(record, attempt, "review")
       )
     })
+    const scope = await OrynReviewPolicy.requirements(record, attempt)
     return {
       ...render({
         ...input,
-        changes: await OrynGit.changes(code.workspaceRef, attempt.baselineSha, attempt.candidateSha!),
+        scopeBaseSha: scope.baseSha,
+        changes: await OrynGit.changes(code.workspaceRef, scope.baseSha, attempt.candidateSha!),
         runs: [...new Map(runs.map((run) => [run.id, run])).values()],
         reviews,
       }),
@@ -116,6 +119,7 @@ export namespace OrynPublication {
     repository: string
     record: Case
     attempt: Attempt
+    scopeBaseSha?: string
     changes: OrynGit.Change[]
     runs: RunReceipt[]
     reviews: ReviewReport[]
@@ -125,16 +129,17 @@ export namespace OrynPublication {
     const { record, attempt } = input
     if (!/^[\w.-]+\/[\w.-]+$/.test(input.repository) || !attempt.candidateSha || input.changes.length === 0)
       throw storeError("INVALID_STAGE", "a pull request requires a repository and a nonempty frozen candidate diff")
+    const scopeBase = input.scopeBaseSha ?? attempt.baselineSha
     const base = `https://github.com/${input.repository}`
     const shown = input.changes.slice(0, 50)
     const files = shown.map((change) => {
-      const sha = change.status === "D" ? attempt.baselineSha : attempt.candidateSha
+      const sha = change.status === "D" ? scopeBase : attempt.candidateSha
       const url = `${base}/blob/${sha}/${change.path.split("/").map(encodeURIComponent).join("/")}`
       return `| ${text(change.status, 1)} | [${text(change.path, 500)}](${url}) |`
     })
     const graph = [
       "flowchart LR",
-      `  BASE[\"Base ${attempt.baselineSha.slice(0, 12)}\"]`,
+      `  BASE[\"Base ${scopeBase.slice(0, 12)}\"]`,
       `  CANDIDATE[\"Candidate ${attempt.candidateSha.slice(0, 12)}\"]`,
     ]
     for (const [index, change] of shown.slice(0, 12).entries()) {
@@ -172,7 +177,7 @@ export namespace OrynPublication {
       record.expected ? `Expected: ${text(record.expected)}` : undefined,
       record.issueNumber ? `Closes #${record.issueNumber}` : undefined,
       "## Frozen candidate",
-      `Base: ${attempt.baselineSha}\n\nCandidate: ${attempt.candidateSha}`,
+      `Review base: ${scopeBase}\n\nAttempt baseline: ${attempt.baselineSha}\n\nCandidate: ${attempt.candidateSha}`,
       "## Changed scope",
       "This graph maps the Git diff; its arrows do not assert runtime dependencies.",
       `\`\`\`mermaid\n${graph.join("\n")}\n\`\`\``,

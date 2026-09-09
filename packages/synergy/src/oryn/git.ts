@@ -3,6 +3,17 @@ import { storeError } from "./store"
 export namespace OrynGit {
   export type Change = { status: string; path: string }
 
+  // PR scope follows GitHub's three-dot comparison, independently of target integration.
+  // https://docs.github.com/en/pull-requests/committing-changes-to-your-project/viewing-and-comparing-commits/comparing-commits
+  export async function versions(directory: string, targetBaseSha: string, headSha: string) {
+    if (![targetBaseSha, headSha].every((sha) => /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(sha)))
+      throw storeError("INVALID_STAGE", "PR comparison requires full source versions")
+    const bases = (await read(directory, ["merge-base", "--all", targetBaseSha, headSha])).split("\n")
+    if (bases.length !== 1 || !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(bases[0]!))
+      throw storeError("ENVIRONMENT_UNAVAILABLE", "PR comparison requires one verifiable common ancestor")
+    return { headSha, targetBaseSha, mergeBaseSha: bases[0]! }
+  }
+
   export async function changes(directory: string, baseline: string, candidate: string): Promise<Change[]> {
     if (![baseline, candidate].every((sha) => /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(sha)))
       throw storeError("INVALID_STAGE", "publication requires full source versions")

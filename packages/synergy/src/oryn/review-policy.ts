@@ -60,7 +60,7 @@ export namespace OrynReviewPolicy {
       if (
         !repository?.directory ||
         github.snapshot.headSha !== attempt.candidateSha ||
-        github.snapshot.baseSha !== attempt.baselineSha
+        github.snapshot.mergeBaseSha !== attempt.baselineSha
       )
         throw storeError("STALE_HEAD", "External review inputs changed")
       const changes = await OrynGit.changes(repository.directory, attempt.baselineSha, attempt.candidateSha)
@@ -68,7 +68,15 @@ export namespace OrynReviewPolicy {
         version: REVIEW_POLICY_VERSION,
         baseSha: attempt.baselineSha,
         headSha: attempt.candidateSha,
-        domains: classify(changes),
+        domains: [
+          ...new Set<ReviewDomain>([
+            "general",
+            ...(await OrynStore.listAssignments(record.id))
+              .filter((item) => item.stage === "review" && item.attemptId === attempt.id && item.epoch === record.epoch)
+              .map((item) => item.reviewDomain ?? "general"),
+          ]),
+        ],
+        suggestedDomains: classify(changes),
       }
     }
     const assignments = await OrynStore.listAssignments(record.id)
@@ -84,7 +92,7 @@ export namespace OrynReviewPolicy {
     const attempts = (await OrynStore.listAttempts(record.id)).sort(
       (a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id),
     )
-    const baseline = github?.mode === "repair" ? github.snapshot.baseSha : attempts[0]?.baselineSha
+    const baseline = github?.mode === "repair" ? github.snapshot.mergeBaseSha : attempts[0]?.baselineSha
     if (!baseline) throw storeError("INVALID_STAGE", "review requirements need the original Case baseline")
     // Repair-only diffs omit risks introduced by earlier commits on the same PR.
     const changes = await OrynGit.changes(code.workspaceRef, baseline, attempt.candidateSha)

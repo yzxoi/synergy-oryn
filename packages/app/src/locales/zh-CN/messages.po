@@ -9821,6 +9821,14 @@ msgid "nav.tools.title"
 msgstr "工具"
 
 #. js-lingui-explicit-id
+msgid "oryn.step.executionMinutes"
+msgstr "已执行 {used} / {limit} 分钟"
+
+#. js-lingui-explicit-id
+msgid "oryn.workflow.waitingAuthor"
+msgstr "等待 PR 作者处理"
+
+#. js-lingui-explicit-id
 msgid "plugin.textAction.back"
 msgstr "返回"
 
@@ -17433,6 +17441,10 @@ msgid "settings.models.roles.title"
 msgstr "模型角色"
 
 #. js-lingui-explicit-id
+msgid "settings.oryn.activeCases"
+msgstr "最多同时处理的任务数"
+
+#. js-lingui-explicit-id
 msgid "settings.oryn.automation"
 msgstr "自动化"
 
@@ -17470,7 +17482,7 @@ msgstr "自动修复已复现的 bug"
 
 #. js-lingui-explicit-id
 msgid "settings.oryn.fixDescription"
-msgstr "需要先配置验证环境。无法复现的问题会转交人工，不会覆盖贡献者的分支。"
+msgstr "需要先配置验证环境。修复 PR 需要有权限的用户单独发起 autofix；更新会保留贡献者的提交历史。"
 
 #. js-lingui-explicit-id
 msgid "settings.oryn.loading"
@@ -17519,6 +17531,10 @@ msgstr "Oryn 设置已保存。"
 #. js-lingui-explicit-id
 msgid "settings.oryn.saving"
 msgstr "正在保存…"
+
+#. js-lingui-explicit-id
+msgid "settings.oryn.stepMinutes"
+msgstr "每个执行步骤的时限（分钟，不含排队和等待）"
 
 #. js-lingui-explicit-id
 msgid "settings.panel.action.cancel"

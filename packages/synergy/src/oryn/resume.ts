@@ -1,3 +1,5 @@
+import { RolloutLedger } from "../session/rollout/ledger"
+import { Storage } from "../storage/storage"
 import { bossAssignmentMetadata } from "../boss/boss-message"
 import { ScopeContext } from "../scope/context"
 import { Session } from "../session"
@@ -29,14 +31,24 @@ export namespace OrynResume {
         ? (await OrynStore.listAssignments(record.id)).find((item) => item.sessionId === sessionID)
         : undefined
     if (binding.role === "worker" && (!assignment || assignment.acceptedReportId)) return "idle"
-    if (await SessionInbox.hasRunnableItem(sessionID)) return "queued"
+    const queued = await SessionInbox.hasRunnableItem(sessionID)
     const messages = await SessionHistory.modelMessages({ sessionID })
     const root = messages.findLast((item) => item.info.role === "user" && item.info.isRoot === true)
-    if (!root || root.info.role !== "user") return "idle"
+    if (!root || root.info.role !== "user") return queued ? "queued" : "idle"
     if (assignment && bossAssignmentMetadata(root.info, session, { requireRoot: true })?.taskID !== assignment.id)
       return "idle"
+    const rollout = await RolloutLedger.getRun(
+      { kind: "session", scopeID: session.scope.id, sessionID },
+      root.info.id,
+    ).catch((error) => {
+      if (error instanceof Storage.NotFoundError) return undefined
+      throw error
+    })
+    const freshRun = rollout && !["running", "interrupted"].includes(rollout.status)
+    if (queued && (!freshRun || (await SessionInbox.peekTask(sessionID)))) return "queued"
     const assistant = messages.findLast((item) => item.info.role === "assistant" && item.info.rootID === root.info.id)
     if (
+      !freshRun &&
       assistant?.info.role === "assistant" &&
       !assistant.info.error &&
       SessionProgress.isTerminalAssistant(assistant.info) &&
@@ -48,7 +60,7 @@ export namespace OrynResume {
         info.role === "user" &&
         info.origin?.type === "system" &&
         info.origin.detail === "oryn_resume" &&
-        info.rootID === root.info.id,
+        (info.rootID === root.info.id || info.metadata?.orynAttemptId === attempt.id),
     ).length
     if (attempts >= 3) return "exhausted"
     await ScopeContext.provide({
@@ -62,11 +74,18 @@ export namespace OrynResume {
     await SessionInbox.deliverUnique({
       sessionID,
       deliveryKey: `oryn-resume:${root.info.id}:${anchor}`,
-      mode: "steer",
+      mode: freshRun ? "task" : "steer",
       message: {
         role: "user",
         origin: { type: "system", detail: "oryn_resume" },
-        metadata: { source: "oryn_resume", caseId: record.id, attemptId: attempt.id, assignmentId: assignment?.id },
+        metadata: {
+          ...root.info.metadata,
+          source: "oryn_resume",
+          orynAttemptId: attempt.id,
+          caseId: record.id,
+          attemptId: attempt.id,
+          assignmentId: assignment?.id,
+        },
         summary: { title: "Resume interrupted Oryn task" },
         parts: [
           {

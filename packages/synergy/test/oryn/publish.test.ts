@@ -1,3 +1,8 @@
+import { Config } from "../../src/config/config"
+import { ChannelGithub } from "../../src/config/schema"
+import { OrynGithubStore } from "../../src/oryn/github-store"
+import { setGithubRuntimeTransport } from "../../src/oryn/github-runtime"
+import { OrynBudget } from "../../src/oryn/budget"
 import { OrynReviewPolicy } from "../../src/oryn/review-policy"
 import { OrynGit } from "../../src/oryn/git"
 import { OrynPath } from "../../src/oryn/path"
@@ -1224,10 +1229,12 @@ test("an expired candidate cannot publish readiness despite accepted verificatio
     await verifyFrozen(seeded)
     await OrynStore.attachRemoteRefs(seeded.caseId, { pullNumber: 55 })
     const record = (await OrynStore.getCase(seeded.caseId))!
-    await OrynStore.mutateCase(record.id, record.revision, (value) => ({
-      ...value,
-      createdAt: Date.now() - 721 * 60_000,
-    }))
+    await OrynBudget.record({
+      caseId: record.id,
+      step: `${record.activeAttemptId}:verify:general`,
+      executionId: "fixture-expired",
+      elapsedMs: 361 * 60_000,
+    })
     const transport = fakeTransport({ candidateSha: seeded.candidateSha, marker: caseMarker(record.id), ci: "success" })
     setTransport(transport)
     const gate = await OrynService.evaluateDelivery({
@@ -1423,5 +1430,123 @@ test("a previous policy's review stays stale and cannot resume or replay as a cu
         ciStatus: "passed",
       }),
     ).toMatchObject({ ready: true, failures: [] })
+  })
+})
+
+test("authorized same-repository repair appends to the existing PR with a pinned remote head", async () => {
+  await withPubScope(async (root) => {
+    const frozen = await seedFrozen(root)
+    const attempt = (await OrynStore.getAttempt(frozen.caseId, frozen.attemptId))!
+    const channels = await Config.domainGet("channels")
+    const runtime = await Config.globalRaw()
+    await Config.domainUpdate("channels", {
+      channel: {
+        github: ChannelGithub.parse({
+          type: "github",
+          accounts: { app: { enabled: true, workspaceDir: root, repositories: ["acme/widget"] } },
+        }),
+      },
+    })
+    await Config.domainUpdate("runtime", {
+      oryn: {
+        ...runtime.oryn,
+        repositories: {
+          "acme/widget": {
+            ...runtime.oryn!.repositories!["acme/widget"]!,
+            githubAccount: "app",
+            github: { enabled: true },
+          },
+        },
+      },
+    })
+    const snapshot = {
+      number: 77,
+      kind: "pull" as const,
+      title: "Original contribution",
+      body: "Author rationale",
+      state: "open" as const,
+      updatedAt: new Date().toISOString(),
+      labels: [],
+      comments: [],
+      headSha: attempt.baselineSha,
+      baseSha: attempt.baselineSha,
+      mergeBaseSha: attempt.baselineSha,
+      baseRef: "dev",
+      headRef: "contributor/fix",
+      headRepository: "acme/widget",
+      author: "contributor",
+    }
+    await OrynGithubStore.save({
+      schemaVersion: 2,
+      caseId: frozen.caseId,
+      repoAlias: "acme/widget",
+      repository: "acme/widget",
+      accountId: "app",
+      number: 77,
+      mode: "repair",
+      snapshot,
+      fingerprint: OrynGithubStore.fingerprint(snapshot),
+      state: "running",
+      commandIds: [],
+      authorizedBy: "operator",
+      updatedAt: Date.now(),
+    })
+    const prior = setGithubRuntimeTransport({
+      current: async () => snapshot,
+      fetch: async () => {},
+      permission: async () => true,
+      findReview: async () => undefined,
+      review: async () => 1,
+    })
+    const transport = fakeTransport({
+      candidateSha: frozen.candidateSha,
+      marker: caseMarker(frozen.caseId),
+      onExecute: async (call) => {
+        expect(call.adoptedTarget).toEqual({
+          repository: "acme/widget",
+          number: 77,
+          branch: "contributor/fix",
+          expectedHead: attempt.baselineSha,
+        })
+        expect(call.branch).toBe("contributor/fix")
+        expect(call.body).toContain("/pull/77")
+        return { refs: { pullNumber: 77, branch: call.branch } }
+      },
+    })
+    const observe = transport.observe
+    transport.observe = async (query, signal) => {
+      const facts = await observe(query, signal)
+      if (facts.pull)
+        facts.pull = {
+          ...facts.pull,
+          headBranch: "contributor/fix",
+          headRepository: "acme/widget",
+          authorIsApp: false,
+          markerPresent: false,
+        }
+      return facts
+    }
+    setTransport(transport)
+    try {
+      const issue = await OrynPublish.publish({
+        callerSessionID: frozen.engineeringSessionId,
+        caseId: frozen.caseId,
+        operation: "ensure_issue",
+        requestKey: "no-duplicate-issue",
+      })
+      expect(issue.refs).toEqual({})
+      const result = await OrynPublish.publish({
+        callerSessionID: frozen.engineeringSessionId,
+        caseId: frozen.caseId,
+        operation: "ensure_draft",
+        requestKey: "adopt-original",
+      })
+      expect(result.state).toBe("acknowledged")
+      expect(result.refs?.pullNumber).toBe(77)
+      expect((await OrynStore.getCase(frozen.caseId))!.pullNumbers).toContain(77)
+    } finally {
+      setGithubRuntimeTransport(prior)
+      await Config.domainUpdate("channels", channels, { mode: "replace-domain" })
+    }
   })
 })

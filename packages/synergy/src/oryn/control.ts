@@ -25,7 +25,13 @@ export namespace OrynControl {
     const record = await OrynStore.getCase(binding.caseId)
     if (!record || record.control !== "active") return false
     const github = await OrynGithubStore.get(record.id)
-    if (github && !(await OrynGithub.authorized(github, "run"))) return false
+    if (
+      github &&
+      ((github.mode === "review" && (github.state !== "running" || github.attemptFingerprint !== github.fingerprint)) ||
+        ["settled", "waiting_author"].includes(github.state) ||
+        !(await OrynGithub.authorized(github, "run")))
+    )
+      return false
     if (await OrynBudget.reason(record)) return false
     if (binding.role === "engineering")
       return (
@@ -100,6 +106,10 @@ export namespace OrynControl {
       } else await stop(record)
     }
     if (input.action === "resume") {
+      if (await OrynGithubStore.get(input.caseId)) {
+        const { OrynGithubRuntime } = await import("./github-runtime")
+        await OrynGithubRuntime.recover()
+      }
       const { OrynService } = await import("./service")
       await OrynService.recoverWorkers({ caseId: input.caseId })
       await OrynService.recoverEngineeringTurns({ caseId: input.caseId })

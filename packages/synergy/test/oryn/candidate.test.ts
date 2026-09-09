@@ -1,3 +1,6 @@
+import { OrynIntegration } from "../../src/oryn/integration"
+import { OrynGit } from "../../src/oryn/git"
+import { Config } from "../../src/config/config"
 import { symlink } from "node:fs/promises"
 import { describe, expect, test } from "bun:test"
 import { BossService } from "../../src/boss/boss"
@@ -331,5 +334,60 @@ describe("Oryn Host candidate commits", () => {
         "# Candidate check workflow",
       )
     })
+  })
+})
+
+test("Host prepares a real conflict and commits the resolved candidate with both parents", async () => {
+  await fixture(async (input) => {
+    const directory = input.directory
+    await Bun.write(`${directory}/conflict.txt`, "topic\n")
+    await Bun.$`git add conflict.txt`.cwd(directory).quiet()
+    await Bun.$`git commit -m topic`.cwd(directory).quiet()
+    const head = await OrynGit.read(directory, ["rev-parse", "HEAD"])
+    await Bun.write(`${directory}/conflict.txt`, "target\n")
+    await Bun.$`git add conflict.txt`.cwd(directory).quiet()
+    const tree = await OrynGit.read(directory, ["write-tree"])
+    const target = await OrynGit.read(directory, [
+      "-c",
+      "user.name=fixture",
+      "-c",
+      "user.email=fixture@example.test",
+      "commit-tree",
+      tree,
+      "-p",
+      input.candidateSha,
+      "-m",
+      "target",
+    ])
+    await Bun.$`git restore --source=${head} --staged --worktree conflict.txt`.cwd(directory).quiet()
+    await OrynStore.mutateAttempt(input.caseId, input.attemptId, (attempt) => ({ ...attempt, baselineSha: head }))
+    const config = await Config.globalRaw()
+    await Config.domainUpdate("runtime", {
+      oryn: { ...config.oryn, repositories: { repo: { owner: "test", repo: "repo", directory } } },
+    })
+    OrynIntegration.setTargetResolver(async () => target)
+    try {
+      const abort = new AbortController().signal
+      const prepared = await OrynIntegration.run({ ...input, action: "start", abort })
+      expect(prepared.state).toBe("conflicts")
+      expect((await OrynIntegration.run({ ...input, action: "start", abort })).state).toBe("conflicts")
+      const request = {
+        ...input,
+        requestKey: "resolve-conflict",
+        title: "fix: reconcile both changes",
+        paths: ["conflict.txt"],
+        abort,
+      }
+      await expect(OrynCandidateCommit.create(request)).rejects.toThrow("Resolve every integration conflict")
+      await Bun.write(`${directory}/conflict.txt`, "topic and target\n")
+      const candidate = await OrynCandidateCommit.create(request)
+      expect(await OrynGit.read(directory, ["show", "-s", "--format=%P", candidate.candidateSha])).toBe(
+        `${head} ${target}`,
+      )
+      expect((await OrynIntegration.get(input.caseId, input.attemptId))?.state).toBe("committed")
+      expect((await OrynCandidateCommit.create(request)).candidateSha).toBe(candidate.candidateSha)
+    } finally {
+      OrynIntegration.setTargetResolver(undefined)
+    }
   })
 })

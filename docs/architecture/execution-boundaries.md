@@ -234,7 +234,7 @@ The Host pins each new proposal to repository, Attempt, ownership epoch, accepta
 
 Shared-memory embedding selects installation configuration explicitly and owns a separate local extractor from ordinary Scope-based embedding. See [installation embedding](../decisions/implemented/bug-fix/2026-09-08-oryn-installation-embedding.md).
 
-Oryn wall-clock expiry uses the persisted Case creation time and the installation limit. Session admission, stage dispatch, checks and publication consult the same policy. A lifecycle-owned runtime timer transfers expired unfinished Cases to human ownership and drains their existing execution/process owners; it creates no task queue or separate coordination agent. Conditional handoff compares Case and Attempt revisions under the Case lock so a completed candidate is not overwritten by a stale budget observation. Existing outbox recovery delivers the result independently of enforcement. See [Case wall-clock enforcement](../decisions/implemented/bug-fix/2026-09-08-oryn-case-wall-clock-budget.md) for scope and limits.
+Oryn execution budgets accumulate active model, tool and background-process time per logical step, with overlapping activity counted once. Case age, queue time and downtime are not imported as execution time. Session admission, dispatch, checks and publication consult the same persisted budget. Ownership resume preserves spent time. The runtime checkpoints activity and hands off exhausted work through existing Session/process cancellation. See [Oryn pipeline runtime](../decisions/implemented/architecture/2026-09-09-oryn-pipeline-runtime.md).
 
 ## Explicit process sandbox policies
 

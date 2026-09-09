@@ -187,7 +187,7 @@ export namespace OrynEngineering {
       const current = record.activeAttemptId ? await OrynStore.getAttempt(caseId, record.activeAttemptId) : undefined
       baselineSha =
         (github?.mode === "review"
-          ? github.snapshot.baseSha
+          ? github.snapshot.mergeBaseSha
           : github?.mode === "repair"
             ? github.snapshot.headSha
             : undefined) ??
@@ -222,7 +222,12 @@ export namespace OrynEngineering {
       return { state: "started", sessionID: start.sessionId, attemptId: start.attemptId }
     }
     await OrynStore.linkSourceToCase(source.key, caseId)
-    const opened = await openReserved(start, { identity: source.identity, scope, baselineSha })
+    const opened = await openReserved(start, {
+      identity: source.identity,
+      scope,
+      baselineSha,
+      baseBranchSha: github?.snapshot.baseSha,
+    })
     if (github?.mode === "review" && github.snapshot.headSha) {
       const attempt = (await OrynStore.getAttempt(caseId, opened.attemptId))!
       await OrynStore.mutateAttempt(caseId, attempt.id, (value) => ({
@@ -251,7 +256,7 @@ export namespace OrynEngineering {
             parts: [
               {
                 type: "text",
-                text: `Investigate Oryn case ${caseId}.\nAttempt: ${opened.attemptId}\nRepository: ${record.repoAlias}\nBaseline: ${baselineSha}\nSummary: ${record.summary}\nObserved: ${record.observed ?? "not supplied"}\nExpected: ${record.expected ?? "clarification required"}\n${github ? `GitHub mode: ${github.mode}. Read oryn_github_read and the github field of oryn_case. External review mode only dispatches the required independent review domains, then uses publish_review; it never runs the repair or delivery pipeline. Issue mode classifies the feedback, answers questions using oryn_reply, and reproduces bugs before requesting code. Repair mode preserves the adopted contribution and creates a separate PR. ` : ""}Read the current case and dispatch the next allowed stage. Worker reports arrive through Inbox; do not poll. If acceptance or environment is insufficient, request human handoff. Human merge is required.`,
+                text: `Investigate Oryn case ${caseId}.\nAttempt: ${opened.attemptId}\nRepository: ${record.repoAlias}\nBaseline: ${baselineSha}\nSummary: ${record.summary}\nObserved: ${record.observed ?? "not supplied"}\nExpected: ${record.expected ?? "clarification required"}\n${github ? `GitHub mode: ${github.mode}. Read oryn_github_read and the github field of oryn_case. External review mode only dispatches the required independent review domains, then uses publish_review; it never runs the repair or delivery pipeline. Issue mode classifies the feedback, answers questions using oryn_reply, and reproduces bugs before requesting code. Repair mode preserves the adopted contribution; the Host appends to an authorized same-repository branch or creates a credited continuation PR. ` : ""}Read the current case and dispatch the next allowed stage. Worker reports arrive through Inbox; do not poll. If acceptance or environment is insufficient, request human handoff. Human merge is required.`,
               },
             ],
             metadata: { orynCaseId: caseId, orynAttemptId: opened.attemptId },

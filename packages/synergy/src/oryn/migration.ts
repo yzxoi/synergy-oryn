@@ -5,6 +5,7 @@ import type { Migration } from "../migration"
 import { MigrationRegistry } from "../migration/registry"
 import { z } from "zod"
 import { ActionReceipt, AttemptTransition, Case, OutboxEntry, LearningCandidate } from "./schema"
+import { GithubWork, OrynGithubStore } from "./github-store"
 
 const log = Log.create({ service: "oryn.migration" })
 
@@ -31,6 +32,49 @@ const LegacyLearning = LearningCandidate.omit({ source: true, memory: true }).ex
 })
 
 export const migrations: Migration[] = [
+  {
+    id: "20260909-oryn-pr-review-versions",
+    description:
+      "Invalidate two-dot PR review inputs and retain native review history before durable comment publication",
+    version: "1.0.0",
+    domain: "oryn",
+    dependsOn: ["20260907-oryn-baseline"],
+    async up(progress) {
+      const ids = await Storage.scan(OrynPath.githubRoot())
+      for (const [index, id] of ids.entries()) {
+        const key = OrynPath.githubWork(id)
+        const raw = await Storage.read<unknown>(key)
+        if (!GithubWork.safeParse(raw).success) {
+          const legacy = GithubWork.extend({ schemaVersion: z.literal(1) }).parse(raw)
+          await Storage.write(
+            key,
+            GithubWork.parse({
+              ...legacy,
+              schemaVersion: 2,
+              state: legacy.mode === "review" && legacy.state !== "stopped" ? "queued" : legacy.state,
+              fingerprint: OrynGithubStore.fingerprint(legacy.snapshot),
+              attemptFingerprint: undefined,
+              reviewHistory: [
+                ...(legacy.reviewHistory ?? []),
+                ...(legacy.reviewPublication
+                  ? [
+                      {
+                        fingerprint: legacy.reviewPublication.fingerprint,
+                        marker: legacy.reviewPublication.marker,
+                        state: legacy.reviewPublication.state === "acknowledged" ? "acknowledged" : "ambiguous",
+                        remoteId: legacy.reviewPublication.remoteId,
+                      },
+                    ]
+                  : []),
+              ],
+              reviewPublication: undefined,
+            }),
+          )
+        }
+        progress(index + 1, ids.length)
+      }
+    },
+  },
   {
     id: "20260907-oryn-baseline",
     description: "Create the Oryn record namespace root so fresh installs and upgrades share one layout",

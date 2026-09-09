@@ -315,7 +315,7 @@ describe("Oryn per-assignment workspaces", () => {
       await expect(run(input, repro, "candidate")).rejects.toThrow()
       const worker = await Session.get(repro.workerSessionId)
       await Bun.write(`${worker.workspace!.path}/dirty.txt`, "dirty")
-      await expect(run(input, repro, "baseline")).rejects.toThrow()
+      expect((await run(input, repro, "baseline")).actualSha).toBe(input.baseline)
     })
   })
 
@@ -460,6 +460,9 @@ describe("Oryn per-assignment workspaces", () => {
       const receipt = await run(input, verify, "candidate")
       expect(receipt.actualSha).toBe(candidateSha)
       expect(receipt.observations.join("\n")).toContain("candidate")
+      const baselineReceipt = await run(input, verify, "baseline")
+      expect(baselineReceipt.actualSha).toBe(input.baseline)
+      expect(baselineReceipt.observations.join("\n")).toContain("baseline")
       expect((await Bun.$`git rev-parse HEAD`.cwd(reviewer.workspace!.path).text()).trim()).toBe(candidateSha)
       await Bun.write(`${verifier.workspace!.path}/experiment.txt`, "local experiment")
       expect(await Bun.file(`${author.workspace!.path}/experiment.txt`).exists()).toBe(false)

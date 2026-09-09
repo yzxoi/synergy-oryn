@@ -1,6 +1,7 @@
 # Decision Record: Enforce Oryn Case wall-clock budgets
 
 Status: implemented
+Archived: 2026-09-09
 
 ## Problem
 

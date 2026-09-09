@@ -41,6 +41,7 @@ export namespace OrynGithubPush {
     candidateSha: string
     branch: string
     token: string
+    expectedHead?: string
     signal?: AbortSignal
   }) {
     input.signal?.throwIfAborted()
@@ -134,6 +135,15 @@ export namespace OrynGithubPush {
       if (checked.exit !== 0) throw new Error("Invalid Oryn publication branch")
       const commit = await run(scratch, ["cat-file", "-t", input.candidateSha], objectEnv)
       if (commit.exit !== 0 || commit.output !== "commit") throw new Error("Publication requires a candidate commit")
+      if (input.expectedHead) {
+        if (!/^[a-f0-9]{40,64}$/.test(input.expectedHead)) throw new Error("Invalid expected remote head")
+        const ancestor = await run(
+          scratch,
+          ["merge-base", "--is-ancestor", input.expectedHead, input.candidateSha],
+          objectEnv,
+        )
+        if (ancestor.exit !== 0) throw new PublishNonFastForwardError(input.branch)
+      }
       const result = await run(
         scratch,
         [
@@ -155,6 +165,7 @@ export namespace OrynGithubPush {
           "--porcelain",
           "--no-signed",
           "--recurse-submodules=no",
+          ...(input.expectedHead ? [`--force-with-lease=${ref}:${input.expectedHead}`] : []),
           "--",
           `https://github.com/${input.repository}.git`,
           `${input.candidateSha}:${ref}`,
@@ -169,7 +180,7 @@ export namespace OrynGithubPush {
         if (
           result.output
             .split("\n")
-            .some((line) => /^!\t[^\t]+\t\[rejected\] \((non-fast-forward|fetch first)\)$/.test(line))
+            .some((line) => /^!\t[^\t]+\t\[rejected\] \((non-fast-forward|fetch first|stale info)\)$/.test(line))
         )
           throw new PublishNonFastForwardError(input.branch)
         throw new PublishGitUncertainError()

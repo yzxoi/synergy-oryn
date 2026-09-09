@@ -1,3 +1,5 @@
+import { RolloutLedger } from "../../src/session/rollout/ledger"
+import { OrynResume } from "../../src/oryn/resume"
 import "../../src/product-registration"
 import { expect, spyOn, test } from "bun:test"
 import { Worktree } from "../../src/project/worktree"
@@ -31,7 +33,7 @@ async function fixture(
     dispatch: () => ReturnType<typeof OrynService.dispatch>
   }) => Promise<void>,
   modelConfig?: Partial<Config.Info>,
-  limits?: { maxCaseMinutes: number },
+  limits?: { maxStepMinutes: number },
 ) {
   await using repo = await tmpdir({ git: true })
   await using config = await globalConfig({
@@ -124,14 +126,16 @@ test("model admission derives engineering and QA workload from Host bindings", a
   })
 })
 
-test("an expired Case cannot start another engineering or worker turn", async () => {
+test("an exhausted step cannot start another engineering or worker turn", async () => {
   await fixture(async ({ rootId, caseId, dispatch }) => {
     const worker = await dispatch()
     const record = (await OrynStore.getCase(caseId))!
-    await OrynStore.mutateCase(caseId, record.revision, (value) => ({
-      ...value,
-      createdAt: Date.now() - 721 * 60_000,
-    }))
+    await OrynBudget.record({
+      caseId,
+      step: `${record.activeAttemptId}:repro:general`,
+      executionId: "fixture-expired",
+      elapsedMs: 361 * 60_000,
+    })
     expect(await OrynControl.canRun(await Session.get(rootId))).toBe(false)
     expect(await OrynControl.canRun(await Session.get(worker.workerSessionId))).toBe(false)
     await expect(dispatch()).rejects.toMatchObject({ data: { code: "BUDGET_EXHAUSTED" } })
@@ -177,7 +181,12 @@ test("the budget monitor stops work despite held delivery and notifies each Case
       try {
         await entered.promise
         await OrynBudgetRuntime.start()
-        await OrynStore.mutateCase(caseId, record.revision, (value) => ({ ...value, createdAt: Date.now() - 61_000 }))
+        await OrynBudget.record({
+          caseId,
+          step: `${record.activeAttemptId}:repro:general`,
+          executionId: "fixture-expired",
+          elapsedMs: 61_000,
+        })
         const deadline = Date.now() + 10_000
         while ((!cancelled || delivered.length === 0) && Date.now() < deadline) await Bun.sleep(20)
         expect(cancelled).toBe(true)
@@ -207,10 +216,12 @@ test("the budget monitor stops work despite held delivery and notifies each Case
         })
         secondary = second.id
         await OrynStore.linkSourceToCase(secondSource.key, second.id)
-        await OrynStore.mutateCase(second.id, second.revision, (value) => ({
-          ...value,
-          createdAt: Date.now() - 61_000,
-        }))
+        await OrynBudget.record({
+          caseId: second.id,
+          step: "triage",
+          executionId: "fixture-expired",
+          elapsedMs: 61_000,
+        })
         const secondDeadline = Date.now() + 5000
         while ((await OrynStore.getCase(second.id))?.control === "active" && Date.now() < secondDeadline)
           await Bun.sleep(20)
@@ -239,7 +250,7 @@ test("the budget monitor stops work despite held delivery and notifies each Case
       }
     },
     undefined,
-    { maxCaseMinutes: 1 },
+    { maxStepMinutes: 1 },
   )
 }, 20_000)
 
@@ -247,7 +258,12 @@ test("budget enforcement cannot overwrite a concurrently completed Attempt", asy
   await fixture(
     async ({ caseId, attemptId }) => {
       const record = (await OrynStore.getCase(caseId))!
-      await OrynStore.mutateCase(caseId, record.revision, (value) => ({ ...value, createdAt: Date.now() - 61_000 }))
+      await OrynBudget.record({
+        caseId,
+        step: `${record.activeAttemptId}:repro:general`,
+        executionId: "fixture-expired",
+        elapsedMs: 61_000,
+      })
       const entered = Promise.withResolvers<void>()
       const release = Promise.withResolvers<void>()
       const reason = OrynBudget.reason
@@ -274,7 +290,7 @@ test("budget enforcement cannot overwrite a concurrently completed Attempt", asy
       expect(await OrynBudget.reason((await OrynStore.getCase(caseId))!)).toBeUndefined()
     },
     undefined,
-    { maxCaseMinutes: 1 },
+    { maxStepMinutes: 1 },
   )
 })
 
@@ -901,3 +917,96 @@ test("a resumed ownership task dispatches a new worker and consumes its report t
     }),
   )
 }, 60000)
+
+test("a terminal rollout with no accepted report gets a fresh root in the same worker", async () => {
+  await fixture(async (input) => {
+    const initial = await input.dispatch()
+    const task = (await SessionInbox.list(initial.workerSessionId))[0]!
+    await SessionInbox.materializeItem(task)
+    await SessionInbox.commitReady(initial.workerSessionId, [task.id])
+    const session = await Session.get(initial.workerSessionId)
+    const owner = { kind: "session" as const, scopeID: session.scope.id, sessionID: session.id }
+    await RolloutLedger.beginRun(owner, task.messageID)
+    await RolloutLedger.finishRun(owner, task.messageID, "failed")
+    expect(await OrynResume.prepare(session.id)).toBe("recovered")
+    const queued = (await SessionInbox.list(session.id))[0]!
+    expect(queued.mode).toBe("task")
+    expect(queued.messageID).not.toBe(task.messageID)
+    await SessionInbox.materializeItem(queued)
+    await RolloutLedger.beginRun(owner, queued.messageID)
+    expect((await RolloutLedger.getRun(owner, task.messageID)).status).toBe("failed")
+    expect((await Session.get(session.id)).workspace).toEqual(session.workspace)
+  })
+})
+
+test("overlapping foreground and background activity spends step time once and stops on final release", async () => {
+  await fixture(async (input) => {
+    const worker = await input.dispatch()
+    const first = (await OrynBudget.begin(worker.workerSessionId))!
+    const second = (await OrynBudget.begin(worker.workerSessionId))!
+    await Bun.sleep(20)
+    await first[Symbol.asyncDispose]()
+    await Bun.sleep(20)
+    await second[Symbol.asyncDispose]()
+    const steps = await OrynBudget.steps(input.caseId)
+    expect(steps).toHaveLength(1)
+    expect(steps[0]!.elapsedMs).toBeGreaterThanOrEqual(30)
+    await Bun.sleep(20)
+    await OrynBudget.checkpoint()
+    expect(await OrynBudget.steps(input.caseId)).toEqual(steps)
+  })
+})
+
+test("the real Session loop consumes a fresh task after a terminal rollout without appending to the sealed root", async () => {
+  let ids: { caseId: string; attemptId: string; assignmentId: string } | undefined
+  let submitted = false
+  await using model = scriptedModel(() => {
+    if (!ids) throw new Error("missing task identity")
+    if (submitted) return { text: "Report submitted." }
+    submitted = true
+    return {
+      tool: "oryn_result",
+      input: {
+        input: {
+          ...ids,
+          kind: "repro",
+          requestKey: "terminal-recovery-result",
+          outcome: "needs_human",
+          summary: "Platform input required",
+          limitations: ["Reporter platform required"],
+        },
+      },
+    }
+  })
+  await fixture(
+    async (input) => {
+      const worker = await input.dispatch()
+      ids = { caseId: input.caseId, attemptId: input.attemptId, assignmentId: worker.assignmentId }
+      const old = (await SessionInbox.list(worker.workerSessionId))[0]!
+      await SessionInbox.materializeItem(old)
+      await SessionInbox.commitReady(worker.workerSessionId, [old.id])
+      const session = await Session.get(worker.workerSessionId)
+      const owner = { kind: "session" as const, scopeID: session.scope.id, sessionID: session.id }
+      await RolloutLedger.beginRun(owner, old.messageID)
+      await RolloutLedger.finishRun(owner, old.messageID, "failed")
+      expect(await OrynResume.prepare(session.id)).toBe("recovered")
+      await SessionManager.wake(session.id)
+      expect((await OrynStore.getAssignment(input.caseId, worker.assignmentId))?.acceptedReportId).toBeDefined()
+      expect((await RolloutLedger.getRun(owner, old.messageID)).status).toBe("failed")
+      expect(model.errors).toEqual([])
+      expect(
+        (await Session.messages({ sessionID: session.id })).filter((m) => m.info.role === "user" && m.info.isRoot),
+      ).toHaveLength(2)
+    },
+    Config.Info.parse({
+      model: "oryn-fixture/qa",
+      mid_model: "oryn-fixture/qa",
+      thinking_model: "oryn-fixture/qa",
+      mini_model: "oryn-fixture/qa",
+      nano_model: "oryn-fixture/qa",
+      enabled_providers: ["oryn-fixture"],
+      provider: { "oryn-fixture": model.config },
+      embedding: { apiKey: "fixture-only", model: "fixture-embedding", baseURL: model.config.api },
+    }),
+  )
+}, 30000)

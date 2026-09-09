@@ -20,6 +20,18 @@ export async function fetchOrynReview(input: {
   )
     throw new Error("Invalid review source")
   const directory = await realpath(input.directory)
+  input.signal?.throwIfAborted()
+  const requested = [...new Set([input.headSha, input.baseSha])]
+  const missing: string[] = []
+  for (const sha of requested) {
+    const present = await OrynGit.read(directory, ["cat-file", "-e", `${sha}^{commit}`]).then(
+      () => true,
+      () => false,
+    )
+    if (!present) missing.push(sha)
+    else await OrynGit.read(directory, ["update-ref", `refs/oryn/objects/${sha}`, sha])
+  }
+  if (!missing.length) return
   const [owner, repo] = input.repository.split("/")
   const token = await GitHubChannelAuth.resolveInstallationToken(owner!, repo!, input.signal)
   await mkdir(Global.Path.cache, { recursive: true })
@@ -58,6 +70,12 @@ export async function fetchOrynReview(input: {
   }
   try {
     await run(scratch, ["init", "--bare", "--template=", "."])
+    const objects = await realpath(
+      await OrynGit.read(directory, ["rev-parse", "--path-format=absolute", "--git-path", "objects"]),
+    )
+    await Bun.write(path.join(scratch, "objects", "info", "alternates"), `${JSON.stringify(objects)}\n`)
+    const known = await OrynGit.read(directory, ["rev-parse", "--verify", "HEAD^{commit}"])
+    await run(scratch, ["update-ref", "refs/oryn/have", known])
     await run(
       scratch,
       [
@@ -78,8 +96,7 @@ export async function fetchOrynReview(input: {
         "--no-recurse-submodules",
         "--",
         `https://github.com/${input.repository}.git`,
-        input.headSha,
-        input.baseSha,
+        ...missing,
       ],
       true,
     )
@@ -94,11 +111,12 @@ export async function fetchOrynReview(input: {
       "--no-recurse-submodules",
       "--",
       scratch,
-      input.headSha,
-      input.baseSha,
+      ...missing,
     ])
-    for (const sha of [input.headSha, input.baseSha])
+    for (const sha of [input.headSha, input.baseSha]) {
       await OrynGit.read(directory, ["cat-file", "-e", `${sha}^{commit}`])
+      await OrynGit.read(directory, ["update-ref", `refs/oryn/objects/${sha}`, sha])
+    }
   } finally {
     await rm(scratch, { recursive: true, force: true })
   }

@@ -1,3 +1,4 @@
+import { OrynBudget } from "../../src/oryn/budget"
 import { describe, expect, test } from "bun:test"
 import { Scope } from "../../src/scope"
 import { ScopeContext } from "../../src/scope/context"
@@ -501,7 +502,12 @@ describe("learning side-effect recovery", () => {
     await withLearnScope({}, async (root) => {
       const seeded = await seedFrozen(root)
       const record = (await OrynStore.getCase(seeded.caseId))!
-      await OrynStore.mutateCase(record.id, record.revision, (draft) => ({ ...draft, createdAt: 1 }))
+      await OrynBudget.record({
+        caseId: record.id,
+        step: `${record.activeAttemptId}:triage`,
+        executionId: "expired-learning",
+        elapsedMs: 361 * 60_000,
+      })
       await expect(
         OrynLearning.propose({
           callerSessionID: seeded.engineeringSessionId,

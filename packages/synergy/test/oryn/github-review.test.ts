@@ -1,3 +1,6 @@
+import { Storage } from "../../src/storage/storage"
+import { OrynPath } from "../../src/oryn/path"
+import { migrations } from "../../src/oryn/migration"
 import { expect, test } from "bun:test"
 import { OrynGithub } from "../../src/oryn/github"
 import { OrynGithubRuntime, setGithubRuntimeTransport } from "../../src/oryn/github-runtime"
@@ -36,6 +39,7 @@ test("external review requires independent reports, rejects stale heads and reco
     comments: [],
     headSha,
     baseSha,
+    mergeBaseSha: baseSha,
     draft: false,
   }
   const caseId = (await OrynGithub.accept({ accountId: "app", repository, repoAlias: "review", snapshot }))!
@@ -119,11 +123,61 @@ test("external review requires independent reports, rejects stale heads and reco
     await OrynGithubRuntime.recover()
     expect((await OrynGithubStore.get(caseId))?.reviewPublication?.remoteId).toBe(42)
     expect((await OrynGithubRuntime.publishReview(caseId, "review-root")).state).toBe("acknowledged")
-    expect((await OrynGithubStore.get(caseId))?.state).toBe("settled")
+    expect((await OrynGithubStore.get(caseId))?.state).toBe("waiting_author")
     await expect(
       OrynPublish.publish({ callerSessionID: "review-root", caseId, operation: "mark_ready", requestKey: "forbidden" }),
     ).rejects.toBeDefined()
   } finally {
     setGithubRuntimeTransport(previous)
   }
+})
+
+test("legacy review migration invalidates old diff inputs without inventing an updatable comment", async () => {
+  const caseId = crypto.randomUUID()
+  const snapshot = {
+    number: 31,
+    kind: "pull" as const,
+    title: "Review",
+    body: "",
+    state: "open" as const,
+    updatedAt: new Date().toISOString(),
+    labels: [],
+    comments: [],
+    headSha: "a".repeat(40),
+    baseSha: "b".repeat(40),
+    baseRef: "dev",
+  }
+  const legacy = {
+    schemaVersion: 1,
+    caseId,
+    repoAlias: "fixture",
+    accountId: "app",
+    repository: "acme/fixture",
+    number: 31,
+    mode: "review",
+    snapshot,
+    fingerprint: "old-policy",
+    attemptFingerprint: "old-policy",
+    state: "settled",
+    commandIds: [],
+    updatedAt: Date.now(),
+    reviewPublication: {
+      fingerprint: "old-policy",
+      marker: "old-marker",
+      body: "old review",
+      state: "acknowledged",
+      remoteId: 20,
+    },
+  }
+  await Storage.write(OrynPath.githubWork(caseId), legacy)
+  const upgrade = migrations.find((entry) => entry.id === "20260909-oryn-pr-review-versions")!
+  await upgrade.up(() => {})
+  const migrated = (await OrynGithubStore.get(caseId))!
+  expect(migrated.state).toBe("queued")
+  expect(migrated.attemptFingerprint).toBeUndefined()
+  expect(migrated.reviewPublication).toBeUndefined()
+  expect(migrated.reviewHistory?.[0]?.remoteId).toBe(20)
+  expect(OrynGithubStore.fingerprint({ ...snapshot, baseSha: "c".repeat(40) })).toBe(migrated.fingerprint)
+  await upgrade.up(() => {})
+  expect(await OrynGithubStore.get(caseId)).toEqual(migrated)
 })

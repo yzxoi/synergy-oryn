@@ -1,3 +1,5 @@
+import { OrynBudget } from "../oryn/budget"
+import { OrynGithubStore } from "../oryn/github-store"
 import { OrynSetup, OrynSetupInput, OrynSetupView } from "../oryn/setup"
 import { reloadAfterConfigChange } from "./config-route"
 import { OrynControl } from "../oryn/control"
@@ -55,6 +57,9 @@ const CaseDetailResponse = z
     pullNumbers: z.array(z.number().int()),
     sourceCount: z.number().int(),
     humanDecisions: z.array(z.string()),
+    workflowState: z.string().optional(),
+    steps: z.array(z.object({ step: z.string(), elapsedMs: z.number() })),
+    maxStepMinutes: z.number(),
     handoff: Case.shape.handoff,
     createdAt: z.number().int(),
     updatedAt: z.number().int(),
@@ -228,6 +233,9 @@ export const OrynRoute = new Hono()
           pullNumbers: record.pullNumbers,
           sourceCount: record.sourceIds.length,
           humanDecisions: record.humanDecisions,
+          workflowState: (await OrynGithubStore.get(record.id))?.state,
+          steps: await OrynBudget.steps(record.id),
+          maxStepMinutes: (await OrynConfig.info())?.limits?.maxStepMinutes ?? 360,
           handoff: OrynService.handoffSummary(record),
           createdAt: record.createdAt,
           updatedAt: record.updatedAt,
@@ -310,6 +318,9 @@ export const OrynRoute = new Hono()
           pullNumbers: record.pullNumbers,
           sourceCount: record.sourceIds.length,
           humanDecisions: record.humanDecisions,
+          workflowState: (await OrynGithubStore.get(record.id))?.state,
+          steps: await OrynBudget.steps(record.id),
+          maxStepMinutes: (await OrynConfig.info())?.limits?.maxStepMinutes ?? 360,
           handoff: OrynService.handoffSummary(record),
           createdAt: record.createdAt,
           updatedAt: record.updatedAt,

@@ -9821,6 +9821,14 @@ msgid "nav.tools.title"
 msgstr "Tools"
 
 #. js-lingui-explicit-id
+msgid "oryn.step.executionMinutes"
+msgstr "{used} / {limit} minutes of execution"
+
+#. js-lingui-explicit-id
+msgid "oryn.workflow.waitingAuthor"
+msgstr "Waiting for the PR author"
+
+#. js-lingui-explicit-id
 msgid "plugin.textAction.back"
 msgstr "Back"
 
@@ -17433,6 +17441,10 @@ msgid "settings.models.roles.title"
 msgstr "Model roles"
 
 #. js-lingui-explicit-id
+msgid "settings.oryn.activeCases"
+msgstr "Maximum active tasks"
+
+#. js-lingui-explicit-id
 msgid "settings.oryn.automation"
 msgstr "Automation"
 
@@ -17470,7 +17482,7 @@ msgstr "Automatically fix reproduced bugs"
 
 #. js-lingui-explicit-id
 msgid "settings.oryn.fixDescription"
-msgstr "Requires configured verification environments. Unreproducible bugs go to a human; contributor branches are never overwritten."
+msgstr "Requires configured verification environments. PR repair requires a separate authorized autofix command; updates preserve contributor history."
 
 #. js-lingui-explicit-id
 msgid "settings.oryn.loading"
@@ -17519,6 +17531,10 @@ msgstr "Oryn settings saved."
 #. js-lingui-explicit-id
 msgid "settings.oryn.saving"
 msgstr "Saving…"
+
+#. js-lingui-explicit-id
+msgid "settings.oryn.stepMinutes"
+msgstr "Execution minutes per step (queues and waits excluded)"
 
 #. js-lingui-explicit-id
 msgid "settings.panel.action.cancel"

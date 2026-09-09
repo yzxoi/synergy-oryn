@@ -37531,8 +37531,8 @@
             "minimum": 1,
             "maximum": 9007199254740991
           },
-          "maxCaseMinutes": {
-            "description": "Wall-clock budget per case in minutes. Exhaustion requires human handoff (default: 720)",
+          "maxStepMinutes": {
+            "description": "Cumulative execution minutes per logical step, excluding queues, human waits and downtime (default: 360)",
             "type": "integer",
             "minimum": 1,
             "maximum": 9007199254740991
@@ -37566,6 +37566,17 @@
       "OrynExecutionProfileConfig": {
         "type": "object",
         "properties": {
+          "dependencies": {
+            "description": "Dependency preparation: frozen-lockfile install in trusted_local (default), sealed offline snapshot, or none for static checks",
+            "type": "string",
+            "enum": ["install", "snapshot", "none"]
+          },
+          "installTimeoutSeconds": {
+            "description": "Dependency installation timeout in seconds (default: 1800); installation also consumes the worker step budget",
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 21600
+          },
           "resourceLimits": {
             "$ref": "#/components/schemas/OrynProcessResourcesConfig"
           },
@@ -50936,6 +50947,16 @@
           "autoFix": {
             "type": "boolean"
           },
+          "maxStepMinutes": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "maxActiveCases": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
           "notificationTarget": {
             "type": "string"
           }
@@ -51088,6 +51109,27 @@
               "type": "string"
             }
           },
+          "workflowState": {
+            "type": "string"
+          },
+          "steps": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "step": {
+                  "type": "string"
+                },
+                "elapsedMs": {
+                  "type": "number"
+                }
+              },
+              "required": ["step", "elapsedMs"]
+            }
+          },
+          "maxStepMinutes": {
+            "type": "number"
+          },
           "handoff": {
             "type": "object",
             "properties": {
@@ -51135,6 +51177,8 @@
           "pullNumbers",
           "sourceCount",
           "humanDecisions",
+          "steps",
+          "maxStepMinutes",
           "createdAt",
           "updatedAt"
         ],
@@ -54562,51 +54606,6 @@
         },
         "required": ["type", "properties"]
       },
-      "Event.provider.auth.updated": {
-        "type": "object",
-        "properties": {
-          "type": {
-            "type": "string",
-            "const": "provider.auth.updated"
-          },
-          "properties": {
-            "type": "object",
-            "properties": {
-              "health": {
-                "$ref": "#/components/schemas/ProviderAuthHealth"
-              }
-            },
-            "required": ["health"]
-          }
-        },
-        "required": ["type", "properties"]
-      },
-      "Event.config.updated": {
-        "type": "object",
-        "properties": {
-          "type": {
-            "type": "string",
-            "const": "config.updated"
-          },
-          "properties": {
-            "type": "object",
-            "properties": {
-              "scope": {
-                "type": "string",
-                "enum": ["global", "project"]
-              },
-              "changedFields": {
-                "type": "array",
-                "items": {
-                  "type": "string"
-                }
-              }
-            },
-            "required": ["scope", "changedFields"]
-          }
-        },
-        "required": ["type", "properties"]
-      },
       "Event.message.updated": {
         "type": "object",
         "properties": {
@@ -54691,6 +54690,51 @@
               }
             },
             "required": ["sessionID", "messageID", "partID"]
+          }
+        },
+        "required": ["type", "properties"]
+      },
+      "Event.provider.auth.updated": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "provider.auth.updated"
+          },
+          "properties": {
+            "type": "object",
+            "properties": {
+              "health": {
+                "$ref": "#/components/schemas/ProviderAuthHealth"
+              }
+            },
+            "required": ["health"]
+          }
+        },
+        "required": ["type", "properties"]
+      },
+      "Event.config.updated": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "config.updated"
+          },
+          "properties": {
+            "type": "object",
+            "properties": {
+              "scope": {
+                "type": "string",
+                "enum": ["global", "project"]
+              },
+              "changedFields": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": ["scope", "changedFields"]
           }
         },
         "required": ["type", "properties"]
@@ -56309,12 +56353,6 @@
             "$ref": "#/components/schemas/Event.scope.runtime.disposed"
           },
           {
-            "$ref": "#/components/schemas/Event.provider.auth.updated"
-          },
-          {
-            "$ref": "#/components/schemas/Event.config.updated"
-          },
-          {
             "$ref": "#/components/schemas/Event.message.updated"
           },
           {
@@ -56325,6 +56363,12 @@
           },
           {
             "$ref": "#/components/schemas/Event.message.part.removed"
+          },
+          {
+            "$ref": "#/components/schemas/Event.provider.auth.updated"
+          },
+          {
+            "$ref": "#/components/schemas/Event.config.updated"
           },
           {
             "$ref": "#/components/schemas/Event.permission.asked"
