@@ -84,13 +84,14 @@ async function assertStageAdmission(caseId: string, attemptId: string, stage: St
   if (github?.mode === "review") {
     if (
       stage !== "review" ||
-      github.state === "stopped" ||
+      github.state !== "running" ||
+      github.attemptFingerprint !== github.fingerprint ||
       github.snapshot.state !== "open" ||
       github.snapshot.draft ||
       attempt.candidateSha !== github.snapshot.headSha ||
-      attempt.baselineSha !== github.snapshot.baseSha
+      attempt.baselineSha !== github.snapshot.mergeBaseSha
     )
-      throw storeError("INVALID_STAGE", "External PR work only admits review of the current head and base")
+      throw storeError("INVALID_STAGE", "External PR work only admits review of the assigned head and merge base")
     return
   }
   if (stage === "code" && github) {

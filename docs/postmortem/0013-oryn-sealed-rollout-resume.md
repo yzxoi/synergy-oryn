@@ -6,7 +6,7 @@ An Oryn deployment canary remained queued after human resume. The Host could enq
 
 ## Summary
 
-The canary had preserved an aborted engineering conversation and older recovery steering. Resume also attempted to wake that conversation before GitHub review versions were assigned. Separately, fetching into an empty temporary Git repository discarded the existing trusted object cache and could spend the fetch timeout downloading repository history again. Health checks and schema migration both passed while useful work stayed blocked.
+The canary had preserved an aborted engineering conversation and older recovery steering. Resume also attempted to wake that conversation before GitHub review versions were assigned. Separately, fetching into an empty temporary Git repository discarded the existing trusted object cache and could spend the fetch timeout downloading repository history again. Health checks and schema migration both passed while useful work stayed blocked. Once recovery resumed, the live diverged PR exposed a downstream admission guard still comparing its baseline with the target tip instead of the assigned merge base.
 
 ## Timeline
 
@@ -18,7 +18,7 @@ The original recovery test checked storage transitions instead of scheduler cons
 
 ## Guardrails added
 
-[Worker recovery tests](../../packages/synergy/test/oryn/worker-start.test.ts) now execute the actual configured model transport and result tool after a sealed rollout. The Session loop consumes a queued new task before configuring a terminal predecessor. [GitHub runtime tests](../../packages/synergy/test/oryn/github-runtime.test.ts) require pinned admission before a bound review Session can run. [Fetch tests](../../packages/synergy/test/channel/provider/github/oryn-fetch.test.ts) require cached commits to be pinned without another credential request or history download. The [pipeline decision](../decisions/implemented/architecture/2026-09-09-oryn-pipeline-runtime.md) records the resulting behavior.
+[Worker recovery tests](../../packages/synergy/test/oryn/worker-start.test.ts) now execute the actual configured model transport and result tool after a sealed rollout. The Session loop consumes a queued new task before configuring a terminal predecessor. [GitHub runtime tests](../../packages/synergy/test/oryn/github-runtime.test.ts) require pinned admission before a bound review Session can run. [Fetch tests](../../packages/synergy/test/channel/provider/github/oryn-fetch.test.ts) require cached commits to be pinned without another credential request or history download. The GitHub admission fixture now creates diverged target and contributor histories and dispatches a real reviewer worktree, so the producer and consumer must agree on the merge base. The [pipeline decision](../decisions/implemented/architecture/2026-09-09-oryn-pipeline-runtime.md) records the resulting behavior.
 
 ## Lessons
 
