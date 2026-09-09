@@ -178,7 +178,7 @@ function taskText(input: {
 
 export namespace OrynService {
   export function handoffSummary(record: Case) {
-    if (!record.handoff) return undefined
+    if (record.control !== "human_owned" || !record.handoff) return undefined
     return {
       ...record.handoff,
       reason: OrynPublicText.violations(record.handoff.reason).length

@@ -31,10 +31,10 @@ export namespace OrynResume {
         ? (await OrynStore.listAssignments(record.id)).find((item) => item.sessionId === sessionID)
         : undefined
     if (binding.role === "worker" && (!assignment || assignment.acceptedReportId)) return "idle"
-    if (await SessionInbox.hasRunnableItem(sessionID)) return "queued"
+    const queued = await SessionInbox.hasRunnableItem(sessionID)
     const messages = await SessionHistory.modelMessages({ sessionID })
     const root = messages.findLast((item) => item.info.role === "user" && item.info.isRoot === true)
-    if (!root || root.info.role !== "user") return "idle"
+    if (!root || root.info.role !== "user") return queued ? "queued" : "idle"
     if (assignment && bossAssignmentMetadata(root.info, session, { requireRoot: true })?.taskID !== assignment.id)
       return "idle"
     const rollout = await RolloutLedger.getRun(
@@ -45,6 +45,7 @@ export namespace OrynResume {
       throw error
     })
     const freshRun = rollout && !["running", "interrupted"].includes(rollout.status)
+    if (queued && (!freshRun || (await SessionInbox.peekTask(sessionID)))) return "queued"
     const assistant = messages.findLast((item) => item.info.role === "assistant" && item.info.rootID === root.info.id)
     if (
       !freshRun &&

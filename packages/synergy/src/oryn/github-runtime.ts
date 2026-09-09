@@ -1,3 +1,4 @@
+import { Log } from "../util/log"
 import { externalIdentityHash } from "../util/identity"
 import { Lock } from "../util/lock"
 import { Session } from "../session"
@@ -325,19 +326,20 @@ export namespace OrynGithubRuntime {
         const started = await OrynEngineering.start(record.id)
         if (started.state !== "started")
           throw storeError("ENVIRONMENT_UNAVAILABLE", "GitHub engineering checkout is unavailable")
-        await wake(work)
-        await OrynGithubStore.save({
+        work = await OrynGithubStore.save({
           ...work,
           state: "running",
           attemptFingerprint: work.fingerprint,
           failure: undefined,
           updatedAt: Date.now(),
         })
+        await wake(work)
         if (!activeIds.has(record.id)) {
           running++
           activeIds.add(record.id)
         }
-      } catch {
+      } catch (error) {
+        Log.create({ service: "oryn.github" }).warn("GitHub work recovery failed", { caseId: work.caseId, error })
         const current = await OrynGithubStore.get(work.caseId)
         if (!current) continue
         const attempts = (current.failure?.attempts ?? 0) + 1

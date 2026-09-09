@@ -956,3 +956,57 @@ test("overlapping foreground and background activity spends step time once and s
     expect(await OrynBudget.steps(input.caseId)).toEqual(steps)
   })
 })
+
+test("the real Session loop consumes a fresh task after a terminal rollout without appending to the sealed root", async () => {
+  let ids: { caseId: string; attemptId: string; assignmentId: string } | undefined
+  let submitted = false
+  await using model = scriptedModel(() => {
+    if (!ids) throw new Error("missing task identity")
+    if (submitted) return { text: "Report submitted." }
+    submitted = true
+    return {
+      tool: "oryn_result",
+      input: {
+        input: {
+          ...ids,
+          kind: "repro",
+          requestKey: "terminal-recovery-result",
+          outcome: "needs_human",
+          summary: "Platform input required",
+          limitations: ["Reporter platform required"],
+        },
+      },
+    }
+  })
+  await fixture(
+    async (input) => {
+      const worker = await input.dispatch()
+      ids = { caseId: input.caseId, attemptId: input.attemptId, assignmentId: worker.assignmentId }
+      const old = (await SessionInbox.list(worker.workerSessionId))[0]!
+      await SessionInbox.materializeItem(old)
+      await SessionInbox.commitReady(worker.workerSessionId, [old.id])
+      const session = await Session.get(worker.workerSessionId)
+      const owner = { kind: "session" as const, scopeID: session.scope.id, sessionID: session.id }
+      await RolloutLedger.beginRun(owner, old.messageID)
+      await RolloutLedger.finishRun(owner, old.messageID, "failed")
+      expect(await OrynResume.prepare(session.id)).toBe("recovered")
+      await SessionManager.wake(session.id)
+      expect((await OrynStore.getAssignment(input.caseId, worker.assignmentId))?.acceptedReportId).toBeDefined()
+      expect((await RolloutLedger.getRun(owner, old.messageID)).status).toBe("failed")
+      expect(model.errors).toEqual([])
+      expect(
+        (await Session.messages({ sessionID: session.id })).filter((m) => m.info.role === "user" && m.info.isRoot),
+      ).toHaveLength(2)
+    },
+    Config.Info.parse({
+      model: "oryn-fixture/qa",
+      mid_model: "oryn-fixture/qa",
+      thinking_model: "oryn-fixture/qa",
+      mini_model: "oryn-fixture/qa",
+      nano_model: "oryn-fixture/qa",
+      enabled_providers: ["oryn-fixture"],
+      provider: { "oryn-fixture": model.config },
+      embedding: { apiKey: "fixture-only", model: "fixture-embedding", baseURL: model.config.api },
+    }),
+  )
+}, 30000)

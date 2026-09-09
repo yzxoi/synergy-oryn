@@ -1,3 +1,4 @@
+import { OrynControl } from "../../src/oryn/control"
 import { expect, test } from "bun:test"
 import { OrynGithub } from "../../src/oryn/github"
 import { OrynGithubRuntime, setGithubRuntimeTransport } from "../../src/oryn/github-runtime"
@@ -60,6 +61,7 @@ test("GitHub review admission creates one real engineering root, invalidates cha
   Session.create = async (input) => {
     const session = await create(input)
     if (input?.agentOverride === "oryn-work") {
+      expect(await OrynControl.canRun(session)).toBe(false)
       roots.push(session.id)
       leases.push(SessionManager.acquire(session.id)!)
     }
@@ -71,6 +73,11 @@ test("GitHub review admission creates one real engineering root, invalidates cha
     await OrynGithubRuntime.recover()
     const first = (await OrynStore.getCase(id))!
     expect(roots).toHaveLength(1)
+    const prepared = (await OrynGithubStore.get(id))!
+    await OrynGithubStore.save({ ...prepared, state: "queued", attemptFingerprint: undefined })
+    expect(await OrynControl.canRun(await Session.get(roots[0]!))).toBe(false)
+    await OrynGithubStore.save(prepared)
+    expect(await OrynControl.canRun(await Session.get(roots[0]!))).toBe(true)
     expect((await OrynStore.getAttempt(id, first.activeAttemptId!))?.candidateSha).toBe(headSha)
     expect(await SessionInbox.hasRunnableItem(roots[0]!, { allowSteer: true })).toBe(true)
     await OrynGithubRuntime.recover()

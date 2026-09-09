@@ -1,3 +1,4 @@
+import { Storage } from "../storage/storage"
 import { RolloutContext } from "./rollout/context"
 import { Experiment } from "@/config/experiment"
 import { ActivitySummary } from "./activity-summary"
@@ -420,6 +421,19 @@ export namespace SessionInvoke {
           throw new Error(`Session inbox task could not be materialized: ${task.id}`)
         await SessionInbox.commitReady(sessionID, [task.id])
         continue
+      }
+      const previousRun = await RolloutLedger.getRun(RolloutLifecycle.owner(session), root.info.id).catch((error) => {
+        if (error instanceof Storage.NotFoundError) return undefined
+        throw error
+      })
+      if (previousRun && !["running", "interrupted"].includes(previousRun.status)) {
+        const task = await SessionInbox.peekTask(sessionID)
+        if (task) {
+          if (!(await SessionInbox.materializeItem(task)))
+            throw new Error(`Session inbox task could not be materialized: ${task.id}`)
+          await SessionInbox.commitReady(sessionID, [task.id])
+          continue
+        }
       }
       const configuration = await RolloutLifecycle.configuration(session, root.info.id)
       const next = await Experiment.provide(configuration, () =>
